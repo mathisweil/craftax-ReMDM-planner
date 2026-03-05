@@ -1,10 +1,9 @@
 import jax
 import jax.numpy as jnp
 import chex
-import numpy as np
 from flax import struct
 from functools import partial
-from typing import Optional, Tuple, Union, Any, Callable
+from typing import Tuple, Union, Any, Callable
 
 
 class GymnaxWrapper(object):
