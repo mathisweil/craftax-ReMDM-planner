@@ -198,23 +198,36 @@ class LogWrapper(GymnaxWrapper):
         info["returned_episode"] = done
         return obs, state, reward, done, info
 
+
+# =============================================================================
+# SequenceHistoryWrapper
+# =============================================================================
+
+
 @struct.dataclass
 class SequenceHistoryState:
     env_state: Any
     obs_history: chex.Array  # [history_len, *obs_shape]
     act_history: chex.Array  # [history_len]  int32
 
+
 class SequenceHistoryWrapper(GymnaxWrapper):
     """Augments env state with a sliding window of past observations and actions.
 
-    After each step the histories satisfies:
-        obs_history[-1] = current observation
-        act_history[i] = action taken from obs_history[i] to reach obs_history[i+1]
+    After each step the histories satisfy:
+        obs_history[-1]  = current observation
+        act_history[i]   = action taken from obs_history[i] to reach obs_history[i+1]
+
+    The wrapper returns the current observation unchanged; the sequence context is
+    accessed via state.obs_history and state.act_history in the training loop.
+
+    Place this as the innermost wrapper (before AutoReset / LogWrapper) so that
+    episode boundaries trigger a proper history reset via the auto-reset mechanism.
 
     Args:
-        env:            Single Gymnax environment.
-        history_len:    Number of past timesteps to keep (including current).
-        obs_shape:      Shape of a single observation, e.g. (obs_dim,) or (H, W, C).
+        env:          Single Gymnax environment.
+        history_len:  Number of past timesteps to keep (including current).
+        obs_shape:    Shape of a single observation, e.g. (obs_dim,) or (H, W, C).
     """
 
     def __init__(self, env, history_len: int, obs_shape: Tuple):
@@ -249,8 +262,17 @@ class SequenceHistoryWrapper(GymnaxWrapper):
         return obs, new_state, reward, done, info
 
 
+# =============================================================================
+# DiscreteTokenizationWrapper
+# =============================================================================
+
+
 class DiscreteTokenizationWrapper(GymnaxWrapper):
     """Quantizes continuous observations into discrete token indices.
+
+    Each observation element is mapped to one of n_bins integer tokens using
+    uniform binning between obs_min and obs_max.  Useful for feeding Craftax
+    symbolic observations into a discrete diffusion model such as ReMDM.
 
     Args:
         env:      Gymnax environment (or wrapper).
@@ -289,11 +311,16 @@ class DiscreteTokenizationWrapper(GymnaxWrapper):
         return self._tokenize(obs), state, reward, done, info
 
 
+# =============================================================================
+# PlannerWrapper
+# =============================================================================
+
+
 @struct.dataclass
 class PlannerState:
     env_state: Any
     current_plan: chex.Array  # [num_envs, plan_horizon]  int32
-    plan_step: int            # scalar, position within the active planning window
+    plan_step: int             # position within the active planning window
 
 
 class PlannerWrapper(GymnaxWrapper):
@@ -303,6 +330,9 @@ class PlannerWrapper(GymnaxWrapper):
         env  →  SequenceHistoryWrapper  →  LogWrapper
              →  BatchEnvWrapper / OptimisticResetVecEnvWrapper
              →  PlannerWrapper
+
+    The planner_apply_fn must have the signature:
+        fn(rng, model_params, obs) -> jnp.ndarray  # [num_envs, plan_horizon] int32
 
     Args:
         env:               Batched Gymnax environment (already handles num_envs).
@@ -321,7 +351,7 @@ class PlannerWrapper(GymnaxWrapper):
         planner_apply_fn: Callable,
     ):
         super().__init__(env)
-        assert replan_every <= plan_horizon
+        assert replan_every <= plan_horizon, "replan_every must be <= plan_horizon"
         self.num_envs = num_envs
         self.plan_horizon = plan_horizon
         self.replan_every = replan_every
@@ -368,12 +398,14 @@ class PlannerWrapper(GymnaxWrapper):
             (plan_key, model_params, last_obs),
         )
 
+        # Extract the per-env action for the current position in the plan.
         action = current_plan[:, state.plan_step]
 
         obs, env_state, reward, done, info = self._env.step(
             step_key, state.env_state, action, env_params
         )
 
+        # Advance the step counter; wrap back to 0 to trigger the next replan.
         new_plan_step = (state.plan_step + 1) % self.replan_every
         new_state = PlannerState(
             env_state=env_state,
@@ -381,6 +413,11 @@ class PlannerWrapper(GymnaxWrapper):
             plan_step=new_plan_step,
         )
         return obs, new_state, action, reward, done, info
+
+
+# =============================================================================
+# OfflineTrajectoryWrapper
+# =============================================================================
 
 
 @struct.dataclass
@@ -392,13 +429,20 @@ class TrajectoryBufferState:
     buf_reward: Any # [max_size]  float32
     buf_done: Any   # [max_size]  bool
     buf_next_obs: Any  # [max_size, *obs_shape]
-    write_idx: Any  # scalar int, next write position (unbounded; use % max_size)
-    num_valid: Any  # scalar int, min(write_idx, max_size)
+    write_idx: Any
+    num_valid: Any
 
 
 class OfflineTrajectoryWrapper(GymnaxWrapper):
     """Accumulates (obs, action, reward, done, next_obs) transitions into a
     fixed-size circular replay buffer stored inside the JAX state.
+
+    The buffer overwrites the oldest entries once full.  Use sample_sequences()
+    to draw contiguous subsequences for training a sequence model like ReMDM.
+
+    Designed for a single environment; compose with BatchEnvWrapper *outside*
+    this wrapper to collect from multiple envs simultaneously (each env carries
+    its own independent buffer in the vmapped state).
 
     Args:
         env:       Single Gymnax environment (or wrapper).
@@ -441,6 +485,7 @@ class OfflineTrajectoryWrapper(GymnaxWrapper):
         obs, env_state, reward, done, info = self._env.step(
             key, state.env_state, action, params
         )
+
         idx = state.write_idx % self.max_size
         buf_obs      = state.buf_obs.at[idx].set(state.last_obs)
         buf_act      = state.buf_act.at[idx].set(action)
