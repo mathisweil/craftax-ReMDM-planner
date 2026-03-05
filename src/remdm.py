@@ -1,7 +1,5 @@
 """Core discrete diffusion logic for ReMDM (Remasking Discrete Diffusion Model).
 
-All functions are pure and JIT-compatible. No Python side effects.
-
 Notation:
     alpha_t : probability that a token remains unmasked at time t.
               alpha_0 = 1 (fully clean), alpha_1 = 0 (fully masked).
