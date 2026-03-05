@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import chex
 from flax import struct
 from functools import partial
-from typing import Tuple, Union, Any, Callable
+from typing import Callable, Tuple, Union, Any
 
 
 class GymnaxWrapper(object):
@@ -238,6 +238,8 @@ class SequenceHistoryWrapper(GymnaxWrapper):
     @partial(jax.jit, static_argnums=(0, 2))
     def reset(self, key: chex.PRNGKey, params=None):
         obs, env_state = self._env.reset(key, params)
+        # Fill the entire history with the first observation so there are no
+        # zero-padded "phantom" steps at the start of an episode.
         obs_history = jnp.tile(obs[None], [self.history_len] + [1] * len(self.obs_shape))
         act_history = jnp.zeros(self.history_len, dtype=jnp.int32)
         state = SequenceHistoryState(
@@ -252,6 +254,9 @@ class SequenceHistoryWrapper(GymnaxWrapper):
         obs, env_state, reward, done, info = self._env.step(
             key, state.env_state, action, params
         )
+        # Shift left (drop oldest entry at index 0) and append the new value at -1.
+        # act_history[i] records the action taken from obs_history[i], so we store
+        # the current action before overwriting obs_history with the new observation.
         act_history = jnp.roll(state.act_history, -1, axis=0).at[-1].set(action)
         obs_history = jnp.roll(state.obs_history, -1, axis=0).at[-1].set(obs)
         new_state = SequenceHistoryState(
@@ -273,6 +278,10 @@ class DiscreteTokenizationWrapper(GymnaxWrapper):
     Each observation element is mapped to one of n_bins integer tokens using
     uniform binning between obs_min and obs_max.  Useful for feeding Craftax
     symbolic observations into a discrete diffusion model such as ReMDM.
+
+    The returned observation dtype is int32 with values in [0, n_bins - 1].
+    Dimensions that are already integer-valued (e.g. Craftax categorical features)
+    work best when obs_min / obs_max are set to the true category bounds.
 
     Args:
         env:      Gymnax environment (or wrapper).
@@ -320,7 +329,7 @@ class DiscreteTokenizationWrapper(GymnaxWrapper):
 class PlannerState:
     env_state: Any
     current_plan: chex.Array  # [num_envs, plan_horizon]  int32
-    plan_step: int             # position within the active planning window
+    plan_step: int
 
 
 class PlannerWrapper(GymnaxWrapper):
@@ -398,14 +407,12 @@ class PlannerWrapper(GymnaxWrapper):
             (plan_key, model_params, last_obs),
         )
 
-        # Extract the per-env action for the current position in the plan.
         action = current_plan[:, state.plan_step]
 
         obs, env_state, reward, done, info = self._env.step(
             step_key, state.env_state, action, env_params
         )
 
-        # Advance the step counter; wrap back to 0 to trigger the next replan.
         new_plan_step = (state.plan_step + 1) % self.replan_every
         new_state = PlannerState(
             env_state=env_state,

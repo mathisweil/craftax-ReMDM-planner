@@ -2,7 +2,6 @@ import jax.numpy as jnp
 import numpy as np
 import flax.linen as nn
 from flax.linen.initializers import constant, orthogonal
-from typing import Sequence, Optional
 
 
 class SinusoidalPosEmbed(nn.Module):
@@ -37,7 +36,7 @@ class TransformerBlock(nn.Module):
     deterministic: bool = True
 
     @nn.compact
-    def __call__(self, x):
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         # x: [batch, seq_len, d_model]
         h = nn.LayerNorm()(x)
         h = nn.MultiHeadDotProductAttention(
@@ -69,7 +68,7 @@ class DenoisingTransformer(nn.Module):
     each position in the plan.
 
     The MASK token has id = num_actions (appended to the action vocabulary).
-    Output logits have shape [batch, plan_horizon, num_actions], no logit
+    Output logits have shape [batch, plan_horizon, num_actions] — no logit
     for the MASK token since the model only predicts real actions.
     """
 
@@ -84,7 +83,13 @@ class DenoisingTransformer(nn.Module):
     dropout_rate: float = 0.1
 
     @nn.compact
-    def __call__(self, obs, noisy_actions, timestep, deterministic: bool = True):
+    def __call__(
+        self,
+        obs: jnp.ndarray,
+        noisy_actions: jnp.ndarray,
+        timestep: jnp.ndarray,
+        deterministic: bool = True,
+    ) -> jnp.ndarray:
         """
         Args:
             obs:            [batch, obs_dim] float32
@@ -96,7 +101,7 @@ class DenoisingTransformer(nn.Module):
             logits: [batch, plan_horizon, num_actions] float32
         """
         batch_size = obs.shape[0]
-        vocab_size = self.num_actions + 1
+        vocab_size = self.num_actions + 1  # +1 for MASK token
 
         # --- Observation encoder (MLP) ---
         obs_emb = obs
@@ -141,7 +146,7 @@ class DenoisingTransformer(nn.Module):
         seq = jnp.concatenate([cond_token, action_emb], axis=1)
         # seq: [batch, 1 + plan_horizon, d_model]
 
-        # --- Transformer blocks ---
+        # --- Transformer blocks (bidirectional) ---
         for _ in range(self.n_layers):
             seq = TransformerBlock(
                 d_model=self.d_model,

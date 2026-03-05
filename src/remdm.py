@@ -109,7 +109,7 @@ def compute_loss(
 
     # Compute weight: -alpha'(t) / (1 - alpha_t), via finite difference
     alpha_t_plus = schedule_fn(jnp.minimum(t + dt, 1.0))
-    neg_alpha_dot = (alpha_t - alpha_t_plus) / dt  # positive since alpha is decreasing
+    neg_alpha_dot = (alpha_t - alpha_t_plus) / dt
     weight = neg_alpha_dot / jnp.maximum(1.0 - alpha_t, eps)
     # weight: [batch]
 
@@ -203,9 +203,6 @@ def remask_loop(
 ) -> jnp.ndarray:
     """Remasking active only in time window [t_off, t_on] (reverse time).
 
-    Note: t_on > t_off since t goes from 1 -> 0 during sampling.
-    Within the window, uses rescale strategy. Outside, sigma = 0.
-
     Returns:
         sigma: scalar or broadcastable.
     """
@@ -270,15 +267,13 @@ def sample_plan(
     mask_val = jnp.array(mask_token_id, dtype=jnp.int32)
     strategy_idx = STRATEGY_MAP[remask_strategy]
 
-    # Start fully masked
     z = jnp.full((batch_size, plan_horizon), mask_token_id, dtype=jnp.int32)
 
     def _denoise_step(carry, step_idx):
         z, rng = carry
         rng, unmask_rng, remask_rng = jax.random.split(rng, 3)
 
-        # Timesteps: step_idx goes 0..T-1, representing reverse time T..1
-        i = num_steps - step_idx  # i: T, T-1, ..., 1
+        i = num_steps - step_idx 
         t = i / num_steps
         s = (i - 1) / num_steps
 
