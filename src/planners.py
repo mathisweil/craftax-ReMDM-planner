@@ -12,12 +12,21 @@ Usage:
     # Online fine-tuning (optionally loading an offline pre-trained model)
     python planners.py --mode online
     python planners.py --mode online --offline_checkpoint_path /path/to/offline_ckpt
+
+    # Evaluate a trained model
+    python planners.py --mode inference --checkpoint_path /path/to/ckpt
+
+All defaults are loaded from configs/defaults.yaml.  Any argument can be
+overridden on the command line, e.g.:
+    python planners.py --mode online --lr 1e-4 --num_envs 64
 """
 
 import argparse
 import os
+import pathlib
 import sys
 import time
+import yaml
 
 import jax
 import jax.numpy as jnp
@@ -41,9 +50,58 @@ from remdm import (
     linear_schedule,
     sample_plan,
 )
-from wrappers import AutoResetEnvWrapper, BatchEnvWrapper, LogWrapper
+from wrappers import AutoResetEnvWrapper, BatchEnvWrapper, LogWrapper, PlannerWrapper
 
 SCHEDULE_MAP = {"cosine": cosine_schedule, "linear": linear_schedule}
+
+
+# =============================================================================
+# PPO config helper
+# =============================================================================
+
+
+def _build_ppo_config(config: dict) -> dict:
+    """Build a PPO training config from the PPO_-prefixed keys in the master config.
+
+    The returned dict uses the uppercase key names that ppo_rnn.make_train and
+    ppo_rnd.make_train expect.  Wandb logging is disabled for inline PPO training
+    to avoid conflicts with the diffusion training run.
+    """
+    return {
+        "ENV_NAME": config["ENV_NAME"],
+        "TOTAL_TIMESTEPS": config["PPO_TOTAL_TIMESTEPS"],
+        "NUM_STEPS": config["PPO_NUM_STEPS"],
+        "NUM_ENVS": config["PPO_NUM_ENVS"],
+        "LR": config["PPO_LR"],
+        "UPDATE_EPOCHS": config["PPO_UPDATE_EPOCHS"],
+        "NUM_MINIBATCHES": config["PPO_NUM_MINIBATCHES"],
+        "GAMMA": config["PPO_GAMMA"],
+        "GAE_LAMBDA": config["PPO_GAE_LAMBDA"],
+        "CLIP_EPS": config["PPO_CLIP_EPS"],
+        "ENT_COEF": config["PPO_ENT_COEF"],
+        "VF_COEF": config["PPO_VF_COEF"],
+        "MAX_GRAD_NORM": config["MAX_GRAD_NORM"],
+        "LAYER_SIZE": config["PPO_LAYER_SIZE"],
+        "ANNEAL_LR": config["PPO_ANNEAL_LR"],
+        "USE_OPTIMISTIC_RESETS": config["PPO_USE_OPTIMISTIC_RESETS"],
+        "OPTIMISTIC_RESET_RATIO": config["PPO_OPTIMISTIC_RESET_RATIO"],
+        # Disable wandb for inline PPO so it doesn't conflict with the main run
+        "USE_WANDB": False,
+        "DEBUG": False,
+        "NUM_REPEATS": 1,
+        "WANDB_PROJECT": config.get("WANDB_PROJECT", ""),
+        "WANDB_ENTITY": config.get("WANDB_ENTITY", ""),
+        # RND-specific keys (ignored by ppo_rnn)
+        "USE_RND": config.get("PPO_USE_RND", True),
+        "RND_LAYER_SIZE": config.get("PPO_RND_LAYER_SIZE", 256),
+        "RND_OUTPUT_SIZE": config.get("PPO_RND_OUTPUT_SIZE", 512),
+        "RND_LR": config.get("PPO_RND_LR", 3.0e-4),
+        "RND_REWARD_COEFF": config.get("PPO_RND_REWARD_COEFF", 1.0),
+        "RND_LOSS_COEFF": config.get("PPO_RND_LOSS_COEFF", 0.01),
+        "RND_GAE_COEFF": config.get("PPO_RND_GAE_COEFF", 0.01),
+        "RND_IS_EPISODIC": config.get("PPO_RND_IS_EPISODIC", False),
+        "EXPLORATION_UPDATE_EPOCHS": config.get("PPO_EXPLORATION_UPDATE_EPOCHS", 1),
+    }
 
 
 # =============================================================================
@@ -52,58 +110,126 @@ SCHEDULE_MAP = {"cosine": cosine_schedule, "linear": linear_schedule}
 
 
 def collect_offline_data(config: dict) -> None:
-    """Roll out a trained PPO agent and save (obs, actions, dones) to disk.
+    """Roll out a PPO policy and save (obs, actions, dones) to disk.
 
-    Restores the network from a W&B-style orbax checkpoint directory and
-    runs it for COLLECT_NUM_STEPS steps across COLLECT_NUM_ENVS parallel
-    environments.  The resulting flat arrays are written to OFFLINE_DATA_PATH.
+    Three variants controlled by PPO_VARIANT:
+        "checkpoint" — restore a pre-trained ActorCritic from PPO_CHECKPOINT_PATH.
+        "rnn"        — train a fresh PPO-RNN agent (ppo_rnn.make_train) then collect.
+        "rnd"        — train a fresh PPO-RND agent (ppo_rnd.make_train) then collect.
+
+    In all cases the rollout saves COLLECT_NUM_STEPS transitions from
+    COLLECT_NUM_ENVS parallel environments to OFFLINE_DATA_PATH.
     """
-    from models.actor_critic import ActorCritic
+    ppo_variant = config.get("PPO_VARIANT", "checkpoint")
 
     env = make_craftax_env_from_name(config["ENV_NAME"], True)
     env_params = env.default_params
+    num_actions = env.action_space(env_params).n
     num_envs = config["COLLECT_NUM_ENVS"]
 
     env_w = LogWrapper(env)
     env_w = AutoResetEnvWrapper(env_w)
     env_w = BatchEnvWrapper(env_w, num_envs=num_envs)
 
-    # Restore PPO actor-critic
-    network = ActorCritic(env.action_space(env_params).n, config["LAYER_SIZE"])
     rng = jax.random.PRNGKey(config["SEED"])
-    rng, init_rng, env_rng = jax.random.split(rng, 3)
-    dummy_obs = jnp.zeros((1, *env.observation_space(env_params).shape))
-    tx = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(2e-4, eps=1e-5))
-    train_state = TrainState.create(
-        apply_fn=network.apply,
-        params=network.init(init_rng, dummy_obs),
-        tx=tx,
-    )
+    rng, env_rng, collect_rng = jax.random.split(rng, 3)
 
-    checkpointer = PyTreeCheckpointer()
-    ckpt_mgr = CheckpointManager(
-        config["PPO_CHECKPOINT_PATH"],
-        checkpointer,
-        CheckpointManagerOptions(max_to_keep=1, create=True),
-    )
-    train_state = ckpt_mgr.restore(ckpt_mgr.latest_step(), items=train_state)  # type: ignore[assignment]
-    print(f"Restored PPO checkpoint (step={ckpt_mgr.latest_step()})")
+    # ── Obtain trained policy ──────────────────────────────────────────────────
+    if ppo_variant == "rnn":
+        from ppo_rnn import ActorCriticRNN, ScannedRNN
+        from ppo_rnn import make_train as _make_ppo
 
+        ppo_config = _build_ppo_config(config)
+        rng, ppo_rng = jax.random.split(rng)
+        print("Training PPO-RNN agent for data collection...")
+        out = jax.jit(_make_ppo(ppo_config))(ppo_rng)
+        ppo_params = out["runner_state"][0].params
+        network = ActorCriticRNN(num_actions, config=ppo_config)
+        init_hstate = ScannedRNN.initialize_carry(num_envs, ppo_config["LAYER_SIZE"])
+        print("PPO-RNN training complete.")
+
+        @jax.jit
+        def _step(rng, env_state, obs, done, hstate):
+            rng, k1, k2 = jax.random.split(rng, 3)
+            ac_in = (obs[np.newaxis, :], done[np.newaxis, :])
+            hstate, pi, _ = network.apply(ppo_params, hstate, ac_in)
+            action = pi.sample(seed=k1).squeeze(0)
+            obs_next, env_state, _, done_next, _ = env_w.step(
+                k2, env_state, action, env_params
+            )
+            return rng, env_state, obs_next, action, done_next, hstate
+
+    elif ppo_variant == "rnd":
+        from models.rnd import ActorCriticRND
+        from ppo_rnd import make_train as _make_ppo
+
+        ppo_config = _build_ppo_config(config)
+        rng, ppo_rng = jax.random.split(rng)
+        print("Training PPO-RND agent for data collection...")
+        out = jax.jit(_make_ppo(ppo_config))(ppo_rng)
+        ppo_params = out["runner_state"][0].params
+        network = ActorCriticRND(num_actions, ppo_config["LAYER_SIZE"])
+        init_hstate = jnp.zeros(())  # unused, keeps rollout loop uniform
+        print("PPO-RND training complete.")
+
+        @jax.jit
+        def _step(rng, env_state, obs, done, hstate):
+            rng, k1, k2 = jax.random.split(rng, 3)
+            pi, _, _ = network.apply(ppo_params, obs)
+            action = pi.sample(seed=k1)
+            obs_next, env_state, _, done_next, _ = env_w.step(
+                k2, env_state, action, env_params
+            )
+            return rng, env_state, obs_next, action, done_next, hstate
+
+    else:  # "checkpoint"
+        from models.actor_critic import ActorCritic
+
+        assert config.get("PPO_CHECKPOINT_PATH"), (
+            "PPO_CHECKPOINT_PATH is required when ppo_variant='checkpoint'"
+        )
+        network = ActorCritic(num_actions, config["LAYER_SIZE"])
+        rng, init_rng = jax.random.split(rng)
+        dummy_obs = jnp.zeros((1, *env.observation_space(env_params).shape))
+        tmp_tx = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(2e-4, eps=1e-5))
+        tmp_ts = TrainState.create(
+            apply_fn=network.apply,
+            params=network.init(init_rng, dummy_obs),
+            tx=tmp_tx,
+        )
+        checkpointer = PyTreeCheckpointer()
+        ckpt_mgr = CheckpointManager(
+            config["PPO_CHECKPOINT_PATH"],
+            checkpointer,
+            CheckpointManagerOptions(max_to_keep=1, create=True),
+        )
+        tmp_ts = ckpt_mgr.restore(ckpt_mgr.latest_step(), items=tmp_ts)
+        ppo_params = tmp_ts.params
+        init_hstate = jnp.zeros(())  # unused, keeps rollout loop uniform
+        print(f"Restored PPO checkpoint (step={ckpt_mgr.latest_step()})")
+
+        @jax.jit
+        def _step(rng, env_state, obs, done, hstate):
+            rng, k1, k2 = jax.random.split(rng, 3)
+            pi, _ = network.apply(ppo_params, obs)
+            action = pi.sample(seed=k1)
+            obs_next, env_state, _, done_next, _ = env_w.step(
+                k2, env_state, action, env_params
+            )
+            return rng, env_state, obs_next, action, done_next, hstate
+
+    # ── Unified rollout ────────────────────────────────────────────────────────
     obs, env_state = env_w.reset(env_rng, env_params)
-
-    @jax.jit
-    def _step(rng, env_state, obs):
-        pi, _ = network.apply(train_state.params, obs)  # type: ignore[union-attr]
-        rng, k1, k2 = jax.random.split(rng, 3)
-        action = pi.sample(seed=k1)
-        obs_next, env_state, _, done, _ = env_w.step(k2, env_state, action, env_params)
-        return rng, env_state, obs_next, action, done
+    done = jnp.zeros(num_envs, dtype=bool)
+    hstate = init_hstate
 
     num_iters = config["COLLECT_NUM_STEPS"] // num_envs
     all_obs, all_actions, all_dones = [], [], []
 
     for i in range(num_iters):
-        rng, env_state, obs_next, action, done = _step(rng, env_state, obs)
+        collect_rng, env_state, obs_next, action, done, hstate = _step(
+            collect_rng, env_state, obs, done, hstate
+        )
         all_obs.append(np.array(obs))
         all_actions.append(np.array(action))
         all_dones.append(np.array(done))
@@ -228,7 +354,7 @@ def make_train_offline(config: dict, offline_data: dict):
 # =============================================================================
 
 
-def make_train_online(config: dict):
+def make_train_online(config: dict, init_params=None):
     """Return train(rng) for online fine-tuning with the diffusion model as policy.
 
     At each update step:
@@ -237,7 +363,8 @@ def make_train_online(config: dict):
       3. Fine-tune the model on those pairs for UPDATE_EPOCHS passes.
 
     Args:
-        config: Configuration dict (all-uppercase keys).
+        config:      Configuration dict (all-uppercase keys).
+        init_params: Optional pre-loaded model parameters (e.g. from offline checkpoint).
 
     Returns:
         train: Callable[[PRNGKey], dict] — JIT-able training function.
@@ -261,6 +388,8 @@ def make_train_online(config: dict):
     schedule_fn = SCHEDULE_MAP[config["DIFFUSION_SCHEDULE"]]
     remask_strategy = config["REMASK_STRATEGY"]
     eta = config["ETA"]
+    t_on = config.get("T_ON", 0.7)
+    t_off = config.get("T_OFF", 0.3)
     num_plan_cycles = config["NUM_STEPS"] // replan_every
 
     env_w = LogWrapper(env)
@@ -292,22 +421,8 @@ def make_train_online(config: dict):
         dummy_t = jnp.zeros((1,))
         params = model.init(init_rng, dummy_obs, dummy_act, dummy_t)
 
-        # Optionally warm-start from an offline checkpoint
-        if config.get("OFFLINE_CHECKPOINT_PATH"):
-            checkpointer = PyTreeCheckpointer()
-            ckpt_mgr = CheckpointManager(
-                config["OFFLINE_CHECKPOINT_PATH"],
-                checkpointer,
-                CheckpointManagerOptions(max_to_keep=1, create=True),
-            )
-            tmp_ts = TrainState.create(
-                apply_fn=model.apply,
-                params=params,
-                tx=optax.adam(config["LR"]),
-            )
-            tmp_ts = ckpt_mgr.restore(ckpt_mgr.latest_step(), items=tmp_ts)  # type: ignore[assignment]
-            params = tmp_ts.params  # type: ignore[union-attr]
-            print(f"Loaded offline checkpoint (step={ckpt_mgr.latest_step()})")
+        if init_params is not None:
+            params = init_params
 
         tx = optax.chain(
             optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
@@ -337,6 +452,8 @@ def make_train_online(config: dict):
                     schedule_fn,
                     remask_strategy,
                     eta,
+                    t_on,
+                    t_off,
                 )
                 # plan: [num_envs, plan_horizon]
 
@@ -538,10 +655,44 @@ def run_online(config: dict) -> None:
             name=f"remdm-online-{config['ENV_NAME']}",
         )
 
+    # Load offline checkpoint OUTSIDE JIT (I/O cannot happen inside JIT)
+    init_params = None
+    if config.get("OFFLINE_CHECKPOINT_PATH"):
+        plan_horizon = config["PLAN_HORIZON"]
+        num_actions = config["NUM_ACTIONS"]
+        obs_dim = env.observation_space(env.default_params).shape[0]
+        tmp_model = DenoisingTransformer(
+            num_actions=num_actions,
+            plan_horizon=plan_horizon,
+            d_model=config["D_MODEL"],
+            n_heads=config["N_HEADS"],
+            n_layers=config["N_LAYERS"],
+            d_ff=config["D_FF"],
+            obs_encoder_layers=config["OBS_ENCODER_LAYERS"],
+            obs_encoder_width=config["OBS_ENCODER_WIDTH"],
+            dropout_rate=config["DROPOUT_RATE"],
+        )
+        tmp_rng = jax.random.PRNGKey(0)
+        dummy_obs = jnp.zeros((1, obs_dim))
+        dummy_act = jnp.zeros((1, plan_horizon), dtype=jnp.int32)
+        dummy_t = jnp.zeros((1,))
+        tmp_params = tmp_model.init(tmp_rng, dummy_obs, dummy_act, dummy_t)
+        tmp_tx = optax.adam(config["LR"])
+        tmp_ts = TrainState.create(apply_fn=tmp_model.apply, params=tmp_params, tx=tmp_tx)
+        checkpointer = PyTreeCheckpointer()
+        ckpt_mgr = CheckpointManager(
+            config["OFFLINE_CHECKPOINT_PATH"],
+            checkpointer,
+            CheckpointManagerOptions(max_to_keep=1, create=True),
+        )
+        tmp_ts = ckpt_mgr.restore(ckpt_mgr.latest_step(), items=tmp_ts)
+        init_params = tmp_ts.params
+        print(f"Loaded offline checkpoint (step={ckpt_mgr.latest_step()})")
+
     rng = jax.random.PRNGKey(config["SEED"])
     rngs = jax.random.split(rng, config["NUM_REPEATS"])
 
-    train_fn = make_train_online(config)
+    train_fn = make_train_online(config, init_params=init_params)
     train_jit = jax.jit(train_fn)
     train_vmap = jax.vmap(train_jit)
 
@@ -558,99 +709,268 @@ def run_online(config: dict) -> None:
 
 
 # =============================================================================
+# Inference (using PlannerWrapper)
+# =============================================================================
+
+
+def run_inference(config: dict) -> None:
+    """Evaluate a trained diffusion planner using PlannerWrapper.
+
+    Loads a checkpoint, wraps the environment with PlannerWrapper for
+    automatic plan generation and execution, and runs for EVAL_STEPS steps.
+    """
+    env = make_craftax_env_from_name(config["ENV_NAME"], True)
+    env_params = env.default_params
+    num_actions = env.action_space(env_params).n
+    obs_dim = env.observation_space(env_params).shape[0]
+    config["NUM_ACTIONS"] = num_actions
+
+    num_envs = config["NUM_ENVS"]
+    plan_horizon = config["PLAN_HORIZON"]
+    replan_every = config["REPLAN_EVERY"]
+    diffusion_steps = config["DIFFUSION_STEPS"]
+    schedule_fn = SCHEDULE_MAP[config["DIFFUSION_SCHEDULE"]]
+    remask_strategy = config["REMASK_STRATEGY"]
+    eta = config["ETA"]
+    t_on = config.get("T_ON", 0.7)
+    t_off = config.get("T_OFF", 0.3)
+    eval_steps = config.get("EVAL_STEPS", 1000)
+
+    model = DenoisingTransformer(
+        num_actions=num_actions,
+        plan_horizon=plan_horizon,
+        d_model=config["D_MODEL"],
+        n_heads=config["N_HEADS"],
+        n_layers=config["N_LAYERS"],
+        d_ff=config["D_FF"],
+        obs_encoder_layers=config["OBS_ENCODER_LAYERS"],
+        obs_encoder_width=config["OBS_ENCODER_WIDTH"],
+        dropout_rate=config["DROPOUT_RATE"],
+    )
+
+    # Init and load checkpoint
+    rng = jax.random.PRNGKey(config["SEED"])
+    rng, init_rng = jax.random.split(rng)
+    dummy_obs = jnp.zeros((1, obs_dim))
+    dummy_act = jnp.zeros((1, plan_horizon), dtype=jnp.int32)
+    dummy_t = jnp.zeros((1,))
+    params = model.init(init_rng, dummy_obs, dummy_act, dummy_t)
+
+    assert config.get("CHECKPOINT_PATH"), "--checkpoint_path required for inference"
+    checkpointer = PyTreeCheckpointer()
+    ckpt_mgr = CheckpointManager(
+        config["CHECKPOINT_PATH"],
+        checkpointer,
+        CheckpointManagerOptions(max_to_keep=1, create=True),
+    )
+    tmp_ts = TrainState.create(
+        apply_fn=model.apply, params=params, tx=optax.adam(config["LR"]),
+    )
+    tmp_ts = ckpt_mgr.restore(ckpt_mgr.latest_step(), items=tmp_ts)
+    model_params = tmp_ts.params
+    print(f"Loaded checkpoint (step={ckpt_mgr.latest_step()})")
+
+    def _apply_inference(params, obs, z_t, t):
+        return model.apply(params, obs, z_t, t)
+
+    def planner_apply_fn(rng, model_params, obs):
+        return sample_plan(
+            _apply_inference, model_params, rng, obs,
+            num_actions, plan_horizon, diffusion_steps, schedule_fn,
+            remask_strategy, eta, t_on, t_off,
+        )
+
+    # Build wrapper stack: env → LogWrapper → AutoReset → Batch → Planner
+    env_w = LogWrapper(env)
+    env_w = AutoResetEnvWrapper(env_w)
+    env_w = BatchEnvWrapper(env_w, num_envs=num_envs)
+    env_w = PlannerWrapper(
+        env_w,
+        num_envs=num_envs,
+        plan_horizon=plan_horizon,
+        replan_every=replan_every,
+        planner_apply_fn=planner_apply_fn,
+    )
+
+    @jax.jit
+    def _eval_loop(rng):
+        rng, env_rng = jax.random.split(rng)
+        obs, state = env_w.reset(env_rng, env_params)
+
+        def _step(carry, _):
+            obs, state, rng = carry
+            rng, step_rng = jax.random.split(rng)
+            obs, state, action, reward, done, info = env_w.step(
+                step_rng, state, obs, model_params, env_params,
+            )
+            return (obs, state, rng), (reward, done, info)
+
+        (obs, state, rng), (rewards, dones, infos) = jax.lax.scan(
+            _step, (obs, state, rng), None, eval_steps,
+        )
+        return rewards, dones, infos
+
+    t0 = time.time()
+    rewards, dones, infos = _eval_loop(rng)
+    t1 = time.time()
+
+    ep_returns = infos["returned_episode_returns"]
+    ep_mask = infos["returned_episode"]
+    completed = ep_mask.sum()
+    mean_return = jnp.where(
+        completed > 0,
+        (ep_returns * ep_mask).sum() / completed,
+        jnp.nan,
+    )
+    print(f"Eval time: {t1 - t0:.1f}s ({eval_steps * num_envs} steps)")
+    print(f"Completed episodes: {int(completed)}")
+    print(f"Mean episode return: {float(mean_return):.2f}")
+    print(f"Mean step reward: {float(rewards.mean()):.4f}")
+
+
+# =============================================================================
 # CLI
 # =============================================================================
 
 if __name__ == "__main__":
+    # ── Load defaults from YAML ────────────────────────────────────────────────
+    _src_dir = pathlib.Path(__file__).parent
+    _default_cfg_path = _src_dir.parent / "configs" / "defaults.yaml"
+
+    # Pre-parse just --config so we can load the right file before building the
+    # full parser (avoids chicken-and-egg with set_defaults).
+    _pre = argparse.ArgumentParser(add_help=False)
+    _pre.add_argument("--config", type=str, default=str(_default_cfg_path))
+    _pre_args, _ = _pre.parse_known_args()
+
+    with open(_pre_args.config) as _f:
+        _yaml_defaults = yaml.safe_load(_f)
+    # YAML nulls become None, large ints stay int — no conversion needed.
+
+    # ── Build full parser (YAML values become argparse defaults) ───────────────
     parser = argparse.ArgumentParser(
-        description="ReMDM discrete diffusion planner for Craftax"
+        description="ReMDM discrete diffusion planner for Craftax",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    parser.add_argument(
+        "--config", type=str, default=str(_default_cfg_path),
+        help="Path to a YAML config file (overridden by any explicit CLI flag).",
     )
 
     # Mode
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["collect", "offline", "online"],
+        choices=["collect", "offline", "online", "inference"],
         required=True,
-        help="Training mode: collect offline data, train offline, or train online.",
+        help="Mode: collect offline data, train offline, train online, or run inference.",
     )
 
     # Environment
-    parser.add_argument("--env_name", type=str, default="Craftax-Symbolic-v1")
+    parser.add_argument("--env_name", type=str)
 
     # Diffusion model
-    parser.add_argument("--plan_horizon", type=int, default=32)
-    parser.add_argument("--diffusion_steps", type=int, default=50)
+    parser.add_argument("--plan_horizon", type=int)
+    parser.add_argument("--diffusion_steps", type=int)
+    parser.add_argument("--diffusion_schedule", type=str, choices=["cosine", "linear"])
     parser.add_argument(
-        "--diffusion_schedule", type=str, choices=["cosine", "linear"], default="cosine"
+        "--remask_strategy", type=str, choices=list(STRATEGY_MAP.keys()),
     )
-    parser.add_argument(
-        "--remask_strategy",
-        type=str,
-        choices=list(STRATEGY_MAP.keys()),
-        default="rescale",
-    )
-    parser.add_argument("--eta", type=float, default=0.5)
-    parser.add_argument("--t_on", type=float, default=0.7)
-    parser.add_argument("--t_off", type=float, default=0.3)
+    parser.add_argument("--eta", type=float)
+    parser.add_argument("--t_on", type=float)
+    parser.add_argument("--t_off", type=float)
 
     # Transformer architecture
-    parser.add_argument("--d_model", type=int, default=256)
-    parser.add_argument("--n_heads", type=int, default=4)
-    parser.add_argument("--n_layers", type=int, default=4)
-    parser.add_argument("--d_ff", type=int, default=512)
-    parser.add_argument("--obs_encoder_layers", type=int, default=2)
-    parser.add_argument("--obs_encoder_width", type=int, default=512)
-    parser.add_argument("--dropout_rate", type=float, default=0.1)
+    parser.add_argument("--d_model", type=int)
+    parser.add_argument("--n_heads", type=int)
+    parser.add_argument("--n_layers", type=int)
+    parser.add_argument("--d_ff", type=int)
+    parser.add_argument("--obs_encoder_layers", type=int)
+    parser.add_argument("--obs_encoder_width", type=int)
+    parser.add_argument("--dropout_rate", type=float)
 
     # Optimisation
-    parser.add_argument("--lr", type=float, default=3e-4)
-    parser.add_argument("--max_grad_norm", type=float, default=1.0)
-    parser.add_argument("--batch_size", type=int, default=256)
+    parser.add_argument("--lr", type=float)
+    parser.add_argument("--max_grad_norm", type=float)
+    parser.add_argument("--batch_size", type=int)
 
     # Offline training
-    parser.add_argument("--offline_data_path", type=str, default="trajectories.npz")
-    parser.add_argument(
-        "--num_train_steps", type=lambda x: int(float(x)), default=100_000
-    )
+    parser.add_argument("--offline_data_path", type=str)
+    parser.add_argument("--num_train_steps", type=lambda x: int(float(x)))
 
     # Online training
-    parser.add_argument("--num_envs", type=int, default=32)
-    parser.add_argument("--num_steps", type=int, default=128)
+    parser.add_argument("--num_envs", type=int)
+    parser.add_argument("--num_steps", type=int)
+    parser.add_argument("--num_updates", type=lambda x: int(float(x)))
+    parser.add_argument("--replan_every", type=int)
+    parser.add_argument("--update_epochs", type=int)
+    parser.add_argument("--num_minibatches", type=int)
     parser.add_argument(
-        "--num_updates", type=lambda x: int(float(x)), default=1_000
-    )
-    parser.add_argument("--replan_every", type=int, default=8)
-    parser.add_argument("--update_epochs", type=int, default=1)
-    parser.add_argument("--num_minibatches", type=int, default=4)
-    parser.add_argument(
-        "--offline_checkpoint_path",
-        type=str,
-        default=None,
+        "--offline_checkpoint_path", type=str,
         help="Path to an offline-trained checkpoint to warm-start online training.",
     )
 
-    # Data collection
-    parser.add_argument("--ppo_checkpoint_path", type=str, default=None)
+    # Inference
     parser.add_argument(
-        "--collect_num_steps", type=lambda x: int(float(x)), default=1_000_000
+        "--checkpoint_path", type=str,
+        help="Path to a trained model checkpoint for inference.",
     )
-    parser.add_argument("--collect_num_envs", type=int, default=64)
-    parser.add_argument("--layer_size", type=int, default=512)
+    parser.add_argument("--eval_steps", type=int)
+
+    # Data collection
+    parser.add_argument(
+        "--ppo_variant", type=str, choices=["rnn", "rnd", "checkpoint"],
+        help="PPO variant for data collection: train rnn/rnd from scratch, or load a checkpoint.",
+    )
+    parser.add_argument("--collect_num_steps", type=lambda x: int(float(x)))
+    parser.add_argument("--collect_num_envs", type=int)
+    parser.add_argument("--layer_size", type=int)
+    parser.add_argument(
+        "--ppo_checkpoint_path", type=str,
+        help="Path to a pre-trained PPO checkpoint (only used when --ppo_variant checkpoint).",
+    )
+
+    # PPO training (used when ppo_variant is rnn or rnd)
+    parser.add_argument("--ppo_total_timesteps", type=lambda x: int(float(x)))
+    parser.add_argument("--ppo_num_envs", type=int)
+    parser.add_argument("--ppo_num_steps", type=int)
+    parser.add_argument("--ppo_lr", type=float)
+    parser.add_argument("--ppo_update_epochs", type=int)
+    parser.add_argument("--ppo_num_minibatches", type=int)
+    parser.add_argument("--ppo_gamma", type=float)
+    parser.add_argument("--ppo_gae_lambda", type=float)
+    parser.add_argument("--ppo_clip_eps", type=float)
+    parser.add_argument("--ppo_ent_coef", type=float)
+    parser.add_argument("--ppo_vf_coef", type=float)
+    parser.add_argument("--ppo_layer_size", type=int)
+    parser.add_argument("--ppo_anneal_lr", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--ppo_use_optimistic_resets", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--ppo_optimistic_reset_ratio", type=int)
+
+    # PPO-RND specific
+    parser.add_argument("--ppo_use_rnd", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--ppo_rnd_layer_size", type=int)
+    parser.add_argument("--ppo_rnd_output_size", type=int)
+    parser.add_argument("--ppo_rnd_lr", type=float)
+    parser.add_argument("--ppo_rnd_reward_coeff", type=float)
+    parser.add_argument("--ppo_rnd_loss_coeff", type=float)
+    parser.add_argument("--ppo_rnd_gae_coeff", type=float)
+    parser.add_argument("--ppo_rnd_is_episodic", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--ppo_exploration_update_epochs", type=int)
 
     # W&B / logging
-    parser.add_argument(
-        "--use_wandb", action=argparse.BooleanOptionalAction, default=True
-    )
-    parser.add_argument(
-        "--debug", action=argparse.BooleanOptionalAction, default=True
-    )
-    parser.add_argument("--wandb_project", type=str, default="remdm-craftax")
-    parser.add_argument("--wandb_entity", type=str, default="")
-    parser.add_argument("--save_policy", action="store_true")
-    parser.add_argument("--num_repeats", type=int, default=1)
-    parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument("--jit", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--use_wandb", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--debug", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--wandb_project", type=str)
+    parser.add_argument("--wandb_entity", type=str)
+    parser.add_argument("--save_policy", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--num_repeats", type=int)
+    parser.add_argument("--seed", type=int)
+    parser.add_argument("--jit", action=argparse.BooleanOptionalAction)
+
+    # Inject YAML values as argparse defaults (CLI flags override them)
+    parser.set_defaults(**_yaml_defaults)
 
     args, rest = parser.parse_known_args(sys.argv[1:])
     if rest:
@@ -660,15 +980,22 @@ if __name__ == "__main__":
         args.seed = np.random.randint(2**31)
 
     config = {k.upper(): v for k, v in vars(args).items()}
+    # Remove the config-file path itself from the downstream config dict
+    config.pop("CONFIG", None)
 
     def _run():
         if config["MODE"] == "collect":
-            assert config["PPO_CHECKPOINT_PATH"], "--ppo_checkpoint_path required"
+            if config.get("PPO_VARIANT", "checkpoint") == "checkpoint":
+                assert config.get("PPO_CHECKPOINT_PATH"), (
+                    "--ppo_checkpoint_path is required when --ppo_variant checkpoint"
+                )
             run_collect(config)
         elif config["MODE"] == "offline":
             run_offline(config)
         elif config["MODE"] == "online":
             run_online(config)
+        elif config["MODE"] == "inference":
+            run_inference(config)
 
     if args.jit:
         _run()

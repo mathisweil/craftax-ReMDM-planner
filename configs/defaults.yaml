@@ -1,0 +1,92 @@
+# =============================================================================
+# ReMDM default configuration
+# All values can be overridden via CLI args (e.g. --lr 1e-4).
+# =============================================================================
+
+# ── Environment ──────────────────────────────────────────────────────────────
+env_name: "Craftax-Symbolic-v1"
+
+# ── Diffusion model ───────────────────────────────────────────────────────────
+plan_horizon: 32          # Length of the action plan H
+diffusion_steps: 50       # Number of denoising steps T at inference
+diffusion_schedule: "cosine"   # Noise schedule: cosine | linear
+remask_strategy: "rescale"     # Remasking strategy: rescale | cap | conf | loop
+eta: 0.5                  # Remasking strength
+t_on: 0.7                 # Loop strategy: upper time bound for remasking window
+t_off: 0.3                # Loop strategy: lower time bound for remasking window
+
+# ── Transformer architecture ─────────────────────────────────────────────────
+d_model: 256              # Transformer hidden dimension
+n_heads: 4                # Number of attention heads
+n_layers: 4               # Number of transformer blocks
+d_ff: 512                 # FFN inner dimension
+obs_encoder_layers: 2     # Number of MLP layers in the observation encoder
+obs_encoder_width: 512    # Width of observation encoder hidden layers
+dropout_rate: 0.1         # Dropout rate (disabled at inference via deterministic=True)
+
+# ── Optimisation ─────────────────────────────────────────────────────────────
+lr: 3.0e-4                # Adam learning rate
+max_grad_norm: 1.0        # Gradient clipping norm
+batch_size: 256           # Minibatch size for offline training
+
+# ── Offline training ─────────────────────────────────────────────────────────
+offline_data_path: "trajectories.npz"   # Path to .npz file produced by --mode collect
+num_train_steps: 100000   # Number of gradient steps for offline training
+
+# ── Online training ──────────────────────────────────────────────────────────
+num_envs: 32              # Number of parallel environments
+num_steps: 128            # Environment steps per update (must be divisible by replan_every)
+num_updates: 1000         # Number of outer update iterations
+replan_every: 8           # Steps to execute from a plan before replanning (≤ plan_horizon)
+update_epochs: 1          # Gradient passes over each collected batch
+num_minibatches: 4        # Number of minibatches per epoch
+offline_checkpoint_path: null  # Optional: offline checkpoint to warm-start online training
+
+# ── Inference / evaluation ───────────────────────────────────────────────────
+checkpoint_path: null     # Path to trained checkpoint (required for --mode inference)
+eval_steps: 1000          # Number of environment steps to run during evaluation
+
+# ── Data collection ──────────────────────────────────────────────────────────
+ppo_variant: "rnn"             # Which PPO agent to use: rnn | rnd | checkpoint
+collect_num_steps: 1000000     # Total env steps to collect
+collect_num_envs: 64           # Parallel environments during collection
+layer_size: 512                # Hidden layer width of the checkpoint ActorCritic to restore
+ppo_checkpoint_path: null      # Path to pre-trained PPO checkpoint (ppo_variant=checkpoint only)
+
+# ── PPO training (used when ppo_variant is "rnn" or "rnd") ──────────────────
+ppo_total_timesteps: 500000000  # PPO training budget (5e8 steps)
+ppo_num_envs: 1024             # Parallel envs during PPO training
+ppo_num_steps: 64              # PPO rollout length per update
+ppo_lr: 2.0e-4                 # PPO learning rate
+ppo_update_epochs: 4           # PPO update epochs per collected batch
+ppo_num_minibatches: 8         # PPO minibatches per epoch
+ppo_gamma: 0.99                # Discount factor
+ppo_gae_lambda: 0.8            # GAE lambda
+ppo_clip_eps: 0.2              # PPO clip epsilon
+ppo_ent_coef: 0.01             # Entropy bonus coefficient
+ppo_vf_coef: 0.5               # Value-function loss coefficient
+ppo_layer_size: 512            # Hidden layer width of the PPO network
+ppo_anneal_lr: true            # Linearly anneal PPO learning rate
+ppo_use_optimistic_resets: true
+ppo_optimistic_reset_ratio: 16
+
+# ── PPO-RND specific (used when ppo_variant="rnd") ───────────────────────────
+ppo_use_rnd: true              # Enable Random Network Distillation intrinsic reward
+ppo_rnd_layer_size: 256        # RND hidden layer width
+ppo_rnd_output_size: 512       # RND embedding dimension
+ppo_rnd_lr: 3.0e-4             # RND distillation network learning rate
+ppo_rnd_reward_coeff: 1.0      # Intrinsic reward scale
+ppo_rnd_loss_coeff: 0.01       # RND distillation loss scale
+ppo_rnd_gae_coeff: 0.01        # Intrinsic advantage scale in combined GAE
+ppo_rnd_is_episodic: false     # Reset intrinsic reward at episode boundaries
+ppo_exploration_update_epochs: 1  # RND distillation update epochs
+
+# ── Logging / W&B ────────────────────────────────────────────────────────────
+use_wandb: true
+debug: true
+wandb_project: "remdm-craftax"
+wandb_entity: ""
+save_policy: false        # Save the model checkpoint at the end of training
+num_repeats: 1            # Number of independent training runs (vmapped)
+seed: null                # RNG seed (null → random)
+jit: true                 # Disable with --no-jit for easier debugging
