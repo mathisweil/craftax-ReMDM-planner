@@ -8,10 +8,23 @@ Notation:
     MASK    : special token with id = num_actions.
 """
 
+from typing import Any, Callable, Dict, Tuple
+
+import chex
 import jax
 import jax.numpy as jnp
-import chex
-from typing import Callable, Dict, Tuple, Any
+
+# ---------------------------------------------------------------------------
+# Type aliases
+# ---------------------------------------------------------------------------
+
+ScheduleFn = Callable[[jnp.ndarray], jnp.ndarray]
+"""Maps a diffusion time array to alpha_t (retention probability)."""
+
+ModelApplyFn = Callable[
+    [Any, jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray
+]
+"""fn(params, obs, z_t, t) -> logits [batch, H, num_actions]."""
 
 
 # =============================================================================
@@ -54,7 +67,6 @@ def forward_process(
         z_t: [batch, H] int32.
     """
     keep_probs = jax.random.uniform(rng, shape=x_0.shape)
-    # Broadcast alpha_t to [batch, 1] if batched
     if alpha_t.ndim >= 1:
         alpha_t = alpha_t[:, None]
     mask_val = jnp.array(mask_token_id, dtype=x_0.dtype)
@@ -66,16 +78,20 @@ def forward_process(
 # Training Loss (MDLM SUBS parameterization)
 # =============================================================================
 
+# Maximum weight for the time-dependent loss coefficient. Prevents numerical
+# instability when t is very small (alpha_t ≈ 1, denominator ≈ 0).
+_MAX_LOSS_WEIGHT: float = 1000.0
+
 
 def compute_loss(
-    model_apply: Callable,
+    model_apply: ModelApplyFn,
     params: Any,
     rng: chex.PRNGKey,
     x_0: jnp.ndarray,
     obs: jnp.ndarray,
-    mask_token_id: int,
-    schedule_fn: Callable,
-) -> Tuple[jnp.ndarray, Dict]:
+    num_actions: int,
+    schedule_fn: ScheduleFn,
+) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Compute the MDLM SUBS training loss.
 
     1. Sample t ~ Uniform[eps, 1.0] per batch element
@@ -91,13 +107,14 @@ def compute_loss(
         rng:            PRNG key.
         x_0:            [batch, H] int32, clean action sequences.
         obs:            [batch, obs_dim] float32, observations.
-        mask_token_id:  int, MASK token index.
+        num_actions:    int, number of real actions (MASK id = num_actions).
         schedule_fn:    cosine_schedule or linear_schedule.
 
     Returns:
         (scalar_loss, info_dict)
     """
     batch_size = x_0.shape[0]
+    mask_token_id = num_actions
     eps = 1e-5
     dt = 1e-3
 
@@ -111,7 +128,7 @@ def compute_loss(
     alpha_t_plus = schedule_fn(jnp.minimum(t + dt, 1.0))
     neg_alpha_dot = (alpha_t - alpha_t_plus) / dt
     weight = neg_alpha_dot / jnp.maximum(1.0 - alpha_t, eps)
-    # weight: [batch]
+    weight = jnp.minimum(weight, _MAX_LOSS_WEIGHT)
 
     # Forward process: mask tokens
     z_t = forward_process(mask_rng, x_0, alpha_t, mask_token_id)
@@ -132,7 +149,7 @@ def compute_loss(
     per_sample_loss = weight * (masked_ce.sum(axis=-1) / num_masked)
     loss = jnp.mean(per_sample_loss)
 
-    info = {
+    info: Dict[str, jnp.ndarray] = {
         "loss": loss,
         "mean_t": jnp.mean(t),
         "frac_masked": jnp.mean(is_masked),
@@ -184,10 +201,9 @@ def remask_conf(
     Returns:
         sigma: [batch, H] per-token remasking probabilities.
     """
-    s_max = _sigma_max(alpha_t, alpha_s)  # scalar or [batch]
+    s_max = _sigma_max(alpha_t, alpha_s)
     probs = jax.nn.softmax(logits, axis=-1)
     confidence = jnp.max(probs, axis=-1)  # [batch, H]
-    # Broadcast s_max to [batch, 1] if needed
     if s_max.ndim >= 1:
         s_max = s_max[:, None]
     return eta * s_max * (1.0 - confidence)
@@ -216,12 +232,12 @@ def remask_loop(
 # =============================================================================
 
 # Strategy index mapping (used inside JIT to avoid string dispatch)
-STRATEGY_RESCALE = 0
-STRATEGY_CAP = 1
-STRATEGY_CONF = 2
-STRATEGY_LOOP = 3
+STRATEGY_RESCALE: int = 0
+STRATEGY_CAP: int = 1
+STRATEGY_CONF: int = 2
+STRATEGY_LOOP: int = 3
 
-STRATEGY_MAP = {
+STRATEGY_MAP: Dict[str, int] = {
     "rescale": STRATEGY_RESCALE,
     "cap": STRATEGY_CAP,
     "conf": STRATEGY_CONF,
@@ -230,14 +246,14 @@ STRATEGY_MAP = {
 
 
 def sample_plan(
-    model_apply: Callable,
+    model_apply: ModelApplyFn,
     params: Any,
     rng: chex.PRNGKey,
     obs: jnp.ndarray,
     num_actions: int,
     plan_horizon: int,
     num_steps: int,
-    schedule_fn: Callable,
+    schedule_fn: ScheduleFn,
     remask_strategy: str,
     eta: float = 0.5,
     t_on: float = 0.7,
@@ -269,11 +285,14 @@ def sample_plan(
 
     z = jnp.full((batch_size, plan_horizon), mask_token_id, dtype=jnp.int32)
 
-    def _denoise_step(carry, step_idx):
+    def _denoise_step(
+        carry: Tuple[jnp.ndarray, chex.PRNGKey],
+        step_idx: jnp.ndarray,
+    ) -> Tuple[Tuple[jnp.ndarray, chex.PRNGKey], None]:
         z, rng = carry
         rng, unmask_rng, remask_rng = jax.random.split(rng, 3)
 
-        i = num_steps - step_idx 
+        i = num_steps - step_idx
         t = i / num_steps
         s = (i - 1) / num_steps
 
@@ -285,7 +304,7 @@ def sample_plan(
         logits = model_apply(params, obs, z, t_input)
         x_hat = jnp.argmax(logits, axis=-1)  # [batch, H]
 
-        is_masked = (z == mask_token_id)
+        is_masked = z == mask_token_id
         is_unmasked = ~is_masked
 
         # --- Unmask: for masked positions ---
@@ -295,22 +314,18 @@ def sample_plan(
         do_unmask = is_masked & (unmask_draw < p_unmask)
 
         # --- Remask: for unmasked positions ---
-        # Compute all four strategies, select by index
         sigma_rescale = remask_rescale(alpha_t, alpha_s, eta)
         sigma_cap = remask_cap(alpha_t, alpha_s, eta)
         sigma_conf = remask_conf(alpha_t, alpha_s, eta, logits)
         sigma_loop = remask_loop(alpha_t, alpha_s, eta, t, t_on, t_off)
 
-        # Broadcast scalars to [batch, H]
         sigma_rescale_bh = jnp.broadcast_to(sigma_rescale, z.shape)
         sigma_cap_bh = jnp.broadcast_to(sigma_cap, z.shape)
         sigma_loop_bh = jnp.broadcast_to(sigma_loop, z.shape)
-        # sigma_conf is already [batch, H]
 
         all_sigmas = jnp.stack(
             [sigma_rescale_bh, sigma_cap_bh, sigma_conf, sigma_loop_bh], axis=0
         )
-        # all_sigmas: [4, batch, H]
         sigma = all_sigmas[strategy_idx]  # [batch, H]
 
         remask_draw = jax.random.uniform(remask_rng, shape=z.shape)
