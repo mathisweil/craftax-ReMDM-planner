@@ -39,9 +39,14 @@ After creating the environment, initialise the `Craftax_Baselines` submodule:
 git submodule update --init --recursive
 ```
 
-Core dependencies: `jax[cuda12]`, `flax`, `optax`, `orbax-checkpoint`, `craftax`, `gymnax`, `distrax`, `chex`, `wandb`.
+Core dependencies: `jax`, `flax`, `optax`, `orbax-checkpoint`, `craftax`, `gymnax`, `distrax`, `chex`, `wandb`.
 
-> **GPU note**: the `environment.yml` pins `jax[cuda12]`. For CPU-only or different CUDA versions, edit that line before creating the environment.
+## GPU-Enabled JAX
+By default, both of the above methods will install JAX on the CPU.  If you want to run JAX on a GPU/TPU, you'll need to install the correct wheel for your system from <a href="https://github.com/google/jax?tab=readme-ov-file#installation">JAX</a>.
+For NVIDIA GPU the command is:
+```
+pip install -U "jax[cuda12]"
+```
 
 ---
 
