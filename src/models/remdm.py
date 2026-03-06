@@ -1,12 +1,15 @@
 """Core discrete diffusion logic for ReMDM (Remasking Discrete Diffusion Model).
 
-Notation:
-    alpha_t : probability that a token remains unmasked at time t.
-              alpha_0 = 1 (fully clean), alpha_1 = 0 (fully masked).
-    z_t     : noisy action sequence at time t (contains real tokens and MASK tokens).
-    x_0     : clean action sequence (ground truth).
-    MASK    : special token with id = num_actions.
+Notation
+--------
+alpha_t : probability that a token remains unmasked at time t.
+          alpha_0 = 1 (fully clean), alpha_1 = 0 (fully masked).
+z_t     : noisy action sequence at time t (contains real tokens and MASK tokens).
+x_0     : clean action sequence (ground truth).
+MASK    : special token with id = num_actions.
 """
+
+from __future__ import annotations
 
 from typing import Any, Callable, Dict, Tuple
 
@@ -70,16 +73,13 @@ def forward_process(
     if alpha_t.ndim >= 1:
         alpha_t = alpha_t[:, None]
     mask_val = jnp.array(mask_token_id, dtype=x_0.dtype)
-    z_t = jnp.where(keep_probs < alpha_t, x_0, mask_val)
-    return z_t
+    return jnp.where(keep_probs < alpha_t, x_0, mask_val)
 
 
 # =============================================================================
 # Training Loss (MDLM SUBS parameterization)
 # =============================================================================
 
-# Maximum weight for the time-dependent loss coefficient. Prevents numerical
-# instability when t is very small (alpha_t ≈ 1, denominator ≈ 0).
 _MAX_LOSS_WEIGHT: float = 1000.0
 
 
@@ -94,15 +94,15 @@ def compute_loss(
 ) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
     """Compute the MDLM SUBS training loss.
 
-    1. Sample t ~ Uniform[eps, 1.0] per batch element
-    2. Compute alpha_t, mask tokens to get z_t
-    3. Predict logits from model
-    4. Weighted cross-entropy on masked positions only
+    1. Sample t ~ Uniform[eps, 1.0] per batch element.
+    2. Compute alpha_t, mask tokens to get z_t.
+    3. Predict logits from model.
+    4. Weighted cross-entropy on masked positions only.
 
     The weight is -alpha'(t) / (1 - alpha_t), approximated via finite differences.
 
     Args:
-        model_apply:    fn(params, obs, z_t, t) -> logits [batch, H, num_actions]
+        model_apply:    fn(params, obs, z_t, t) -> logits [batch, H, num_actions].
         params:         Model parameters.
         rng:            PRNG key.
         x_0:            [batch, H] int32, clean action sequences.
@@ -120,30 +120,23 @@ def compute_loss(
 
     rng, t_rng, mask_rng = jax.random.split(rng, 3)
 
-    # Sample timestep
     t = jax.random.uniform(t_rng, shape=(batch_size,), minval=eps, maxval=1.0)
     alpha_t = schedule_fn(t)
 
-    # Compute weight: -alpha'(t) / (1 - alpha_t), via finite difference
     alpha_t_plus = schedule_fn(jnp.minimum(t + dt, 1.0))
     neg_alpha_dot = (alpha_t - alpha_t_plus) / dt
     weight = neg_alpha_dot / jnp.maximum(1.0 - alpha_t, eps)
     weight = jnp.minimum(weight, _MAX_LOSS_WEIGHT)
 
-    # Forward process: mask tokens
     z_t = forward_process(mask_rng, x_0, alpha_t, mask_token_id)
 
-    # Predict
-    logits = model_apply(params, obs, z_t, t)
-    # logits: [batch, H, num_actions]
+    logits = model_apply(params, obs, z_t, t)  # [batch, H, num_actions]
 
-    # Cross-entropy on masked positions only
     is_masked = (z_t == mask_token_id).astype(jnp.float32)  # [batch, H]
-    targets_one_hot = jax.nn.one_hot(x_0, logits.shape[-1])  # [batch, H, num_actions]
+    targets_one_hot = jax.nn.one_hot(x_0, num_actions)  # [batch, H, num_actions]
     log_probs = jax.nn.log_softmax(logits, axis=-1)
     ce = -jnp.sum(targets_one_hot * log_probs, axis=-1)  # [batch, H]
 
-    # Per-sample: average CE over masked positions, then weight by time
     masked_ce = ce * is_masked
     num_masked = jnp.maximum(is_masked.sum(axis=-1), 1.0)
     per_sample_loss = weight * (masked_ce.sum(axis=-1) / num_masked)
@@ -196,7 +189,10 @@ def remask_conf(
     Low-confidence predictions are remasked more aggressively.
 
     Args:
-        logits: [batch, H, num_actions]
+        alpha_t: Scalar or [batch].
+        alpha_s: Scalar or [batch].
+        eta:     Remasking strength.
+        logits:  [batch, H, num_actions].
 
     Returns:
         sigma: [batch, H] per-token remasking probabilities.
@@ -231,7 +227,6 @@ def remask_loop(
 # Reverse Sampling (Planning)
 # =============================================================================
 
-# Strategy index mapping (used inside JIT to avoid string dispatch)
 STRATEGY_RESCALE: int = 0
 STRATEGY_CAP: int = 1
 STRATEGY_CONF: int = 2
@@ -262,7 +257,7 @@ def sample_plan(
     """Generate an action plan via reverse diffusion with ReMDM remasking.
 
     Args:
-        model_apply:     fn(params, obs, z, t) -> logits [batch, H, num_actions]
+        model_apply:     fn(params, obs, z, t) -> logits [batch, H, num_actions].
         params:          Model parameters.
         rng:             PRNG key.
         obs:             [batch, obs_dim] float32.
@@ -292,14 +287,13 @@ def sample_plan(
         z, rng = carry
         rng, unmask_rng, remask_rng = jax.random.split(rng, 3)
 
-        i = num_steps - step_idx
-        t = i / num_steps
-        s = (i - 1) / num_steps
+        # step_idx=0 → t = (T-1)/T (high noise), step_idx=T-1 → t = 0/T (clean)
+        t = (num_steps - 1 - step_idx) / num_steps
+        s = jnp.maximum(t - 1.0 / num_steps, 0.0)
 
         alpha_t = schedule_fn(t)
         alpha_s = schedule_fn(s)
 
-        # Predict clean tokens
         t_input = jnp.full((batch_size,), t)
         logits = model_apply(params, obs, z, t_input)
         x_hat = jnp.argmax(logits, axis=-1)  # [batch, H]
@@ -307,13 +301,13 @@ def sample_plan(
         is_masked = z == mask_token_id
         is_unmasked = ~is_masked
 
-        # --- Unmask: for masked positions ---
+        # Unmask: for masked positions
         p_unmask = (alpha_s - alpha_t) / jnp.maximum(1.0 - alpha_t, 1e-8)
         p_unmask = jnp.clip(p_unmask, 0.0, 1.0)
         unmask_draw = jax.random.uniform(unmask_rng, shape=z.shape)
         do_unmask = is_masked & (unmask_draw < p_unmask)
 
-        # --- Remask: for unmasked positions ---
+        # Remask: for unmasked positions
         sigma_rescale = remask_rescale(alpha_t, alpha_s, eta)
         sigma_cap = remask_cap(alpha_t, alpha_s, eta)
         sigma_conf = remask_conf(alpha_t, alpha_s, eta, logits)
@@ -331,7 +325,6 @@ def sample_plan(
         remask_draw = jax.random.uniform(remask_rng, shape=z.shape)
         do_remask = is_unmasked & (remask_draw < sigma)
 
-        # Apply transitions
         z_new = jnp.where(do_unmask, x_hat, z)
         z_new = jnp.where(do_remask, mask_val, z_new)
 

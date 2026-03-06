@@ -1,3 +1,8 @@
+"""DenoisingTransformer: observation MLP encoder + sinusoidal time embedding
++ bidirectional transformer for masked discrete diffusion planning."""
+
+from __future__ import annotations
+
 import jax.numpy as jnp
 import numpy as np
 import flax.linen as nn
@@ -11,14 +16,16 @@ class SinusoidalPosEmbed(nn.Module):
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        """
+        """Embed scalar or integer values into d_model-dimensional sinusoidal features.
+
         Args:
-            x: arbitrary shape, float or int values to embed.
+            x: Arbitrary shape, float or int values to embed.
+
         Returns:
-            (*x.shape, d_model)
+            Tensor of shape ``(*x.shape, d_model)``.
         """
         half = self.d_model // 2
-        freqs = jnp.exp(-jnp.log(10000.0) * jnp.arange(half) / half)
+        freqs = jnp.exp(-jnp.log(10_000.0) * jnp.arange(half) / half)
         angles = x[..., None] * freqs
         emb = jnp.concatenate([jnp.sin(angles), jnp.cos(angles)], axis=-1)
         if self.d_model % 2 == 1:
@@ -37,7 +44,6 @@ class TransformerBlock(nn.Module):
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        # x: [batch, seq_len, d_model]
         h = nn.LayerNorm()(x)
         h = nn.MultiHeadDotProductAttention(
             num_heads=self.n_heads,
@@ -67,8 +73,8 @@ class DenoisingTransformer(nn.Module):
     diffusion timestep. Outputs logits over the real action vocabulary for
     each position in the plan.
 
-    The MASK token has id = num_actions (appended to the action vocabulary).
-    Output logits have shape [batch, plan_horizon, num_actions] — no logit
+    The MASK token has id = ``num_actions`` (appended to the action vocabulary).
+    Output logits have shape ``[batch, plan_horizon, num_actions]`` — no logit
     for the MASK token since the model only predicts real actions.
     """
 
@@ -90,15 +96,16 @@ class DenoisingTransformer(nn.Module):
         timestep: jnp.ndarray,
         deterministic: bool = True,
     ) -> jnp.ndarray:
-        """
+        """Forward pass.
+
         Args:
-            obs:            [batch, obs_dim] float32
-            noisy_actions:  [batch, plan_horizon] int32, values in [0, num_actions]
-            timestep:       [batch] float32, t in [0, 1]
-            deterministic:  bool, False enables dropout during training.
+            obs:            [batch, obs_dim] float32.
+            noisy_actions:  [batch, plan_horizon] int32, values in [0, num_actions].
+            timestep:       [batch] float32, t in [0, 1].
+            deterministic:  If ``False``, enables dropout during training.
 
         Returns:
-            logits: [batch, plan_horizon, num_actions] float32
+            logits: [batch, plan_horizon, num_actions] float32.
         """
         batch_size = obs.shape[0]
         vocab_size = self.num_actions + 1  # +1 for MASK token
@@ -114,8 +121,7 @@ class DenoisingTransformer(nn.Module):
             obs_emb = nn.relu(obs_emb)
         obs_emb = nn.Dense(
             self.d_model, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
-        )(obs_emb)
-        # obs_emb: [batch, d_model]
+        )(obs_emb)  # [batch, d_model]
 
         # --- Timestep embedding ---
         t = timestep.reshape(batch_size)
@@ -126,14 +132,12 @@ class DenoisingTransformer(nn.Module):
         t_emb = nn.gelu(t_emb)
         t_emb = nn.Dense(
             self.d_model, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
-        )(t_emb)
-        # t_emb: [batch, d_model]
+        )(t_emb)  # [batch, d_model]
 
         # --- Action token embedding ---
         action_emb = nn.Embed(num_embeddings=vocab_size, features=self.d_model)(
             noisy_actions
-        )
-        # action_emb: [batch, plan_horizon, d_model]
+        )  # [batch, plan_horizon, d_model]
 
         # --- Positional encoding for action sequence positions ---
         positions = jnp.arange(self.plan_horizon)
@@ -163,5 +167,4 @@ class DenoisingTransformer(nn.Module):
         logits = nn.Dense(
             self.num_actions, kernel_init=orthogonal(0.01), bias_init=constant(0.0)
         )(action_features)
-        # logits: [batch, plan_horizon, num_actions]
         return logits
