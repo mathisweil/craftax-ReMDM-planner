@@ -102,7 +102,7 @@ Both scripts save an `ActorCritic` checkpoint to the W&B run directory when `--s
 Roll out the trained PPO checkpoint and save `(obs, actions, dones)` as a `.npz` file. This lets you re-use the same data for multiple diffusion training runs.
 
 ```bash
-python -m src.planners.planners --mode collect \
+python main.py --mode collect \
     --ppo_checkpoint_path /path/to/ppo_checkpoint \
     --offline_data_path data/trajectories.npz \
     --collect_num_steps 1000000 \
@@ -118,7 +118,7 @@ The saved file has shape `[num_envs, num_iters, ...]`, preserving per-environmen
 Pass `--ppo_checkpoint_path` to `--mode offline` to skip saving trajectories. The PPO agent is rolled out live at each training step and the diffusion model is trained immediately on the collected windows.
 
 ```bash
-python -m src.planners.planners --mode offline \
+python main.py --mode offline \
     --ppo_checkpoint_path /path/to/ppo_checkpoint \
     --num_train_steps 100000 \
     --save_policy
@@ -131,7 +131,7 @@ This is the recommended approach when you want to iterate quickly on diffusion m
 ### Stage 3 — Train offline from saved trajectories
 
 ```bash
-python -m src.planners.planners --mode offline \
+python main.py --mode offline \
     --offline_data_path data/trajectories.npz \
     --num_train_steps 100000 \
     --save_policy
@@ -147,12 +147,12 @@ The diffusion model acts as its own policy: it generates plans, executes them in
 
 ```bash
 # Fine-tune from scratch
-python -m src.planners.planners --mode online \
+python main.py --mode online \
     --num_updates 1000 \
     --save_policy
 
 # Warm-start from an offline checkpoint
-python -m src.planners.planners --mode online \
+python main.py --mode online \
     --offline_checkpoint_path /path/to/offline_checkpoint \
     --num_updates 1000 \
     --save_policy
@@ -163,7 +163,7 @@ python -m src.planners.planners --mode online \
 ### Stage 5 — Evaluate
 
 ```bash
-python -m src.planners.planners --mode inference \
+python main.py --mode inference \
     --checkpoint_path /path/to/checkpoint \
     --eval_steps 1000 \
     --num_envs 32
@@ -179,7 +179,7 @@ All hyperparameters live in `configs/defaults.yaml`. Any value can be overridden
 
 ```bash
 # Example: override learning rate and plan horizon
-python -m src.planners.planners --mode offline \
+python main.py --mode offline \
     --ppo_checkpoint_path /path/to/ppo \
     --lr 1e-4 \
     --plan_horizon 64
@@ -188,7 +188,7 @@ python -m src.planners.planners --mode offline \
 You can also point to a custom config file:
 
 ```bash
-python -m src.planners.planners --mode online --config configs/my_experiment.yaml
+python main.py --mode online --config configs/my_experiment.yaml
 ```
 
 ### Key hyperparameters
@@ -305,12 +305,14 @@ craftax-ReMDM-planner2/
 │   └── defaults.yaml              # All hyperparameters
 ├── src/
 │   ├── planners/
-│   │   └── planners.py            # Main entry point (collect/offline/online/inference)
+│   │   ├── utils.py               # Planner utilities
+│   │   └── planners.py            # collect/offline/online/inference
 │   ├── models/
 │   │   ├── denoiser.py            # DenoisingTransformer
 │   │   └── remdm.py               # Diffusion core: schedules, loss, remasking, sampling
 │   └── envs/
 │       └── wrappers.py            # Project-specific wrappers (PlannerWrapper, etc.)
+├── main.py                        # Main entry point
 ├── environment.yml                # Conda environment spec
 └── README.md
 ```
