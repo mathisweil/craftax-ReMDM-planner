@@ -238,8 +238,7 @@ class SequenceHistoryWrapper(GymnaxWrapper):
     @partial(jax.jit, static_argnums=(0, 2))
     def reset(self, key: chex.PRNGKey, params=None):
         obs, env_state = self._env.reset(key, params)
-        # Fill the entire history with the first observation so there are no
-        # zero-padded "phantom" steps at the start of an episode.
+
         obs_history = jnp.tile(obs[None], [self.history_len] + [1] * len(self.obs_shape))
         act_history = jnp.zeros(self.history_len, dtype=jnp.int32)
         state = SequenceHistoryState(
@@ -254,9 +253,7 @@ class SequenceHistoryWrapper(GymnaxWrapper):
         obs, env_state, reward, done, info = self._env.step(
             key, state.env_state, action, params
         )
-        # Shift left (drop oldest entry at index 0) and append the new value at -1.
-        # act_history[i] records the action taken from obs_history[i], so we store
-        # the current action before overwriting obs_history with the new observation.
+
         act_history = jnp.roll(state.act_history, -1, axis=0).at[-1].set(action)
         obs_history = jnp.roll(state.obs_history, -1, axis=0).at[-1].set(obs)
         new_state = SequenceHistoryState(
@@ -536,7 +533,6 @@ class OfflineTrajectoryWrapper(GymnaxWrapper):
             done      [n_samples, seq_len]
             next_obs  [n_samples, seq_len, *obs_shape]
         """
-        # Draw random start positions within the valid region of the buffer.
         max_start = jnp.maximum(state.num_valid - seq_len, 1)
         start_indices = jax.random.randint(
             rng, shape=(n_samples,), minval=0, maxval=max_start
