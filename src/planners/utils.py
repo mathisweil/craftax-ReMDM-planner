@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import pathlib
 from typing import Any, Callable, Dict, Optional, Tuple, Sequence
 
@@ -128,28 +129,186 @@ def _load_checkpoint(
     return restored_ts.params
 
 
+class PPOAgent:
+    """Unified wrapper for any Craftax_Baselines PPO policy.
+
+    Normalises the apply interface across ``ppo`` (ActorCritic MLP),
+    ``ppo_rnd`` (ActorCriticRND dual-critic MLP) and ``ppo_rnn``
+    (ActorCriticRNN GRU-based) checkpoints so that collection code does
+    not need to branch on the architecture.
+    """
+
+    def __init__(
+        self,
+        network: Any,
+        params: Any,
+        model_type: str,
+        layer_size: int,
+    ) -> None:
+        self.network = network
+        self.params = params
+        self.model_type = model_type
+        self.layer_size = layer_size
+
+    def init_hidden(self, num_envs: int) -> Optional[jax.Array]:
+        """Return an initial hidden state.  ``None`` for MLP-based models."""
+        if self.model_type == "ppo_rnn":
+            from Craftax_Baselines.ppo_rnn import ScannedRNN
+            return ScannedRNN.initialize_carry(num_envs, self.layer_size)
+        return None
+
+    def apply(
+        self,
+        params: Any,
+        obs: jax.Array,
+        hidden: Optional[jax.Array] = None,
+        done: Optional[jax.Array] = None,
+    ) -> Tuple[Any, jax.Array, Optional[jax.Array]]:
+        """Apply the policy network.
+
+        Returns:
+            ``(pi, value, new_hidden)`` where ``new_hidden`` is ``None`` for
+            MLP models.  For ``ppo_rnn``, ``hidden`` and ``done`` are required.
+        """
+        if self.model_type == "ppo_rnn":
+            # ActorCriticRNN.apply(params, hidden, (obs[T,B,D], done[T,B]))
+            assert hidden is not None and done is not None, (
+                "hidden and done must be provided for ppo_rnn"
+            )
+            ac_in = (obs[jnp.newaxis], done[jnp.newaxis])
+            new_hidden, pi, value = self.network.apply(params, hidden, ac_in)
+            return pi, value.squeeze(0), new_hidden
+        else:
+            result = self.network.apply(params, obs)
+            return result[0], result[1], None
+
+
+def _detect_ppo_model_type(checkpoint_path: str) -> str:
+    """Detect PPO model architecture by inspecting checkpoint directory contents.
+
+    Strategy (in order):
+    1. Walk the checkpoint directory tree and look for characteristic
+       layer names written by ``orbax.checkpoint.PyTreeCheckpointer``
+       (e.g. ``ScannedRNN_0`` for RNN, ``Dense_8`` for RND dual-critic).
+    2. Fall back to substring matching on the path string itself.
+    3. Default to ``"ppo"`` (plain MLP ActorCritic).
+    """
+    try:
+        step_dirs = sorted(
+            d for d in os.listdir(checkpoint_path) if d.isdigit()
+        )
+        if step_dirs:
+            latest_dir = os.path.join(checkpoint_path, step_dirs[-1])
+            for root, dirs, files in os.walk(latest_dir):
+                for name in dirs + files:
+                    if "ScannedRNN" in name:
+                        return "ppo_rnn"
+            for root, dirs, files in os.walk(latest_dir):
+                for name in dirs + files:
+                    if "Dense_8" in name or "Dense_9" in name:
+                        return "ppo_rnd"
+    except OSError:
+        pass
+
+    # Path-name fallback
+    path_lower = checkpoint_path.lower()
+    if "rnn" in path_lower:
+        return "ppo_rnn"
+    if "rnd" in path_lower:
+        return "ppo_rnd"
+    return "ppo"
+
+
 def _load_ppo_checkpoint(
         ppo_checkpoint_path: str,
         num_actions: Sequence[int],
         obs_dim: int,
         layer_size: int,
-) -> Tuple[Any, Any]:
-    """Load a pre-trained ActorCritic (MLP) PPO checkpoint."""
-    from Craftax_Baselines.models.actor_critic import ActorCritic
+        model_type_override: Optional[str] = None,
+) -> PPOAgent:
+    """Load a Craftax_Baselines PPO checkpoint, auto-detecting the architecture.
 
-    network = ActorCritic(num_actions, layer_size)
+    All three baselines (``ppo.py``, ``ppo_rnn.py``, ``ppo_rnd.py``) save
+    checkpoints with the legacy ``orbax.checkpoint.PyTreeCheckpointer`` API.
+    This function uses that same API for restoration and builds the matching
+    Flax network based on the detected (or overridden) model type.
 
-    def get_abstract_state():
-        rng = jax.random.PRNGKey(0)
-        dummy_obs = jnp.zeros((1, obs_dim))
-        params = network.init(rng, dummy_obs)
-        tx = optax.adam(1e-4)
-        return TrainState.create(apply_fn=network.apply, params=params, tx=tx)
+    Args:
+        ppo_checkpoint_path: Directory created by ``CheckpointManager.save``.
+        num_actions:         Number of discrete actions in the environment.
+        obs_dim:             Flat observation dimension.
+        layer_size:          Hidden-layer width of the policy network.
+        model_type_override: Explicit architecture name (``"ppo"``,
+                             ``"ppo_rnn"``, or ``"ppo_rnd"``).  When
+                             ``None``, the type is detected automatically.
 
-    abstract_ts = jax.eval_shape(get_abstract_state)
-    restored_ts = _restore_train_state(ppo_checkpoint_path, abstract_ts)
+    Returns:
+        A :class:`PPOAgent` with ``network``, ``params``, ``model_type``,
+        and ``layer_size`` attributes.
+    """
+    model_type = model_type_override or _detect_ppo_model_type(ppo_checkpoint_path)
 
-    return network, restored_ts.params
+    # Build the matching network and dummy params for the restoration template.
+    if model_type == "ppo_rnn":
+        from Craftax_Baselines.ppo_rnn import ActorCriticRNN, ScannedRNN
+        network = ActorCriticRNN(num_actions, config={"LAYER_SIZE": layer_size})
+        dummy_hidden = ScannedRNN.initialize_carry(1, layer_size)
+        dummy_obs = jnp.zeros((1, 1, obs_dim))   # [T=1, B=1, obs_dim]
+        dummy_done = jnp.zeros((1, 1))            # [T=1, B=1]
+        dummy_params = network.init(
+            jax.random.PRNGKey(0), dummy_hidden, (dummy_obs, dummy_done)
+        )
+    elif model_type == "ppo_rnd":
+        from Craftax_Baselines.models.rnd import ActorCriticRND
+        network = ActorCriticRND(num_actions, layer_size)
+        dummy_params = network.init(jax.random.PRNGKey(0), jnp.zeros((1, obs_dim)))
+    else:
+        from Craftax_Baselines.models.actor_critic import ActorCritic
+        network = ActorCritic(num_actions, layer_size)
+        dummy_params = network.init(jax.random.PRNGKey(0), jnp.zeros((1, obs_dim)))
+
+    # The baselines use optax.chain(clip, adam) — reproduce the chain structure
+    # so the opt_state pytree shape matches and PyTreeCheckpointer.restore works.
+    tx = optax.chain(
+        optax.clip_by_global_norm(1.0),
+        optax.adam(2e-4, eps=1e-5),
+    )
+    dummy_ts = TrainState.create(apply_fn=network.apply, params=dummy_params, tx=tx)
+
+    # All three baselines save with the legacy PyTreeCheckpointer API.
+    # Use ocp.PyTreeCheckpointer directly on the step directory to avoid
+    # the deprecated CheckpointManager(path, checkpointer, options) signature.
+    try:
+        step_dirs = sorted(
+            int(d) for d in os.listdir(ppo_checkpoint_path) if d.isdigit()
+        )
+    except OSError as exc:
+        raise FileNotFoundError(
+            f"No PPO checkpoint found at '{ppo_checkpoint_path}'"
+        ) from exc
+
+    if not step_dirs:
+        raise FileNotFoundError(
+            f"No PPO checkpoint found at '{ppo_checkpoint_path}'"
+        )
+
+    latest_step = step_dirs[-1]
+    ckpt_dir = os.path.join(ppo_checkpoint_path, str(latest_step))
+
+    # ocp.PyTreeCheckpointer is the legacy checkpointer used by the baselines.
+    checkpointer = ocp.PyTreeCheckpointer()  # type: ignore[attr-defined]
+    restored_ts = checkpointer.restore(ckpt_dir, item=dummy_ts)
+
+    print(
+        f"Loaded {model_type} PPO checkpoint from '{ppo_checkpoint_path}'"
+        f" (step={latest_step})"
+    )
+    return PPOAgent(
+        network=network,
+        params=restored_ts.params,
+        model_type=model_type,
+        layer_size=layer_size,
+    )
 
 
 def _save_model(

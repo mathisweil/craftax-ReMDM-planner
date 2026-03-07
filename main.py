@@ -167,6 +167,15 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--ppo_model_type", type=str,
+        choices=["ppo", "ppo_rnn", "ppo_rnd"],
+        help=(
+            "Override the PPO model architecture used for checkpoint loading. "
+            "When null (default), the architecture is auto-detected from the "
+            "checkpoint directory contents. Valid values: ppo, ppo_rnn, ppo_rnd."
+        ),
+    )
+    parser.add_argument(
         "--collect_num_steps", type=lambda x: int(float(x)),
         help="Total env steps to collect (--mode collect).",
     )

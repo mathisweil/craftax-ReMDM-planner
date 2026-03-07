@@ -67,13 +67,14 @@ def collect_offline_data(config: Dict[str, Any]) -> None:
 
     env = make_craftax_env_from_name(config["ENV_NAME"], True)
     env_params = env.default_params
-    num_actions: Sequence[int] = env.action_space(env_params).n
+    num_actions: Sequence[int] | int = env.action_space(env_params).n
     obs_dim: int = env.observation_space(env_params).shape[0]
     num_envs: int = config["COLLECT_NUM_ENVS"]
     layer_size: int = config.get("LAYER_SIZE", 512)
 
-    ppo_network, ppo_params = _load_ppo_checkpoint(
-        config["PPO_CHECKPOINT_PATH"], num_actions, obs_dim, layer_size
+    ppo_agent = _load_ppo_checkpoint(
+        config["PPO_CHECKPOINT_PATH"], num_actions, obs_dim, layer_size,
+        model_type_override=config.get("PPO_MODEL_TYPE"),
     )
 
     env_w, _ = _make_env_stack(config, num_envs)
@@ -81,39 +82,68 @@ def collect_offline_data(config: Dict[str, Any]) -> None:
     rng = jax.random.PRNGKey(config["SEED"])
     rng, env_rng, collect_rng = jax.random.split(rng, 3)
 
-    @jax.jit
-    def _step(
-        rng: jax.Array,
-        env_state: Any,
-        obs: jnp.ndarray,
-        done: jnp.ndarray,
-    ) -> Tuple[jax.Array, Any, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        rng, k1, k2 = jax.random.split(rng, 3)
-        pi, _ = ppo_network.apply(ppo_params, obs)
-        action = pi.sample(seed=k1)
-        obs_next, env_state, _, done_next, _ = env_w.step(
-            k2, env_state, action, env_params
-        )
-        return rng, env_state, obs_next, action, done_next
-
     obs, env_state = env_w.reset(env_rng, env_params)
     done = jnp.zeros(num_envs, dtype=bool)
+    hidden = ppo_agent.init_hidden(num_envs)
     num_iters: int = config["COLLECT_NUM_STEPS"] // num_envs
 
     all_obs: List[np.ndarray] = []
     all_actions: List[np.ndarray] = []
     all_dones: List[np.ndarray] = []
 
-    for i in range(num_iters):
-        collect_rng, env_state, obs_next, action, done = _step(
-            collect_rng, env_state, obs, done
-        )
-        all_obs.append(np.array(obs))
-        all_actions.append(np.array(action))
-        all_dones.append(np.array(done))
-        obs = obs_next
-        if (i + 1) % 500 == 0:
-            print(f"  {(i + 1) * num_envs:,} / {config['COLLECT_NUM_STEPS']:,} steps")
+    if ppo_agent.model_type == "ppo_rnn":
+        @jax.jit
+        def _step_rnn(
+            rng: jax.Array,
+            env_state: Any,
+            obs: jnp.ndarray,
+            done: jnp.ndarray,
+            hidden: jax.Array,
+        ) -> Tuple[jax.Array, Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array]:
+            rng, k1, k2 = jax.random.split(rng, 3)
+            pi, _, new_hidden = ppo_agent.apply(ppo_agent.params, obs, hidden, done)
+            action = pi.sample(seed=k1)
+            obs_next, env_state, _, done_next, _ = env_w.step(
+                k2, env_state, action, env_params
+            )
+            return rng, env_state, obs_next, action, done_next, new_hidden
+
+        for i in range(num_iters):
+            collect_rng, env_state, obs_next, action, done, hidden = _step_rnn(
+                collect_rng, env_state, obs, done, hidden
+            )
+            all_obs.append(np.array(obs))
+            all_actions.append(np.array(action))
+            all_dones.append(np.array(done))
+            obs = obs_next
+            if (i + 1) % 500 == 0:
+                print(f"  {(i + 1) * num_envs:,} / {config['COLLECT_NUM_STEPS']:,} steps")
+    else:
+        @jax.jit
+        def _step(
+            rng: jax.Array,
+            env_state: Any,
+            obs: jnp.ndarray,
+            done: jnp.ndarray,
+        ) -> Tuple[jax.Array, Any, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+            rng, k1, k2 = jax.random.split(rng, 3)
+            pi, _, _ = ppo_agent.apply(ppo_agent.params, obs)
+            action = pi.sample(seed=k1)
+            obs_next, env_state, _, done_next, _ = env_w.step(
+                k2, env_state, action, env_params
+            )
+            return rng, env_state, obs_next, action, done_next
+
+        for i in range(num_iters):
+            collect_rng, env_state, obs_next, action, done = _step(
+                collect_rng, env_state, obs, done
+            )
+            all_obs.append(np.array(obs))
+            all_actions.append(np.array(action))
+            all_dones.append(np.array(done))
+            obs = obs_next
+            if (i + 1) % 500 == 0:
+                print(f"  {(i + 1) * num_envs:,} / {config['COLLECT_NUM_STEPS']:,} steps")
 
     # Stack into [num_iters, num_envs, ...] then transpose -> [num_envs, num_iters, ...]
     obs_arr = np.stack(all_obs, axis=0).transpose(1, 0, 2)   # [E, T, obs_dim]
@@ -279,8 +309,9 @@ def make_train_offline_from_agent(
         (batch_size // num_envs + 2) * plan_horizon,
     )
 
-    ppo_network, ppo_params = _load_ppo_checkpoint(
-        ppo_checkpoint_path, num_actions, obs_dim, layer_size
+    ppo_agent = _load_ppo_checkpoint(
+        ppo_checkpoint_path, num_actions, obs_dim, layer_size,
+        model_type_override=config.get("PPO_MODEL_TYPE"),
     )
 
     env_w, _ = _make_env_stack(config, num_envs)
@@ -288,42 +319,73 @@ def make_train_offline_from_agent(
     model = _build_model(config, num_actions)
     _, apply_train = _make_apply_fns(model)
 
-    @jax.jit
-    def _collect_chunk(
-        rng: jax.Array,
-        env_state: Any,
-        obs: jnp.ndarray,
-        done: jnp.ndarray,
-    ) -> Tuple[
-        jax.Array, Any, jnp.ndarray, jnp.ndarray,
-        jnp.ndarray, jnp.ndarray, jnp.ndarray,
-    ]:
-        """Collect ``collect_steps`` transitions via the PPO policy.
+    if ppo_agent.model_type == "ppo_rnn":
+        @jax.jit
+        def _collect_chunk(
+            rng: jax.Array,
+            env_state: Any,
+            obs: jnp.ndarray,
+            done: jnp.ndarray,
+            hidden: jax.Array,
+        ) -> Tuple[
+            jax.Array, Any, jnp.ndarray, jnp.ndarray, jax.Array,
+            jnp.ndarray, jnp.ndarray, jnp.ndarray,
+        ]:
+            """Collect transitions via the RNN PPO policy, tracking hidden state."""
+            def _step(
+                carry: Tuple[jax.Array, Any, jnp.ndarray, jnp.ndarray, jax.Array],
+                _: Any,
+            ) -> Tuple[
+                Tuple[jax.Array, Any, jnp.ndarray, jnp.ndarray, jax.Array],
+                Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray],
+            ]:
+                rng, env_state, obs, done, hidden = carry
+                rng, k1, k2 = jax.random.split(rng, 3)
+                pi, _, new_hidden = ppo_agent.apply(ppo_agent.params, obs, hidden, done)
+                action = pi.sample(seed=k1)
+                obs_next, env_state, _, done_next, _ = env_w.step(
+                    k2, env_state, action, env_params
+                )
+                return (rng, env_state, obs_next, done_next, new_hidden), (obs, action, done)
 
-        Returns:
-            ``(rng, env_state, final_obs, final_done, all_obs, all_acts, all_dones)``
-
-            - ``all_obs``:   [collect_steps, num_envs, obs_dim]
-            - ``all_acts``:  [collect_steps, num_envs]
-            - ``all_dones``: [collect_steps, num_envs]
-        """
-        def _step(
-            carry: Tuple[jax.Array, Any, jnp.ndarray, jnp.ndarray],
-            _: Any,
-        ) -> Tuple[Tuple[jax.Array, Any, jnp.ndarray, jnp.ndarray], Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]]:
-            rng, env_state, obs, done = carry
-            rng, k1, k2 = jax.random.split(rng, 3)
-            pi, _ = ppo_network.apply(ppo_params, obs)
-            action = pi.sample(seed=k1)
-            obs_next, env_state, _, done_next, _ = env_w.step(
-                k2, env_state, action, env_params
+            init_hidden = ppo_agent.init_hidden(num_envs)
+            (rng, env_state, final_obs, final_done, final_hidden), (all_obs, all_acts, all_dones) = (
+                jax.lax.scan(_step, (rng, env_state, obs, done, init_hidden), None, collect_steps)
             )
-            return (rng, env_state, obs_next, done_next), (obs, action, done)
+            return rng, env_state, final_obs, final_done, final_hidden, all_obs, all_acts, all_dones
+    else:
+        @jax.jit
+        def _collect_chunk(
+            rng: jax.Array,
+            env_state: Any,
+            obs: jnp.ndarray,
+            done: jnp.ndarray,
+            hidden: Any,
+        ) -> Tuple[
+            jax.Array, Any, jnp.ndarray, jnp.ndarray, Any,
+            jnp.ndarray, jnp.ndarray, jnp.ndarray,
+        ]:
+            """Collect transitions via the MLP PPO policy (no hidden state)."""
+            def _step(
+                carry: Tuple[jax.Array, Any, jnp.ndarray, jnp.ndarray],
+                _: Any,
+            ) -> Tuple[
+                Tuple[jax.Array, Any, jnp.ndarray, jnp.ndarray],
+                Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray],
+            ]:
+                rng, env_state, obs, done = carry
+                rng, k1, k2 = jax.random.split(rng, 3)
+                pi, _, _ = ppo_agent.apply(ppo_agent.params, obs)
+                action = pi.sample(seed=k1)
+                obs_next, env_state, _, done_next, _ = env_w.step(
+                    k2, env_state, action, env_params
+                )
+                return (rng, env_state, obs_next, done_next), (obs, action, done)
 
-        (rng, env_state, final_obs, final_done), (all_obs, all_acts, all_dones) = (
-            jax.lax.scan(_step, (rng, env_state, obs, done), None, collect_steps)
-        )
-        return rng, env_state, final_obs, final_done, all_obs, all_acts, all_dones
+            (rng, env_state, final_obs, final_done), (all_obs, all_acts, all_dones) = (
+                jax.lax.scan(_step, (rng, env_state, obs, done), None, collect_steps)
+            )
+            return rng, env_state, final_obs, final_done, None, all_obs, all_acts, all_dones
 
     @jax.jit
     def _grad_step(
@@ -349,6 +411,7 @@ def make_train_offline_from_agent(
 
         obs, env_state = env_w.reset(env_rng, env_params)
         done = jnp.zeros(num_envs, dtype=bool)
+        hidden = ppo_agent.init_hidden(num_envs)
 
         seed_val = int(jax.random.randint(rng, (), 0, 2**31))
         np_rng = np.random.default_rng(seed_val)
@@ -359,8 +422,8 @@ def make_train_offline_from_agent(
         for step in range(num_train_steps):
             rng, collect_rng, loss_rng = jax.random.split(rng, 3)
 
-            rng, env_state, obs, done, chunk_obs, chunk_acts, chunk_dones = (
-                _collect_chunk(collect_rng, env_state, obs, done)
+            rng, env_state, obs, done, hidden, chunk_obs, chunk_acts, chunk_dones = (
+                _collect_chunk(collect_rng, env_state, obs, done, hidden)
             )
 
             # Transpose to [num_envs, collect_steps, ...]
