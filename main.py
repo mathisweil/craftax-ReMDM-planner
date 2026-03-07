@@ -71,7 +71,7 @@ SCHEDULE_MAP: Dict[str, ScheduleFn] = {
 
 if __name__ == "__main__":
     _src_dir = pathlib.Path(__file__).parent
-    _default_cfg_path = _src_dir.parent.parent / "configs" / "defaults.yaml"
+    _default_cfg_path = _src_dir / "configs" / "defaults.yaml"
 
     _pre = argparse.ArgumentParser(add_help=False)
     _pre.add_argument("--config", type=str, default=str(_default_cfg_path))

@@ -1,58 +1,18 @@
-"""Training and inference scripts for the ReMDM discrete diffusion planner on Craftax.
-
-Workflow
---------
-Step 1  — Train a PPO agent (separate script):
-            python ppo_rnn.py  --env_name Craftax-Symbolic-v1 --save_policy
-            python ppo_rnd.py  --env_name Craftax-Symbolic-v1 --save_policy
-
-Step 2a — Collect trajectories from the PPO checkpoint to disk:
-            python -m src.planners.planners --mode collect \\
-                --ppo_checkpoint_path /path/to/ppo_ckpt \\
-                --offline_data_path trajectories.npz
-
-Step 2b — (Alternative) Train diffusion model directly from the PPO checkpoint,
-          without saving trajectories to disk:
-            python -m src.planners.planners --mode offline \\
-                --ppo_checkpoint_path /path/to/ppo_ckpt
-
-Step 3  — (Optional) Train offline diffusion model from saved trajectories:
-            python -m src.planners.planners --mode offline \\
-                --offline_data_path trajectories.npz
-
-Step 4  — Online fine-tuning (optionally warm-starting from offline checkpoint):
-            python -m src.planners.planners --mode online
-            python -m src.planners.planners --mode online \\
-                --offline_checkpoint_path /path/to/offline_ckpt
-
-Step 5  — Evaluate:
-            python -m src.planners.planners --mode inference \\
-                --checkpoint_path /path/to/ckpt
-
-All defaults are loaded from configs/defaults.yaml.  Any argument can be
-overridden on the command line, e.g.:
-    python -m src.planners.planners --mode online --lr 1e-4 --num_envs 64
-"""
-
 from __future__ import annotations
 
-import argparse
 import pathlib
-import sys
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Sequence
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import wandb
-import yaml
 from craftax.craftax_env import make_craftax_env_from_name
 from flax.training.train_state import TrainState
 
 from src.models.remdm import (
     ScheduleFn,
-    STRATEGY_MAP,
     compute_loss,
     cosine_schedule,
     linear_schedule,
@@ -65,7 +25,7 @@ from Craftax_Baselines.wrappers import (
     LogWrapper,
 )
 from src.envs.wrappers import PlannerWrapper
-from utils import (
+from .utils import (
     _build_model,
     _init_model_params,
     _create_train_state,
@@ -85,7 +45,7 @@ SCHEDULE_MAP: Dict[str, ScheduleFn] = {
 
 
 # =============================================================================
-# Data Collection  (step 2a — saves trajectories to disk)
+# Data Collection  (step 2a, saves trajectories to disk)
 # =============================================================================
 
 
@@ -107,7 +67,7 @@ def collect_offline_data(config: Dict[str, Any]) -> None:
 
     env = make_craftax_env_from_name(config["ENV_NAME"], True)
     env_params = env.default_params
-    num_actions: int = env.action_space(env_params).n
+    num_actions: Sequence[int] = env.action_space(env_params).n
     obs_dim: int = env.observation_space(env_params).shape[0]
     num_envs: int = config["COLLECT_NUM_ENVS"]
     layer_size: int = config.get("LAYER_SIZE", 512)
@@ -170,7 +130,7 @@ def collect_offline_data(config: Dict[str, Any]) -> None:
 
 
 # =============================================================================
-# Offline Training — from saved trajectories  (step 3)
+# Offline Training, from saved trajectories  (step 3)
 # =============================================================================
 
 
@@ -303,7 +263,7 @@ def make_train_offline_from_agent(
     """
     env = make_craftax_env_from_name(config["ENV_NAME"], True)
     env_params = env.default_params
-    num_actions: int = env.action_space(env_params).n
+    num_actions: Sequence[int] | int = env.action_space(env_params).n
     obs_dim: int = env.observation_space(env_params).shape[0]
     config["NUM_ACTIONS"] = num_actions
 

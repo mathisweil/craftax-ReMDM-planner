@@ -50,6 +50,61 @@ pip install -U "jax[cuda12]"
 
 ---
 
+## Testing
+
+The test suite uses **pytest** and covers core components: diffusion logic, denoiser architecture, environment wrappers, planner utilities, and integration tests.
+
+### Run all tests
+
+```bash
+pytest src/tests/ -v
+```
+
+### Run specific test files
+
+```bash
+# Test diffusion schedules, forward process, loss, remasking, and sampling
+pytest src/tests/test_remdm.py -v
+
+# Test denoiser transformer architecture and forward pass
+pytest src/tests/test_denoiser.py -v
+
+# Test environment wrappers (PlannerWrapper, SequenceHistoryWrapper, etc.)
+pytest src/tests/test_wrappers.py -v
+
+# Test planner utility functions (sampling, masking, scheduling)
+pytest src/tests/test_planner_utils.py -v
+
+# Test collect/offline/online/inference pipeline integration
+pytest src/tests/test_planners.py -v
+
+# Test main entry point argument parsing and mode routing
+pytest src/tests/test_main.py -v
+```
+
+### Run tests with coverage
+
+```bash
+pytest src/tests/ --cov=src --cov-report=html
+```
+
+### Run a single test function
+
+```bash
+pytest src/tests/test_remdm.py::TestCosineSchedule::test_boundary_t0 -v
+```
+
+### Test fixtures
+
+All tests share fixtures defined in `src/tests/conftest.py`:
+- `rng`: Deterministic JAX PRNG key (seed 42)
+- `small_config`: Minimal config dict with fast hyperparameters for testing
+- `dummy_env`: Mock Gymnax environment for wrapper testing
+- `dummy_model_apply`: Trivial model function for integration tests
+- `dummy_params`: Empty parameter dict
+
+---
+
 ## Workflow
 
 The pipeline has four sequential stages. Each stage can be run independently.

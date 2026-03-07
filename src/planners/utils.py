@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pathlib
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple, Sequence
 
 import jax
 import jax.numpy as jnp
@@ -9,13 +9,8 @@ import numpy as np
 import optax
 import wandb
 from craftax.craftax_env import make_craftax_env_from_name
-from flax.training import orbax_utils
 from flax.training.train_state import TrainState
-from orbax.checkpoint import (
-    CheckpointManager,
-    CheckpointManagerOptions,
-    PyTreeCheckpointer,
-)
+import orbax.checkpoint as ocp
 
 from src.models.denoiser import DenoisingTransformer
 from src.models.remdm import (
@@ -90,85 +85,98 @@ def _create_train_state(
 # =============================================================================
 
 
-def _load_checkpoint(
-    config: Dict[str, Any],
-    model: DenoisingTransformer,
-    obs_dim: int,
-    checkpoint_path: str,
-) -> Any:
-    """Load model parameters from an Orbax checkpoint (outside JIT).
-
-    Returns:
-        Restored model parameters.
-    """
-    rng = jax.random.PRNGKey(0)
-    params = _init_model_params(model, rng, obs_dim, config["PLAN_HORIZON"])
-    tx = optax.adam(config["LR"])
-    tmp_ts = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
-    checkpointer = PyTreeCheckpointer()
-    ckpt_mgr = CheckpointManager(
+def _restore_train_state(checkpoint_path: str, abstract_ts: TrainState) -> TrainState:
+    """Handles core Orbax checkpoint restoration logic."""
+    checkpointer = ocp.StandardCheckpointer()
+    ckpt_mgr = ocp.CheckpointManager(
         checkpoint_path,
         checkpointer,
-        CheckpointManagerOptions(max_to_keep=1, create=True),
+        options=ocp.CheckpointManagerOptions(max_to_keep=1),
     )
-    tmp_ts = ckpt_mgr.restore(ckpt_mgr.latest_step(), items=tmp_ts)
-    print(f"Loaded checkpoint from '{checkpoint_path}' (step={ckpt_mgr.latest_step()})")
-    return tmp_ts.params
+
+    latest_step = ckpt_mgr.latest_step()
+    if latest_step is None:
+        raise FileNotFoundError(f"No valid checkpoint found at '{checkpoint_path}'")
+
+    restored_ts = ckpt_mgr.restore(
+        latest_step,
+        args=ocp.args.StandardRestore(item=abstract_ts)
+    )
+
+    print(f"Loaded checkpoint from '{checkpoint_path}' (step={latest_step})")
+    return restored_ts
+
+
+def _load_checkpoint(
+        config: Dict[str, Any],
+        model: Any,  # DenoisingTransformer
+        obs_dim: int,
+        checkpoint_path: str,
+) -> Any:
+    """Load model parameters from an Orbax checkpoint (outside JIT)."""
+
+    # 1. Evaluate shape without allocating memory
+    def get_abstract_state():
+        rng = jax.random.PRNGKey(0)
+        params = _init_model_params(model, rng, obs_dim, config["PLAN_HORIZON"])
+        tx = optax.adam(config["LR"])
+        return TrainState.create(apply_fn=model.apply, params=params, tx=tx)
+
+    abstract_ts = jax.eval_shape(get_abstract_state)
+    restored_ts = _restore_train_state(checkpoint_path, abstract_ts)
+
+    return restored_ts.params
 
 
 def _load_ppo_checkpoint(
-    ppo_checkpoint_path: str,
-    num_actions: int,
-    obs_dim: int,
-    layer_size: int,
+        ppo_checkpoint_path: str,
+        num_actions: Sequence[int],
+        obs_dim: int,
+        layer_size: int,
 ) -> Tuple[Any, Any]:
-    """Load a pre-trained ActorCritic (MLP) PPO checkpoint.
-
-    Returns:
-        (network, params)
-    """
+    """Load a pre-trained ActorCritic (MLP) PPO checkpoint."""
     from Craftax_Baselines.models.actor_critic import ActorCritic
 
     network = ActorCritic(num_actions, layer_size)
-    rng = jax.random.PRNGKey(0)
-    dummy_obs = jnp.zeros((1, obs_dim))
-    tmp_tx = optax.adam(1e-4)
-    tmp_ts = TrainState.create(
-        apply_fn=network.apply,
-        params=network.init(rng, dummy_obs),
-        tx=tmp_tx,
-    )
-    checkpointer = PyTreeCheckpointer()
-    ckpt_mgr = CheckpointManager(
-        ppo_checkpoint_path,
-        checkpointer,
-        CheckpointManagerOptions(max_to_keep=1, create=True),
-    )
-    tmp_ts = ckpt_mgr.restore(ckpt_mgr.latest_step(), items=tmp_ts)
-    print(
-        f"Loaded PPO checkpoint from '{ppo_checkpoint_path}' "
-        f"(step={ckpt_mgr.latest_step()})"
-    )
-    return network, tmp_ts.params
+
+    def get_abstract_state():
+        rng = jax.random.PRNGKey(0)
+        dummy_obs = jnp.zeros((1, obs_dim))
+        params = network.init(rng, dummy_obs)
+        tx = optax.adam(1e-4)
+        return TrainState.create(apply_fn=network.apply, params=params, tx=tx)
+
+    abstract_ts = jax.eval_shape(get_abstract_state)
+    restored_ts = _restore_train_state(ppo_checkpoint_path, abstract_ts)
+
+    return network, restored_ts.params
 
 
 def _save_model(
-    train_state: TrainState, config: Dict[str, Any], dir_name: str
+        train_state: TrainState, config: Dict[str, Any], dir_name: str
 ) -> None:
     """Save a TrainState checkpoint using orbax."""
-    orbax_checkpointer = PyTreeCheckpointer()
-    options = CheckpointManagerOptions(max_to_keep=1, create=True)
+
     if config.get("USE_WANDB") and wandb.run is not None:
         path = str(pathlib.Path(wandb.run.dir) / dir_name)
     else:
         path = dir_name
-    ckpt_mgr = CheckpointManager(path, orbax_checkpointer, options)
-    save_args = orbax_utils.save_args_from_target(train_state)
-    ckpt_mgr.save(
-        config.get("NUM_TRAIN_STEPS", config.get("NUM_UPDATES", 0)),
-        train_state,
-        save_kwargs={"save_args": save_args},
+
+    checkpointer = ocp.StandardCheckpointer()
+    ckpt_mgr = ocp.CheckpointManager(
+        path,
+        checkpointer,
+        options=ocp.CheckpointManagerOptions(max_to_keep=1, create=True),
     )
+
+    step = config.get("NUM_TRAIN_STEPS", config.get("NUM_UPDATES", 0))
+    ckpt_mgr.save(
+        step,
+        args=ocp.args.StandardSave(train_state),
+    )
+
+    ckpt_mgr.wait_until_finished()
+
     print(f"Saved model checkpoint to '{path}'")
 
 
