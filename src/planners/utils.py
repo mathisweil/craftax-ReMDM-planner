@@ -194,7 +194,7 @@ def _load_ppo_checkpoint(
 
     elif model_type == "ppo_rnd":
         from Craftax_Baselines.models.rnd import ActorCriticRND
-        network = ActorCriticRND((num_actions,), layer_size)
+        network = ActorCriticRND(num_actions, layer_size)
 
         def get_abstract_state():
             rng = jax.random.PRNGKey(0)
@@ -204,7 +204,7 @@ def _load_ppo_checkpoint(
 
     else:
         from Craftax_Baselines.models.actor_critic import ActorCritic
-        network = ActorCritic((num_actions,), layer_size)
+        network = ActorCritic(num_actions, layer_size)
 
         def get_abstract_state():
             rng = jax.random.PRNGKey(0)
