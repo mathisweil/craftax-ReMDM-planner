@@ -101,7 +101,9 @@ def collect_offline_data(config: Dict[str, Any]) -> None:
             hidden: jax.Array,
         ) -> Tuple[jax.Array, Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array]:
             rng, k1, k2 = jax.random.split(rng, 3)
-            pi, _, new_hidden = ppo_agent.apply(obs, hidden=hidden, done=done)
+            pi, _, new_hidden = ppo_agent.apply(
+                ppo_agent.params, obs, hidden=hidden, done=done
+            )
             action = pi.sample(seed=k1)
             obs_next, env_state, _, done_next, _ = env_w.step(
                 k2, env_state, action, env_params
@@ -341,7 +343,9 @@ def make_train_offline_from_agent(
             ]:
                 rng, env_state, obs, done, hidden = carry
                 rng, k1, k2 = jax.random.split(rng, 3)
-                pi, _, new_hidden = ppo_agent.apply(obs, hidden=hidden, done=done)
+                pi, _, new_hidden = ppo_agent.apply(
+                    ppo_agent.params, obs, hidden=hidden, done=done
+                )
                 action = pi.sample(seed=k1)
                 obs_next, env_state, _, done_next, _ = env_w.step(
                     k2, env_state, action, env_params
