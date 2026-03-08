@@ -4,7 +4,7 @@
 # =============================================================================
 
 # ── Environment ──────────────────────────────────────────────────────────────
-env_name: "Craftax-Symbolic-v1"
+env_name: "Craftax-Classic-Symbolic-v1"
 
 # ── Diffusion model ───────────────────────────────────────────────────────────
 plan_horizon: 32          # Length of the action plan H
