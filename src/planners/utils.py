@@ -143,7 +143,10 @@ def _load_ppo_checkpoint(
         rng = jax.random.PRNGKey(0)
         dummy_obs = jnp.zeros((1, obs_dim))
         params = network.init(rng, dummy_obs)
-        tx = optax.adam(1e-4)
+        tx = optax.chain(
+            optax.clip_by_global_norm(1.0),
+            optax.adam(learning_rate=2e-4, eps=1e-5),
+        )
         return TrainState.create(apply_fn=network.apply, params=params, tx=tx)
 
     abstract_ts = jax.eval_shape(get_abstract_state)
