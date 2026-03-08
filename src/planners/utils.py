@@ -132,6 +132,7 @@ def _load_ppo_checkpoint(
         num_actions: Sequence[int],
         obs_dim: int,
         layer_size: int,
+        model_type: str,
 ) -> Tuple[Any, Any]:
     """Load a pre-trained ActorCritic (MLP) PPO checkpoint."""
     from Craftax_Baselines.models.rnd import ActorCriticRND
