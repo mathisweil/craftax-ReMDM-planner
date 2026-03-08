@@ -110,13 +110,14 @@ def collect_offline_data(config: Dict[str, Any]) -> None:
             )
             return rng, env_state, obs_next, action, done_next, new_hidden
 
+        done_before = done
         for i in range(num_iters):
             collect_rng, env_state, obs_next, action, done, hidden = _step_rnn(
                 collect_rng, env_state, obs, done, hidden
             )
             all_obs.append(np.array(obs))
             all_actions.append(np.array(action))
-            all_dones.append(np.array(done))
+            all_dones.append(np.array(done_before))
             obs = obs_next
             if (i + 1) % 500 == 0:
                 print(f"  {(i + 1) * num_envs:,} / {config['COLLECT_NUM_STEPS']:,} steps")
@@ -136,13 +137,14 @@ def collect_offline_data(config: Dict[str, Any]) -> None:
             )
             return rng, env_state, obs_next, action, done_next
 
+        done_before = done
         for i in range(num_iters):
             collect_rng, env_state, obs_next, action, done = _step(
                 collect_rng, env_state, obs, done
             )
             all_obs.append(np.array(obs))
             all_actions.append(np.array(action))
-            all_dones.append(np.array(done))
+            all_dones.append(np.array(done_before))
             obs = obs_next
             if (i + 1) % 500 == 0:
                 print(f"  {(i + 1) * num_envs:,} / {config['COLLECT_NUM_STEPS']:,} steps")
@@ -230,9 +232,10 @@ def make_train_offline(
             sel_time = time_idx_arr[flat_idxs]
 
             obs_batch = obs_data[sel_env, sel_time]
+            env_acts = act_data[sel_env]  # [B, T] — single batched gather
             act_batch = jax.vmap(
-                lambda e, t: jax.lax.dynamic_slice(act_data[e], (t,), (plan_horizon,))
-            )(sel_env, sel_time)
+                lambda row, t: jax.lax.dynamic_slice(row, (t,), (plan_horizon,))
+            )(env_acts, sel_time)
 
             def loss_fn(params: Any) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
                 return compute_loss(
@@ -295,7 +298,7 @@ def make_train_offline_from_agent(
     """
     env = make_craftax_env_from_name(config["ENV_NAME"], True)
     env_params = env.default_params
-    num_actions: Sequence[int] | int = env.action_space(env_params).n
+    num_actions: int = env.action_space(env_params).n
     obs_dim: int = env.observation_space(env_params).shape[0]
     config["NUM_ACTIONS"] = num_actions
 
@@ -352,9 +355,8 @@ def make_train_offline_from_agent(
                 )
                 return (rng, env_state, obs_next, done_next, new_hidden), (obs, action, done)
 
-            init_hidden = ppo_agent.init_hidden(num_envs)
             (rng, env_state, final_obs, final_done, final_hidden), (all_obs, all_acts, all_dones) = (
-                jax.lax.scan(_step, (rng, env_state, obs, done, init_hidden), None, collect_steps)
+                jax.lax.scan(_step, (rng, env_state, obs, done, hidden), None, collect_steps)
             )
             return rng, env_state, final_obs, final_done, final_hidden, all_obs, all_acts, all_dones
     else:
@@ -417,7 +419,8 @@ def make_train_offline_from_agent(
         done = jnp.zeros(num_envs, dtype=bool)
         hidden = ppo_agent.init_hidden(num_envs)
 
-        seed_val = int(jax.random.randint(rng, (), 0, 2**31))
+        rng, np_seed_rng = jax.random.split(rng)
+        seed_val = int(jax.random.randint(np_seed_rng, (), 0, 2 ** 31 - 1))
         np_rng = np.random.default_rng(seed_val)
 
         all_metrics: List[Dict[str, Any]] = []
@@ -425,8 +428,7 @@ def make_train_offline_from_agent(
 
         for step in range(num_train_steps):
             rng, collect_rng, loss_rng = jax.random.split(rng, 3)
-
-            rng, env_state, obs, done, hidden, chunk_obs, chunk_acts, chunk_dones = (
+            _, env_state, obs, done, hidden, chunk_obs, chunk_acts, chunk_dones = (
                 _collect_chunk(collect_rng, env_state, obs, done, hidden)
             )
 
@@ -577,6 +579,10 @@ def make_train_online(
 
             # -- Train on collected (obs, plan) pairs --
             total_samples = num_plan_cycles * num_envs
+            assert total_samples % num_minibatches == 0, (
+                f"num_plan_cycles * num_envs ({total_samples}) must be divisible by "
+                f"NUM_MINIBATCHES ({num_minibatches})"
+            )
             minibatch_size = total_samples // num_minibatches
             flat_obs = traj_obs.reshape(total_samples, obs_dim)
             flat_plans = traj_plans.reshape(total_samples, plan_horizon)
@@ -628,10 +634,12 @@ def make_train_online(
                 (ep_returns * ep_mask).sum() / ep_mask.sum(),
                 jnp.nan,
             )
-            metric = jax.tree.map(
-                lambda x: (x * ep_mask).sum() / jnp.maximum(ep_mask.sum(), 1),
-                all_infos,
-            )
+            _METRIC_KEYS = {"returned_episode_returns", "returned_episode_lengths"}
+            metric = {
+                k: (v * ep_mask).sum() / jnp.maximum(ep_mask.sum(), 1)
+                for k, v in all_infos.items()
+                if k in _METRIC_KEYS
+            }
             metric["diffusion_loss"] = epoch_infos["loss"].mean()
             metric["mean_t"] = epoch_infos["mean_t"].mean()
             metric["frac_masked"] = epoch_infos["frac_masked"].mean()
@@ -665,7 +673,7 @@ def make_train_online(
             runner_state = (train_state, env_state, obs, rng, update_step + 1)
             return runner_state, metric
 
-        runner_state = (train_state, env_state, obs, rng, 0)
+        runner_state = (train_state, env_state, obs, rng, jnp.int32(0))
         runner_state, metrics = jax.lax.scan(
             _update_step, runner_state, None, num_updates
         )
