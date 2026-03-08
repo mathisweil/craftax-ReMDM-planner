@@ -136,23 +136,27 @@ def _load_ppo_checkpoint(
 ) -> Tuple[Any, Any]:
     """Load a pre-trained ActorCritic (MLP) PPO checkpoint."""
     from Craftax_Baselines.models.rnd import ActorCriticRND
+    import flax.core
+    import orbax.checkpoint as ocp
 
     network = ActorCriticRND(num_actions, layer_size)
 
-    def get_abstract_state():
-        rng = jax.random.PRNGKey(0)
-        dummy_obs = jnp.zeros((1, obs_dim))
-        params = network.init(rng, dummy_obs)
-        tx = optax.chain(
-            optax.clip_by_global_norm(1.0),
-            optax.adam(learning_rate=2e-4, eps=1e-5),
-        )
-        return TrainState.create(apply_fn=network.apply, params=params, tx=tx)
+    # Use PyTreeCheckpointer to match the save mechanism in ppo_rnd.py
+    checkpointer = ocp.PyTreeCheckpointer()
+    ckpt_mgr = ocp.CheckpointManager(ppo_checkpoint_path, checkpointer)
 
-    abstract_ts = jax.eval_shape(get_abstract_state)
-    restored_ts = _restore_train_state(ppo_checkpoint_path, abstract_ts)
+    latest_step = ckpt_mgr.latest_step()
+    if latest_step is None:
+        raise FileNotFoundError(f"No valid checkpoint found at '{ppo_checkpoint_path}'")
 
-    return network, restored_ts.params
+    # Restore the raw dictionary, bypassing strict TrainState structure matching
+    restored_dict = ckpt_mgr.restore(latest_step)
+
+    # Re-freeze the parameters dictionary for Flax
+    restored_params = flax.core.freeze(restored_dict["params"])
+    print(f"Loaded checkpoint params from '{ppo_checkpoint_path}' (step={latest_step})")
+
+    return network, restored_params
 
 
 def _save_model(
