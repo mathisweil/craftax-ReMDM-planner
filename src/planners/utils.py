@@ -199,13 +199,13 @@ def _detect_ppo_model_type(checkpoint_path: str) -> str:
         step_dirs = sorted(d for d in os.listdir(checkpoint_path) if d.isdigit())
         if step_dirs:
             latest_dir = os.path.join(checkpoint_path, step_dirs[-1])
-            all_names = set()
+            all_names: set[str] = set()
             for _root, dirs, files in os.walk(latest_dir):
                 all_names.update(dirs)
                 all_names.update(files)
             if any("ScannedRNN" in name for name in all_names):
                 return "ppo_rnn"
-            if any(("Dense_8" in name or "Dense_9" in name) for name in all_names):
+            if any("Dense_8" in name or "Dense_9" in name for name in all_names):
                 return "ppo_rnd"
     except OSError:
         pass
@@ -246,7 +246,7 @@ def _build_ppo_network(
         abstract_params = jax.eval_shape(
             lambda: network.init(jax.random.PRNGKey(0), jnp.zeros((1, obs_dim)))
         )
-    else:  # "ppo"
+    else:
         from Craftax_Baselines.models.actor_critic import ActorCritic
         network = ActorCritic(num_actions, layer_size)
         abstract_params = jax.eval_shape(
@@ -270,7 +270,7 @@ def _load_ppo_checkpoint(
         num_actions:         Number of discrete actions in the environment.
         obs_dim:             Flat observation dimension.
         layer_size:          Hidden-layer width of the policy network.
-        model_type: Explicit architecture name (``"ppo"``,
+        model_type:          Explicit architecture name (``"ppo"``,
                              ``"ppo_rnn"``, or ``"ppo_rnd"``). When ``None``,
                              the type is detected automatically.
 
@@ -283,20 +283,7 @@ def _load_ppo_checkpoint(
         model_type, num_actions, obs_dim, layer_size
     )
 
-    # The agents save a full TrainState as a single StandardSave item.
-    # We restore the whole TrainState using the correct abstract shape, then
-    # discard opt_state — this is the only safe way to handle ANNEAL_LR, which
-    # produces a structurally different optimizer pytree than a constant LR.
-    def get_abstract_ts():
-        tx = optax.chain(
-            optax.clip_by_global_norm(1.0),
-            optax.adam(1e-3, eps=1e-5),
-        )
-        return TrainState.create(
-            apply_fn=network.apply, params=abstract_params, tx=tx
-        )
-
-    abstract_ts = jax.eval_shape(get_abstract_ts)
+    abstract_target = {"params": abstract_params}
 
     with _make_ckpt_manager(ppo_checkpoint_path) as ckpt_mgr:
         latest_step = ckpt_mgr.latest_step()
@@ -304,9 +291,9 @@ def _load_ppo_checkpoint(
             raise FileNotFoundError(
                 f"No PPO checkpoint found at '{ppo_checkpoint_path}'"
             )
-        restored_ts = ckpt_mgr.restore(
+        restored = ckpt_mgr.restore(
             latest_step,
-            args=ocp.args.StandardRestore(item=abstract_ts),
+            args=ocp.args.StandardRestore(item=abstract_target),
         )
 
     print(
@@ -315,7 +302,7 @@ def _load_ppo_checkpoint(
     )
     return PPOAgent(
         network=network,
-        params=restored_ts.params,
+        params=restored["params"],
         model_type=model_type,
         layer_size=layer_size,
     )
