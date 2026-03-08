@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import pathlib
-from typing import Any, Callable, Dict, Optional, Tuple, Sequence
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -220,7 +220,7 @@ def _detect_ppo_model_type(checkpoint_path: str) -> str:
 
 def _build_ppo_network(
         model_type: str,
-        num_actions: Sequence[int],
+        num_actions: int,
         obs_dim: int,
         layer_size: int,
 ) -> Tuple[Any, Any]:
@@ -258,10 +258,10 @@ def _build_ppo_network(
 
 def _load_ppo_checkpoint(
         ppo_checkpoint_path: str,
-        num_actions: Sequence[int],
+        num_actions: int,
         obs_dim: int,
         layer_size: int,
-        model_type_override: Optional[str] = None,
+        model_type: Optional[str] = None,
 ) -> PPOAgent:
     """Load a Craftax_Baselines PPO checkpoint, auto-detecting the architecture.
 
@@ -270,7 +270,7 @@ def _load_ppo_checkpoint(
         num_actions:         Number of discrete actions in the environment.
         obs_dim:             Flat observation dimension.
         layer_size:          Hidden-layer width of the policy network.
-        model_type_override: Explicit architecture name (``"ppo"``,
+        model_type: Explicit architecture name (``"ppo"``,
                              ``"ppo_rnn"``, or ``"ppo_rnd"``). When ``None``,
                              the type is detected automatically.
 
@@ -278,7 +278,7 @@ def _load_ppo_checkpoint(
         A :class:`PPOAgent` with ``network``, ``params``, ``model_type``,
         and ``layer_size`` attributes.
     """
-    model_type = model_type_override or _detect_ppo_model_type(ppo_checkpoint_path)
+    model_type = model_type or _detect_ppo_model_type(ppo_checkpoint_path)
     network, abstract_params = _build_ppo_network(
         model_type, num_actions, obs_dim, layer_size
     )
