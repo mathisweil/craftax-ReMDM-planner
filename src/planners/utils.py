@@ -227,45 +227,35 @@ def _build_ppo_network(
         num_actions: int,
         obs_dim: int,
         layer_size: int,
-) -> Tuple[Any, TrainState]:
-    """Instantiate the correct network and compute an abstract ``TrainState``.
-
-    The abstract state has the same pytree structure as the checkpoint
-    saved by ``ppo.py`` / ``ppo_rnn.py`` / ``ppo_rnd.py`` (which all use
-    ``optax.chain(clip_by_global_norm, adam)``), so it can be passed
-    directly to ``StandardRestore``.
+) -> Tuple[Any, Any]:
+    """Instantiate the correct network and compute abstract params only.
 
     Returns:
-        ``(network, abstract_train_state)``
+        ``(network, abstract_params)`` — note: just params, not a full TrainState.
+        We never need opt_state when loading for inference.
     """
     if model_type == "ppo_rnn":
         from Craftax_Baselines.ppo_rnn import ActorCriticRNN, ScannedRNN
         network = ActorCriticRNN(num_actions, config={"LAYER_SIZE": layer_size})
-        def _init():
+        def _init_params():
             dummy_hidden = ScannedRNN.initialize_carry(1, layer_size)
-            params = network.init(
+            return network.init(
                 jax.random.PRNGKey(0), dummy_hidden,
                 (jnp.zeros((1, 1, obs_dim)), jnp.zeros((1, 1))),
             )
-            tx = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(1e-4, eps=1e-5))
-            return TrainState.create(apply_fn=network.apply, params=params, tx=tx)
     elif model_type == "ppo_rnd":
         from Craftax_Baselines.models.rnd import ActorCriticRND
         network = ActorCriticRND(num_actions, layer_size)
-        def _init():
-            params = network.init(jax.random.PRNGKey(0), jnp.zeros((1, obs_dim)))
-            tx = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(1e-4, eps=1e-5))
-            return TrainState.create(apply_fn=network.apply, params=params, tx=tx)
+        def _init_params():
+            return network.init(jax.random.PRNGKey(0), jnp.zeros((1, obs_dim)))
     else:
         from Craftax_Baselines.models.actor_critic import ActorCritic
         network = ActorCritic(num_actions, layer_size)
-        def _init():
-            params = network.init(jax.random.PRNGKey(0), jnp.zeros((1, obs_dim)))
-            tx = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(1e-4, eps=1e-5))
-            return TrainState.create(apply_fn=network.apply, params=params, tx=tx)
+        def _init_params():
+            return network.init(jax.random.PRNGKey(0), jnp.zeros((1, obs_dim)))
 
-    abstract_ts = jax.eval_shape(_init)
-    return network, abstract_ts
+    abstract_params = jax.eval_shape(_init_params)
+    return network, abstract_params
 
 
 def _load_ppo_checkpoint(
@@ -275,22 +265,29 @@ def _load_ppo_checkpoint(
         layer_size: int,
         model_type: Optional[str] = None,
 ) -> PPOAgent:
-    """Load a Craftax_Baselines PPO checkpoint, auto-detecting the architecture.
-
-    The PPO scripts save a full ``TrainState`` via ``StandardSave``, so
-    we restore into a matching abstract ``TrainState`` and extract ``.params``.
-    """
     model_type = model_type or _detect_ppo_model_type(ppo_checkpoint_path)
-    network, abstract_ts = _build_ppo_network(
+    network, abstract_params = _build_ppo_network(
         model_type, num_actions, obs_dim, layer_size
     )
 
-    restored = _restore_train_state(ppo_checkpoint_path, abstract_ts)
-    print(f"  (architecture: {model_type})")
+    with _make_ckpt_manager(ppo_checkpoint_path) as ckpt_mgr:
+        latest_step = ckpt_mgr.latest_step()
+        if latest_step is None:
+            raise FileNotFoundError(
+                f"No PPO checkpoint found at '{ppo_checkpoint_path}'"
+            )
+        restored = ckpt_mgr.restore(
+            latest_step,
+            args=ocp.args.PyTreeRestore(item={"params": abstract_params}),
+        )
 
+    print(
+        f"Loaded {model_type} PPO checkpoint from '{ppo_checkpoint_path}'"
+        f" (step={latest_step})"
+    )
     return PPOAgent(
         network=network,
-        params=restored.params,
+        params=restored["params"],
         model_type=model_type,
         layer_size=layer_size,
     )
