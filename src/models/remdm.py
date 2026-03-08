@@ -338,7 +338,6 @@ def sample_plan(
         _denoise_step, (z, rng), jnp.arange(num_steps)
     )
 
-    # Final cleanup: fill any remaining MASK tokens
     t_final = jnp.zeros((batch_size,))
     final_logits = model_apply(params, obs, z_final, t_final)
     x_final = jnp.argmax(final_logits, axis=-1)
