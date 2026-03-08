@@ -234,8 +234,8 @@ def _build_ppo_network(
         ``(network, abstract_train_state)`` — the abstract TrainState mirrors the
         structure saved by the PPO training scripts (StandardSave of a full TrainState).
     """
-    # PPO scripts use optax.adam(lr, eps=1e-5); use the same to match opt_state shape.
-    _tx = optax.adam(1e-4, eps=1e-5)
+    # PPO scripts use optax.chain(clip_by_global_norm, adam); must match to restore opt_state.
+    _tx = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(1e-4, eps=1e-5))
 
     if model_type == "ppo_rnn":
         from Craftax_Baselines.ppo_rnn import ActorCriticRNN, ScannedRNN
