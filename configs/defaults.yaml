@@ -31,7 +31,7 @@ batch_size: 256           # Minibatch size for offline training
 
 # ── Offline training ─────────────────────────────────────────────────────────
 offline_data_path: "trajectories.npz"   # Path to .npz file produced by --mode collect
-num_train_steps: 100000   # Number of gradient steps for offline training
+num_train_steps: 195296   # Number of gradient steps for offline training
 
 # ── Online training ──────────────────────────────────────────────────────────
 num_envs: 32              # Number of parallel environments

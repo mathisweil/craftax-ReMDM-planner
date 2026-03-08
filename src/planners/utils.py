@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import pathlib
 from typing import Any, Callable, Dict, Optional, Tuple, Sequence
 
@@ -85,23 +86,26 @@ def _create_train_state(
 # =============================================================================
 
 
+def _make_ckpt_manager(path: str, max_to_keep: int = 1) -> ocp.CheckpointManager:
+    """Construct a CheckpointManager with standard options."""
+    return ocp.CheckpointManager(
+        path,
+        options=ocp.CheckpointManagerOptions(max_to_keep=max_to_keep),
+    )
+
+
 def _restore_train_state(checkpoint_path: str, abstract_ts: TrainState) -> TrainState:
-    """Handles core Orbax checkpoint restoration logic."""
-    checkpointer = ocp.StandardCheckpointer()
-    ckpt_mgr = ocp.CheckpointManager(
-        checkpoint_path,
-        checkpointer,
-        options=ocp.CheckpointManagerOptions(max_to_keep=1),
-    )
-
-    latest_step = ckpt_mgr.latest_step()
-    if latest_step is None:
-        raise FileNotFoundError(f"No valid checkpoint found at '{checkpoint_path}'")
-
-    restored_ts = ckpt_mgr.restore(
-        latest_step,
-        args=ocp.args.StandardRestore(item=abstract_ts)
-    )
+    """Restore a TrainState from an Orbax checkpoint."""
+    with _make_ckpt_manager(checkpoint_path) as ckpt_mgr:
+        latest_step = ckpt_mgr.latest_step()
+        if latest_step is None:
+            raise FileNotFoundError(
+                f"No valid checkpoint found at '{checkpoint_path}'"
+            )
+        restored_ts = ckpt_mgr.restore(
+            latest_step,
+            args=ocp.args.StandardRestore(item=abstract_ts),
+        )
 
     print(f"Loaded checkpoint from '{checkpoint_path}' (step={latest_step})")
     return restored_ts
@@ -114,17 +118,142 @@ def _load_checkpoint(
         checkpoint_path: str,
 ) -> Any:
     """Load model parameters from an Orbax checkpoint (outside JIT)."""
-
     def get_abstract_state():
-        rng = jax.random.PRNGKey(0)
-        params = _init_model_params(model, rng, obs_dim, config["PLAN_HORIZON"])
+        params = _init_model_params(
+            model, jax.random.PRNGKey(0), obs_dim, config["PLAN_HORIZON"]
+        )
         tx = optax.adam(config["LR"])
         return TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
     abstract_ts = jax.eval_shape(get_abstract_state)
-    restored_ts = _restore_train_state(checkpoint_path, abstract_ts)
+    return _restore_train_state(checkpoint_path, abstract_ts).params
 
-    return restored_ts.params
+
+class PPOAgent:
+    """Unified wrapper for any Craftax_Baselines PPO policy.
+
+    Normalises the apply interface across ``ppo`` (ActorCritic MLP),
+    ``ppo_rnd`` (ActorCriticRND dual-critic MLP), and ``ppo_rnn``
+    (ActorCriticRNN GRU-based) checkpoints so that collection code does
+    not need to branch on the architecture.
+    """
+
+    def __init__(
+        self,
+        network: Any,
+        params: Any,
+        model_type: str,
+        layer_size: int,
+    ) -> None:
+        self.network = network
+        self.params = params
+        self.model_type = model_type
+        self.layer_size = layer_size
+
+    def init_hidden(self, num_envs: int) -> Optional[jax.Array]:
+        """Return an initial hidden state. ``None`` for MLP-based models."""
+        if self.model_type == "ppo_rnn":
+            from Craftax_Baselines.ppo_rnn import ScannedRNN
+            return ScannedRNN.initialize_carry(num_envs, self.layer_size)
+        return None
+
+    def apply(
+        self,
+        params: Any,
+        obs: jax.Array,
+        hidden: Optional[jax.Array] = None,
+        done: Optional[jax.Array] = None,
+    ) -> Tuple[Any, jax.Array, Optional[jax.Array]]:
+        """Apply the policy network.
+
+        Returns:
+            ``(pi, value, new_hidden)`` where ``new_hidden`` is ``None`` for
+            MLP models. For ``ppo_rnn``, ``hidden`` and ``done`` are required.
+        """
+        if self.model_type == "ppo_rnn":
+            assert hidden is not None and done is not None, (
+                "hidden and done must be provided for ppo_rnn"
+            )
+            # ActorCriticRNN.apply(params, hidden, (obs[T,B,D], done[T,B]))
+            new_hidden, pi, value = self.network.apply(
+                params, hidden, (obs[jnp.newaxis], done[jnp.newaxis])
+            )
+            return pi, value.squeeze(0), new_hidden
+
+        pi, value = self.network.apply(params, obs)
+        return pi, value, None
+
+
+def _detect_ppo_model_type(checkpoint_path: str) -> str:
+    """Detect PPO model architecture by inspecting the checkpoint directory.
+
+    Strategy (in order):
+    1. Walk the latest step directory, collecting all entry names in a single
+       pass and checking for characteristic subtree names written by
+       StandardCheckpointer (``ScannedRNN_0`` for RNN, ``Dense_8``/``Dense_9``
+       for the RND dual-critic).
+    2. Fall back to substring matching on the path string itself.
+    3. Default to ``"ppo"`` (plain MLP ActorCritic).
+    """
+    try:
+        step_dirs = sorted(d for d in os.listdir(checkpoint_path) if d.isdigit())
+        if step_dirs:
+            latest_dir = os.path.join(checkpoint_path, step_dirs[-1])
+            all_names = set()
+            for _root, dirs, files in os.walk(latest_dir):
+                all_names.update(dirs)
+                all_names.update(files)
+            if any("ScannedRNN" in name for name in all_names):
+                return "ppo_rnn"
+            if any(("Dense_8" in name or "Dense_9" in name) for name in all_names):
+                return "ppo_rnd"
+    except OSError:
+        pass
+
+    path_lower = checkpoint_path.lower()
+    if "rnn" in path_lower:
+        return "ppo_rnn"
+    if "rnd" in path_lower:
+        return "ppo_rnd"
+    return "ppo"
+
+
+def _build_ppo_network(
+        model_type: str,
+        num_actions: Sequence[int],
+        obs_dim: int,
+        layer_size: int,
+) -> Tuple[Any, Any]:
+    """Instantiate the correct network and compute abstract params via eval_shape.
+
+    Returns:
+        ``(network, abstract_params)``
+    """
+    if model_type == "ppo_rnn":
+        from Craftax_Baselines.ppo_rnn import ActorCriticRNN, ScannedRNN
+        network = ActorCriticRNN(num_actions, config={"LAYER_SIZE": layer_size})
+        dummy_hidden = ScannedRNN.initialize_carry(1, layer_size)
+        dummy_obs  = jnp.zeros((1, 1, obs_dim))  # [T=1, B=1, obs_dim]
+        dummy_done = jnp.zeros((1, 1))            # [T=1, B=1]
+        abstract_params = jax.eval_shape(
+            lambda: network.init(
+                jax.random.PRNGKey(0), dummy_hidden, (dummy_obs, dummy_done)
+            )
+        )
+    elif model_type == "ppo_rnd":
+        from Craftax_Baselines.models.rnd import ActorCriticRND
+        network = ActorCriticRND(num_actions, layer_size)
+        abstract_params = jax.eval_shape(
+            lambda: network.init(jax.random.PRNGKey(0), jnp.zeros((1, obs_dim)))
+        )
+    else:  # "ppo"
+        from Craftax_Baselines.models.actor_critic import ActorCritic
+        network = ActorCritic(num_actions, layer_size)
+        abstract_params = jax.eval_shape(
+            lambda: network.init(jax.random.PRNGKey(0), jnp.zeros((1, obs_dim)))
+        )
+
+    return network, abstract_params
 
 
 def _load_ppo_checkpoint(
@@ -132,63 +261,81 @@ def _load_ppo_checkpoint(
         num_actions: Sequence[int],
         obs_dim: int,
         layer_size: int,
-        model_type: str,
-) -> Tuple[Any, Any]:
-    """Load a pre-trained ActorCritic (MLP) PPO checkpoint."""
-    import os
-    import flax.core
-    import orbax.checkpoint as ocp
-    from Craftax_Baselines.models.rnd import ActorCriticRND
+        model_type_override: Optional[str] = None,
+) -> PPOAgent:
+    """Load a Craftax_Baselines PPO checkpoint, auto-detecting the architecture.
 
-    network = ActorCriticRND(num_actions, layer_size)
+    Args:
+        ppo_checkpoint_path: Directory created by ``CheckpointManager.save``.
+        num_actions:         Number of discrete actions in the environment.
+        obs_dim:             Flat observation dimension.
+        layer_size:          Hidden-layer width of the policy network.
+        model_type_override: Explicit architecture name (``"ppo"``,
+                             ``"ppo_rnn"``, or ``"ppo_rnd"``). When ``None``,
+                             the type is detected automatically.
 
-    abs_checkpoint_path = os.path.abspath(ppo_checkpoint_path)
+    Returns:
+        A :class:`PPOAgent` with ``network``, ``params``, ``model_type``,
+        and ``layer_size`` attributes.
+    """
+    model_type = model_type_override or _detect_ppo_model_type(ppo_checkpoint_path)
+    network, abstract_params = _build_ppo_network(
+        model_type, num_actions, obs_dim, layer_size
+    )
 
-    checkpointer = ocp.PyTreeCheckpointer()
-    ckpt_mgr = ocp.CheckpointManager(abs_checkpoint_path, checkpointer)
+    # The agents save a full TrainState as a single StandardSave item.
+    # We restore the whole TrainState using the correct abstract shape, then
+    # discard opt_state — this is the only safe way to handle ANNEAL_LR, which
+    # produces a structurally different optimizer pytree than a constant LR.
+    def get_abstract_ts():
+        tx = optax.chain(
+            optax.clip_by_global_norm(1.0),
+            optax.adam(1e-3, eps=1e-5),
+        )
+        return TrainState.create(
+            apply_fn=network.apply, params=abstract_params, tx=tx
+        )
 
-    latest_step = ckpt_mgr.latest_step()
-    if latest_step is None:
-        raise FileNotFoundError(f"No valid checkpoint found at '{abs_checkpoint_path}'")
+    abstract_ts = jax.eval_shape(get_abstract_ts)
 
-    # Restore the raw dictionary
-    restored_dict = ckpt_mgr.restore(latest_step)
+    with _make_ckpt_manager(ppo_checkpoint_path) as ckpt_mgr:
+        latest_step = ckpt_mgr.latest_step()
+        if latest_step is None:
+            raise FileNotFoundError(
+                f"No PPO checkpoint found at '{ppo_checkpoint_path}'"
+            )
+        restored_ts = ckpt_mgr.restore(
+            latest_step,
+            args=ocp.args.StandardRestore(item=abstract_ts),
+        )
 
-    # Re-freeze the parameters dictionary for Flax
-    restored_params = flax.core.freeze(restored_dict["params"])
-    print(f"Loaded checkpoint params from '{abs_checkpoint_path}' (step={latest_step})")
-
-    return network, restored_params
+    print(
+        f"Loaded {model_type} PPO checkpoint from '{ppo_checkpoint_path}'"
+        f" (step={latest_step})"
+    )
+    return PPOAgent(
+        network=network,
+        params=restored_ts.params,
+        model_type=model_type,
+        layer_size=layer_size,
+    )
 
 
 def _save_model(
         train_state: TrainState, config: Dict[str, Any], dir_name: str
 ) -> None:
-    """Save a TrainState checkpoint using orbax."""
-
-    # 1. Determine path
-    if config.get("USE_WANDB") and wandb.run is not None:
-        path = str(pathlib.Path(wandb.run.dir) / dir_name)
-    else:
-        path = dir_name
-
-    # 2. Modern checkpointer setup
-    checkpointer = ocp.StandardCheckpointer()
-    ckpt_mgr = ocp.CheckpointManager(
-        path,
-        checkpointer,
-        options=ocp.CheckpointManagerOptions(max_to_keep=1, create=True),
+    """Save a TrainState checkpoint using Orbax."""
+    path = (
+        str(pathlib.Path(wandb.run.dir) / dir_name)
+        if config.get("USE_WANDB") and wandb.run is not None
+        else dir_name
     )
 
-    # 3. Modern save execution
     step = config.get("NUM_TRAIN_STEPS", config.get("NUM_UPDATES", 0))
-    ckpt_mgr.save(
-        step,
-        args=ocp.args.StandardSave(train_state),
-    )
 
-    # 4. Ensure asynchronous saves complete before exiting
-    ckpt_mgr.wait_until_finished()
+    with _make_ckpt_manager(path) as ckpt_mgr:
+        ckpt_mgr.save(step, args=ocp.args.StandardSave(train_state))
+        ckpt_mgr.wait_until_finished()
 
     print(f"Saved model checkpoint to '{path}'")
 
