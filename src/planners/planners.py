@@ -74,7 +74,7 @@ def collect_offline_data(config: Dict[str, Any]) -> None:
 
     ppo_agent = _load_ppo_checkpoint(
         config["PPO_CHECKPOINT_PATH"], num_actions, obs_dim, layer_size,
-        model_type_override=config.get("PPO_MODEL_TYPE"),
+        model_type=config.get("PPO_MODEL_TYPE"),
     )
 
     env_w, _ = _make_env_stack(config, num_envs)
@@ -101,7 +101,7 @@ def collect_offline_data(config: Dict[str, Any]) -> None:
             hidden: jax.Array,
         ) -> Tuple[jax.Array, Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array]:
             rng, k1, k2 = jax.random.split(rng, 3)
-            pi, _, new_hidden = ppo_agent.apply(ppo_agent.params, obs, hidden, done)
+            pi, _, new_hidden = ppo_agent.apply(obs, hidden=hidden, done=done)
             action = pi.sample(seed=k1)
             obs_next, env_state, _, done_next, _ = env_w.step(
                 k2, env_state, action, env_params
@@ -311,7 +311,7 @@ def make_train_offline_from_agent(
 
     ppo_agent = _load_ppo_checkpoint(
         ppo_checkpoint_path, num_actions, obs_dim, layer_size,
-        model_type_override=config.get("PPO_MODEL_TYPE"),
+        model_type=config.get("PPO_MODEL_TYPE"),
     )
 
     env_w, _ = _make_env_stack(config, num_envs)
@@ -341,7 +341,7 @@ def make_train_offline_from_agent(
             ]:
                 rng, env_state, obs, done, hidden = carry
                 rng, k1, k2 = jax.random.split(rng, 3)
-                pi, _, new_hidden = ppo_agent.apply(ppo_agent.params, obs, hidden, done)
+                pi, _, new_hidden = ppo_agent.apply(obs, hidden=hidden, done=done)
                 action = pi.sample(seed=k1)
                 obs_next, env_state, _, done_next, _ = env_w.step(
                     k2, env_state, action, env_params
