@@ -127,101 +127,28 @@ def _load_checkpoint(
     return restored_ts.params
 
 
-class PPOAgent:
-    """Unified wrapper for any Craftax_Baselines PPO policy."""
-
-    def __init__(
-            self,
-            network: Any,
-            params: Any,
-            model_type: str,
-            layer_size: int,
-    ) -> None:
-        self.network = network
-        self.params = params
-        self.model_type = model_type
-        self.layer_size = layer_size
-
-    def init_hidden(self, num_envs: int) -> Optional[jax.Array]:
-        """Return an initial hidden state.  ``None`` for MLP-based models."""
-        if self.model_type == "ppo_rnn":
-            from Craftax_Baselines.ppo_rnn import ScannedRNN
-            return ScannedRNN.initialize_carry(num_envs, self.layer_size)
-        return None
-
-    def apply(
-            self,
-            obs: jax.Array,
-            hidden: Optional[jax.Array] = None,
-            done: Optional[jax.Array] = None,
-    ) -> Tuple[Any, jax.Array, Optional[jax.Array]]:
-        """Apply the policy network."""
-        if self.model_type == "ppo_rnn":
-            assert hidden is not None and done is not None, (
-                "hidden and done must be provided for ppo_rnn"
-            )
-            ac_in = (obs[jnp.newaxis], done[jnp.newaxis])
-            pi, value = self.network.apply(self.params, hidden, ac_in)
-            return pi, value.squeeze(
-                0), hidden
-        else:
-            pi, value = self.network.apply(self.params, obs)
-            return pi, value, None
-
-
 def _load_ppo_checkpoint(
         ppo_checkpoint_path: str,
         num_actions: Sequence[int],
         obs_dim: int,
         layer_size: int,
-        model_type: str = "ppo_rnd",
-) -> PPOAgent:
-    """Load a Craftax_Baselines PPO checkpoint using modern Orbax."""
+) -> Tuple[Any, Any]:
+    """Load a pre-trained ActorCritic (MLP) PPO checkpoint."""
+    from Craftax_Baselines.models.rnd import ActorCriticRND
 
-    if model_type == "ppo_rnn":
-        from Craftax_Baselines.ppo_rnn import ActorCriticRNN
-        network = ActorCriticRNN(num_actions, layer_size)
+    network = ActorCriticRND(num_actions, layer_size)
 
-        def get_abstract_state():
-            from Craftax_Baselines.ppo_rnn import ScannedRNN
-            rng = jax.random.PRNGKey(0)
-            dummy_hidden = ScannedRNN.initialize_carry(1, layer_size)
-            dummy_obs = jnp.zeros((1, 1, obs_dim))
-            dummy_done = jnp.zeros((1, 1))
-            params = network.init(rng, dummy_hidden, (dummy_obs, dummy_done))
-            tx = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(2e-4, eps=1e-5))
-            return TrainState.create(apply_fn=network.apply, params=params, tx=tx)
-
-    elif model_type == "ppo_rnd":
-        from Craftax_Baselines.models.rnd import ActorCriticRND
-        network = ActorCriticRND(num_actions, layer_size)
-
-        def get_abstract_state():
-            rng = jax.random.PRNGKey(0)
-            params = network.init(rng, jnp.zeros((1, obs_dim)))
-            tx = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(2e-4, eps=1e-5))
-            return TrainState.create(apply_fn=network.apply, params=params, tx=tx)
-
-    else:
-        from Craftax_Baselines.models.actor_critic import ActorCritic
-        network = ActorCritic(num_actions, layer_size)
-
-        def get_abstract_state():
-            rng = jax.random.PRNGKey(0)
-            params = network.init(rng, jnp.zeros((1, obs_dim)))
-            tx = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(2e-4, eps=1e-5))
-            return TrainState.create(apply_fn=network.apply, params=params, tx=tx)
+    def get_abstract_state():
+        rng = jax.random.PRNGKey(0)
+        dummy_obs = jnp.zeros((1, obs_dim))
+        params = network.init(rng, dummy_obs)
+        tx = optax.adam(1e-4)
+        return TrainState.create(apply_fn=network.apply, params=params, tx=tx)
 
     abstract_ts = jax.eval_shape(get_abstract_state)
-
     restored_ts = _restore_train_state(ppo_checkpoint_path, abstract_ts)
 
-    return PPOAgent(
-        network=network,
-        params=restored_ts.params,
-        model_type=model_type,
-        layer_size=layer_size,
-    )
+    return network, restored_ts.params
 
 
 def _save_model(
@@ -229,11 +156,13 @@ def _save_model(
 ) -> None:
     """Save a TrainState checkpoint using orbax."""
 
+    # 1. Determine path
     if config.get("USE_WANDB") and wandb.run is not None:
         path = str(pathlib.Path(wandb.run.dir) / dir_name)
     else:
         path = dir_name
 
+    # 2. Modern checkpointer setup
     checkpointer = ocp.StandardCheckpointer()
     ckpt_mgr = ocp.CheckpointManager(
         path,
@@ -241,12 +170,14 @@ def _save_model(
         options=ocp.CheckpointManagerOptions(max_to_keep=1, create=True),
     )
 
+    # 3. Modern save execution
     step = config.get("NUM_TRAIN_STEPS", config.get("NUM_UPDATES", 0))
     ckpt_mgr.save(
         step,
         args=ocp.args.StandardSave(train_state),
     )
 
+    # 4. Ensure asynchronous saves complete before exiting
     ckpt_mgr.wait_until_finished()
 
     print(f"Saved model checkpoint to '{path}'")
