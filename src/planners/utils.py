@@ -462,13 +462,18 @@ def _make_apply_fns(
     """
 
     def apply_inference(
-        params: Any, obs: jnp.ndarray, z_t: jnp.ndarray, t: jnp.ndarray
+        params: Any, obs: jnp.ndarray, z_t: jnp.ndarray, t: jnp.ndarray,
+        _rng: Optional[Any] = None,
     ) -> jnp.ndarray:
         return model.apply(params, obs, z_t, t)
 
     def apply_train(
-        params: Any, obs: jnp.ndarray, z_t: jnp.ndarray, t: jnp.ndarray
+        params: Any, obs: jnp.ndarray, z_t: jnp.ndarray, t: jnp.ndarray,
+        rng: Optional[Any] = None,
     ) -> jnp.ndarray:
-        return model.apply(params, obs, z_t, t, deterministic=False)
+        return model.apply(
+            params, obs, z_t, t, deterministic=False,
+            rngs={"dropout": rng} if rng is not None else {},
+        )
 
     return apply_inference, apply_train

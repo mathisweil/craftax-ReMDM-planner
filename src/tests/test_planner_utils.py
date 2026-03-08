@@ -20,6 +20,7 @@ _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
+# Craftax_Baselines uses bare imports (e.g. ``from wrappers import ...``).
 _baselines_dir = os.path.join(_project_root, "Craftax_Baselines")
 if _baselines_dir not in sys.path:
     sys.path.insert(0, _baselines_dir)
@@ -116,31 +117,48 @@ class TestRestoreTrainState:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# _build_ppo_network — abstract TrainState structure
+# _build_ppo_network — abstract params pytree (no opt_state)
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestBuildPpoNetwork:
     @pytest.mark.parametrize("model_type", ["ppo", "ppo_rnd", "ppo_rnn"])
-    def test_returns_abstract_train_state(self, model_type):
-        network, abstract_ts = _build_ppo_network(
+    def test_returns_abstract_params_pytree(self, model_type):
+        """abstract_params must be a raw params dict (not a TrainState)."""
+        _, abstract_params = _build_ppo_network(
             model_type, NUM_ACTIONS, OBS_DIM, LAYER_SIZE
         )
-        # abstract_ts must be a TrainState (or ShapeDtypeStruct tree thereof)
-        leaves = jax.tree.leaves(abstract_ts)
+        # All leaves are ShapeDtypeStructs from jax.eval_shape
+        leaves = jax.tree.leaves(abstract_params)
         assert len(leaves) > 0
-        # Every leaf should be a ShapeDtypeStruct (from jax.eval_shape)
         for leaf in leaves:
             assert hasattr(leaf, "shape") and hasattr(leaf, "dtype")
 
     @pytest.mark.parametrize("model_type", ["ppo", "ppo_rnd", "ppo_rnn"])
-    def test_abstract_ts_has_params_key(self, model_type):
-        _, abstract_ts = _build_ppo_network(
+    def test_abstract_params_is_not_train_state(self, model_type):
+        """Must be a raw params dict — no opt_state, so partial_restore works."""
+        _, abstract_params = _build_ppo_network(
             model_type, NUM_ACTIONS, OBS_DIM, LAYER_SIZE
         )
-        # TrainState stores params under .params; for Flax these contain a
-        # 'params' sub-key.  Verify the nested structure exists.
-        assert hasattr(abstract_ts, "params")
-        assert "params" in abstract_ts.params  # {'params': {<layer keys>}}
+        assert not isinstance(abstract_params, TrainState)
+
+    @pytest.mark.parametrize("model_type", ["ppo", "ppo_rnd", "ppo_rnn"])
+    def test_abstract_params_has_flax_params_key(self, model_type):
+        """Flax stores weights under a 'params' sub-key."""
+        _, abstract_params = _build_ppo_network(
+            model_type, NUM_ACTIONS, OBS_DIM, LAYER_SIZE
+        )
+        # abstract_params is {'params': {'Dense_0': ..., ...}}
+        assert isinstance(abstract_params, dict) or hasattr(abstract_params, "keys")
+        assert "params" in abstract_params
+
+    @pytest.mark.parametrize("model_type", ["ppo", "ppo_rnd", "ppo_rnn"])
+    def test_first_layer_shape_matches_obs_dim(self, model_type):
+        """Dense_0 kernel must have obs_dim as first axis."""
+        _, abstract_params = _build_ppo_network(
+            model_type, NUM_ACTIONS, OBS_DIM, LAYER_SIZE
+        )
+        kernel = abstract_params["params"]["Dense_0"]["kernel"]
+        assert kernel.shape[0] == OBS_DIM
 
     def test_ppo_network_type(self):
         from Craftax_Baselines.models.actor_critic import ActorCritic
@@ -197,7 +215,8 @@ class TestLoadPpoCheckpoint:
     def test_returns_ppo_agent(self, model_type, _ppo_ts, _rnd_ts, _rnn_ts):
         ts_map = {"ppo": _ppo_ts, "ppo_rnd": _rnd_ts, "ppo_rnn": _rnn_ts}
         ts = ts_map[model_type]
-        with _mock_ckpt_manager(restored_item=ts):
+        # restore returns {"params": params_dict} — matching PyTreeRestore output
+        with _mock_ckpt_manager(restored_item={"params": ts.params}):
             agent = _load_ppo_checkpoint(
                 "/fake", NUM_ACTIONS, OBS_DIM, LAYER_SIZE,
                 model_type=model_type,
@@ -205,7 +224,7 @@ class TestLoadPpoCheckpoint:
         assert isinstance(agent, PPOAgent)
         assert agent.model_type == model_type
         assert agent.layer_size == LAYER_SIZE
-        # Params should be the restored params
+        # agent.params must equal the params we put in the mock
         leaves_agent = jax.tree.leaves(agent.params)
         leaves_ts = jax.tree.leaves(ts.params)
         assert len(leaves_agent) == len(leaves_ts)
@@ -218,6 +237,29 @@ class TestLoadPpoCheckpoint:
                 _load_ppo_checkpoint(
                     "/fake", NUM_ACTIONS, OBS_DIM, LAYER_SIZE, model_type="ppo"
                 )
+
+    def test_uses_partial_restore(self):
+        """Verify PyTreeRestore is called with partial_restore=True."""
+        import orbax.checkpoint as ocp
+        from Craftax_Baselines.models.actor_critic import ActorCritic
+        net = ActorCritic(NUM_ACTIONS, LAYER_SIZE)
+        params = net.init(jax.random.PRNGKey(0), jnp.zeros((1, OBS_DIM)))
+        with _mock_ckpt_manager(restored_item={"params": params}) as mgr:
+            _load_ppo_checkpoint("/fake", NUM_ACTIONS, OBS_DIM, LAYER_SIZE, model_type="ppo")
+        restore_args = mgr.restore.call_args[1]["args"]
+        assert isinstance(restore_args, ocp.args.PyTreeRestore)
+        assert restore_args.partial_restore is True
+
+    def test_restore_item_contains_only_params(self):
+        """Item passed to PyTreeRestore must be {'params': ...} — no opt_state."""
+        import orbax.checkpoint as ocp
+        from Craftax_Baselines.models.actor_critic import ActorCritic
+        net = ActorCritic(NUM_ACTIONS, LAYER_SIZE)
+        params = net.init(jax.random.PRNGKey(0), jnp.zeros((1, OBS_DIM)))
+        with _mock_ckpt_manager(restored_item={"params": params}) as mgr:
+            _load_ppo_checkpoint("/fake", NUM_ACTIONS, OBS_DIM, LAYER_SIZE, model_type="ppo")
+        restore_args = mgr.restore.call_args[1]["args"]
+        assert set(restore_args.item.keys()) == {"params"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════

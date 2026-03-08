@@ -11,7 +11,7 @@ MASK    : special token with id = num_actions.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import chex
 import jax
@@ -25,9 +25,13 @@ ScheduleFn = Callable[[jnp.ndarray], jnp.ndarray]
 """Maps a diffusion time array to alpha_t (retention probability)."""
 
 ModelApplyFn = Callable[
-    [Any, jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray
+    [Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, Optional[Any]], jnp.ndarray
 ]
-"""fn(params, obs, z_t, t) -> logits [batch, H, num_actions]."""
+"""fn(params, obs, z_t, t, rng=None) -> logits [batch, H, num_actions].
+
+``rng`` is a JAX PRNG key used as the dropout RNG during training.
+Pass ``None`` (or omit) for deterministic inference.
+"""
 
 
 # =============================================================================
@@ -118,7 +122,7 @@ def compute_loss(
     eps = 1e-5
     dt = 1e-3
 
-    rng, t_rng, mask_rng = jax.random.split(rng, 3)
+    rng, t_rng, mask_rng, dropout_rng = jax.random.split(rng, 4)
 
     t = jax.random.uniform(t_rng, shape=(batch_size,), minval=eps, maxval=1.0)
     alpha_t = schedule_fn(t)
@@ -130,7 +134,7 @@ def compute_loss(
 
     z_t = forward_process(mask_rng, x_0, alpha_t, mask_token_id)
 
-    logits = model_apply(params, obs, z_t, t)  # [batch, H, num_actions]
+    logits = model_apply(params, obs, z_t, t, dropout_rng)  # [batch, H, num_actions]
 
     is_masked = (z_t == mask_token_id).astype(jnp.float32)  # [batch, H]
     targets_one_hot = jax.nn.one_hot(x_0, num_actions)  # [batch, H, num_actions]
