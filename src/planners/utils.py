@@ -228,34 +228,40 @@ def _build_ppo_network(
         obs_dim: int,
         layer_size: int,
 ) -> Tuple[Any, Any]:
-    """Instantiate the correct network and compute abstract params only.
+    """Instantiate the correct network and return an abstract TrainState.
 
     Returns:
-        ``(network, abstract_params)`` — note: just params, not a full TrainState.
-        We never need opt_state when loading for inference.
+        ``(network, abstract_train_state)`` — the abstract TrainState mirrors the
+        structure saved by the PPO training scripts (StandardSave of a full TrainState).
     """
+    # PPO scripts use optax.adam(lr, eps=1e-5); use the same to match opt_state shape.
+    _tx = optax.adam(1e-4, eps=1e-5)
+
     if model_type == "ppo_rnn":
         from Craftax_Baselines.ppo_rnn import ActorCriticRNN, ScannedRNN
         network = ActorCriticRNN(num_actions, config={"LAYER_SIZE": layer_size})
-        def _init_params():
+        def _init():
             dummy_hidden = ScannedRNN.initialize_carry(1, layer_size)
-            return network.init(
+            params = network.init(
                 jax.random.PRNGKey(0), dummy_hidden,
                 (jnp.zeros((1, 1, obs_dim)), jnp.zeros((1, 1))),
             )
+            return TrainState.create(apply_fn=network.apply, params=params, tx=_tx)
     elif model_type == "ppo_rnd":
         from Craftax_Baselines.models.rnd import ActorCriticRND
         network = ActorCriticRND(num_actions, layer_size)
-        def _init_params():
-            return network.init(jax.random.PRNGKey(0), jnp.zeros((1, obs_dim)))
+        def _init():
+            params = network.init(jax.random.PRNGKey(0), jnp.zeros((1, obs_dim)))
+            return TrainState.create(apply_fn=network.apply, params=params, tx=_tx)
     else:
         from Craftax_Baselines.models.actor_critic import ActorCritic
         network = ActorCritic(num_actions, layer_size)
-        def _init_params():
-            return network.init(jax.random.PRNGKey(0), jnp.zeros((1, obs_dim)))
+        def _init():
+            params = network.init(jax.random.PRNGKey(0), jnp.zeros((1, obs_dim)))
+            return TrainState.create(apply_fn=network.apply, params=params, tx=_tx)
 
-    abstract_params = jax.eval_shape(_init_params)
-    return network, abstract_params
+    abstract_ts = jax.eval_shape(_init)
+    return network, abstract_ts
 
 
 def _load_ppo_checkpoint(
@@ -266,28 +272,14 @@ def _load_ppo_checkpoint(
         model_type: Optional[str] = None,
 ) -> PPOAgent:
     model_type = model_type or _detect_ppo_model_type(ppo_checkpoint_path)
-    network, abstract_params = _build_ppo_network(
+    network, abstract_ts = _build_ppo_network(
         model_type, num_actions, obs_dim, layer_size
     )
-
-    with _make_ckpt_manager(ppo_checkpoint_path) as ckpt_mgr:
-        latest_step = ckpt_mgr.latest_step()
-        if latest_step is None:
-            raise FileNotFoundError(
-                f"No PPO checkpoint found at '{ppo_checkpoint_path}'"
-            )
-        restored = ckpt_mgr.restore(
-            latest_step,
-            args=ocp.args.PyTreeRestore(item={"params": abstract_params}),
-        )
-
-    print(
-        f"Loaded {model_type} PPO checkpoint from '{ppo_checkpoint_path}'"
-        f" (step={latest_step})"
-    )
+    restored_ts = _restore_train_state(ppo_checkpoint_path, abstract_ts)
+    print(f"Loaded {model_type} PPO checkpoint from '{ppo_checkpoint_path}'")
     return PPOAgent(
         network=network,
-        params=restored["params"],
+        params=restored_ts.params,
         model_type=model_type,
         layer_size=layer_size,
     )
