@@ -81,7 +81,7 @@ def make_train_offline(
 
     return train, data_arrays
 
-def _make_collect_chunk_fn(ppo_agent, env_w, env_params, collect_steps: int):
+def _make_collect_chunk_fn(ppo_agent, env_w, env_params, collect_steps: int, config):
     is_rnn = ppo_agent.model_type == "ppo_rnn"
 
     @jax.jit
@@ -95,8 +95,8 @@ def _make_collect_chunk_fn(ppo_agent, env_w, env_params, collect_steps: int):
             else:
                 pi, _, _ = ppo_agent.apply(ppo_agent.params, obs)
                 new_hidden = hidden
-            
-            temperature = 2.0 
+
+            temperature = config.get("COLLECT_TEMPERATURE", 2.0)
             noisy_logits = pi.logits / temperature
             action = jax.random.categorical(k1, noisy_logits)
 
@@ -141,7 +141,7 @@ def make_train_offline_from_agent(
     _, apply_train = _make_apply_fns(model)
     grad_step = _make_grad_step(apply_train, num_actions, schedule_fn, config.get("TRAIN_SIGMA", 0.0))
 
-    _collect_chunk = _make_collect_chunk_fn(ppo_agent, env_w, env_params, collect_steps)
+    _collect_chunk = _make_collect_chunk_fn(ppo_agent, env_w, env_params, collect_steps, config)
     max_valid_indices = num_envs * collect_steps
 
     @jax.jit
@@ -182,6 +182,8 @@ def make_train_offline_from_agent(
         t0 = time.time()
         log_every = max(num_chunks // 20, 1)
 
+        padded_env = np.zeros(max_valid_indices, dtype=np.int32)
+        padded_time = np.zeros(max_valid_indices, dtype=np.int32)
         for chunk_idx in range(num_chunks):
             rng, collect_rng = jax.random.split(rng)
             _, env_state, obs, done, hidden, chunk_obs, chunk_acts, chunk_dones = (
@@ -198,10 +200,10 @@ def make_train_offline_from_agent(
                 continue
 
             num_valid = len(env_idxs)
-            padded_env = np.zeros(max_valid_indices, dtype=np.int32)
-            padded_time = np.zeros(max_valid_indices, dtype=np.int32)
             padded_env[:num_valid] = env_idxs
             padded_time[:num_valid] = time_idxs
+            padded_env[num_valid:] = 0
+            padded_time[num_valid:] = 0
 
             # --- THIS IS THE PART THAT GOT DELETED ACCIDENTALLY ---
             data = {
@@ -229,7 +231,8 @@ def make_train_offline_from_agent(
                     "offline/steps_per_second": step / max(elapsed, 1e-6),
                 }
 
-                for key, val in chunk_metrics.items():
+                metrics_host = jax.device_get(chunk_metrics)
+                for key, val in metrics_host.items():
                     log_data[f"offline/{key}"] = float(val)
                     
                 wandb.log(log_data, step=step)
