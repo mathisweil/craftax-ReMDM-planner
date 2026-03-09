@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import pathlib
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Optional
 
 import jax
 import jax.numpy as jnp
@@ -28,7 +28,7 @@ from Craftax_Baselines.wrappers import (
 )
 from src.envs.wrappers import SequenceHistoryWrapper
 
-SCHEDULE_MAP: Dict[str, ScheduleFn] = {
+SCHEDULE_MAP: dict[str, ScheduleFn] = {
     "cosine": cosine_schedule,
     "linear": linear_schedule,
 }
@@ -39,7 +39,7 @@ SCHEDULE_MAP: Dict[str, ScheduleFn] = {
 # =============================================================================
 
 
-def _build_model(config: Dict[str, Any], num_actions: int) -> DenoisingTransformer:
+def _build_model(config: dict[str, Any], num_actions: int) -> DenoisingTransformer:
     """Instantiate a ``DenoisingTransformer`` from the config dict."""
     return DenoisingTransformer(
         num_actions=num_actions,
@@ -112,7 +112,7 @@ def _restore_train_state(checkpoint_path: str, abstract_ts: TrainState) -> Train
 
 
 def _load_checkpoint(
-        config: Dict[str, Any],
+        config: dict[str, Any],
         model: Any,  # DenoisingTransformer
         obs_dim: int,
         checkpoint_path: str,
@@ -164,7 +164,7 @@ class PPOAgent:
         obs: jax.Array,
         hidden: Optional[jax.Array] = None,
         done: Optional[jax.Array] = None,
-    ) -> Tuple[Any, jax.Array, Optional[jax.Array]]:
+    ) -> tuple[Any, jax.Array, Optional[jax.Array]]:
         """Apply the policy network.
 
         Returns:
@@ -227,7 +227,7 @@ def _build_ppo_network(
         num_actions: int,
         obs_dim: int,
         layer_size: int,
-) -> Tuple[Any, Any]:
+) -> tuple[Any, Any]:
     """Instantiate the correct network and return abstract params only.
 
     Returns:
@@ -294,7 +294,7 @@ def _load_ppo_checkpoint(
 
 
 def _save_model(
-        train_state: TrainState, config: Dict[str, Any], dir_name: str
+        train_state: TrainState, config: dict[str, Any], dir_name: str
 ) -> None:
     """Save a TrainState checkpoint using Orbax."""
     path = (
@@ -318,12 +318,12 @@ def _save_model(
 
 
 def _make_env_stack(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     num_envs: int,
     *,
     use_optimistic_resets: bool = False,
     use_sequence_history: bool = False,
-) -> Tuple[Any, Any]:
+) -> tuple[Any, Any]:
     """Build the wrapper stack for Craftax environments.
 
     Standard stack::
@@ -351,7 +351,7 @@ def _make_env_stack(
     env_params = env.default_params
 
     if use_sequence_history:
-        obs_shape: Tuple[int, ...] = env.observation_space(env_params).shape
+        obs_shape: tuple[int, ...] = env.observation_space(env_params).shape
         history_len: int = config["PLAN_HORIZON"]
         env = SequenceHistoryWrapper(env, history_len=history_len, obs_shape=obs_shape)
 
@@ -410,7 +410,7 @@ def _sample_windows_from_chunk(
     plan_horizon: int,
     batch_size: int,
     np_rng: np.random.Generator,
-) -> Optional[Tuple[jnp.ndarray, jnp.ndarray]]:
+) -> Optional[tuple[jnp.ndarray, jnp.ndarray]]:
     """Sample ``batch_size`` valid windows from a collected chunk.
 
     Args:
@@ -448,7 +448,7 @@ def _sample_windows_from_chunk(
 
 def _make_apply_fns(
     model: DenoisingTransformer,
-) -> Tuple[
+) -> tuple[
     Callable[..., jnp.ndarray],
     Callable[..., jnp.ndarray],
 ]:

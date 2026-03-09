@@ -1,5 +1,3 @@
-from typing import Dict
-
 import jax
 import jax.numpy as jnp
 
@@ -10,7 +8,7 @@ from src.models.remdm import (
     linear_schedule,
 )
 
-SCHEDULE_MAP: Dict[str, ScheduleFn] = {
+SCHEDULE_MAP: dict[str, ScheduleFn] = {
     "cosine": cosine_schedule,
     "linear": linear_schedule,
 }
@@ -20,7 +18,7 @@ def _global_grad_norm(grads) -> jnp.ndarray:
     leaves = jax.tree.leaves(grads)
     return jnp.sqrt(sum(jnp.sum(g ** 2) for g in leaves))
 
-def _action_stats(act_batch: jnp.ndarray, num_actions: int) -> Dict[str, jnp.ndarray]:
+def _action_stats(act_batch: jnp.ndarray, num_actions: int) -> dict[str, jnp.ndarray]:
     """Compute action distribution entropy and mode fraction over a batch of action sequences."""
     counts = jnp.zeros(num_actions, dtype=jnp.float32)
     flat = act_batch.reshape(-1)

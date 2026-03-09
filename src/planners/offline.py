@@ -1,5 +1,5 @@
 import time
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
@@ -20,9 +20,9 @@ from .utils import (
 )
 
 def make_train_offline(
-    config: Dict[str, Any],
-    offline_data: Dict[str, np.ndarray],
-) -> Tuple[Callable, Dict[str, jnp.ndarray]]:
+    config: dict[str, Any],
+    offline_data: dict[str, np.ndarray],
+) -> tuple[Callable, dict[str, jnp.ndarray]]:
     raw_obs, raw_act, raw_done = offline_data["obs"], offline_data["actions"], offline_data["dones"]
     num_envs_data, traj_len, obs_dim = raw_obs.shape
 
@@ -51,7 +51,7 @@ def make_train_offline(
     _, apply_train = _make_apply_fns(model)
     grad_step = _make_grad_step(apply_train, num_actions, schedule_fn, config.get("TRAIN_SIGMA", 0.0))
 
-    def train(rng: jax.Array, data: Dict[str, jnp.ndarray]) -> Dict[str, Any]:
+    def train(rng: jax.Array, data: dict[str, jnp.ndarray]) -> dict[str, Any]:
         obs_data, act_data = data["obs"], data["act"]
         env_idx_arr, time_idx_arr = data["env_idx"], data["time_idx"]
 
@@ -112,9 +112,9 @@ def _make_collect_chunk_fn(ppo_agent, env_w, env_params, collect_steps: int):
     return _collect_chunk
 
 def make_train_offline_from_agent(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     ppo_checkpoint_path: str,
-) -> Callable[[jax.Array], Dict[str, Any]]:
+) -> Callable[[jax.Array], dict[str, Any]]:
     env = make_craftax_env_from_name(config["ENV_NAME"], True)
     env_params = env.default_params
     num_actions: int = env.action_space(env_params).n
@@ -170,7 +170,7 @@ def make_train_offline_from_agent(
         mean_infos = jax.tree.map(lambda x: jnp.mean(x), infos)
         return train_state, rng, mean_infos
 
-    def train(rng: jax.Array) -> Dict[str, Any]:
+    def train(rng: jax.Array) -> dict[str, Any]:
         rng, init_rng, env_rng = jax.random.split(rng, 3)
         params = _init_model_params(model, init_rng, obs_dim, plan_horizon)
         train_state = _create_train_state(model, params, config["LR"], config["MAX_GRAD_NORM"])
@@ -246,7 +246,7 @@ def make_train_offline_from_agent(
 
     return train
 
-def run_offline(config: Dict[str, Any]) -> None:
+def run_offline(config: dict[str, Any]) -> None:
     if config.get("USE_WANDB"):
         total_steps = config["NUM_TRAIN_STEPS"] * config["BATCH_SIZE"]
         wandb.init(

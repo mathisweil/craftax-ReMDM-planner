@@ -11,7 +11,7 @@ MASK    : special token with id = num_actions.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Optional
 
 import chex
 import jax
@@ -104,7 +104,7 @@ def compute_loss(
     num_actions: int,
     schedule_fn: ScheduleFn,
     sigma_t: float = 0.0,
-) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
+) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
     """Compute the MDLM / ReMDM training loss.
 
     When ``sigma_t = 0`` this is the standard MDLM SUBS objective (Eq. 3 of
@@ -185,7 +185,7 @@ def compute_loss(
     masked_accuracy = jnp.sum(correct_guesses * is_masked) / jnp.maximum(jnp.sum(is_masked), 1.0)
     # ------------------------------
 
-    info: Dict[str, jnp.ndarray] = {
+    info: dict[str, jnp.ndarray] = {
         "loss": loss,
         "mean_t": jnp.mean(t),
         "frac_masked": jnp.mean(is_masked),
@@ -324,7 +324,7 @@ STRATEGY_RESCALE = "rescale"
 STRATEGY_CAP = "cap"
 STRATEGY_CONF = "conf"
 
-STRATEGY_MAP: Dict[str, str] = {
+STRATEGY_MAP: dict[str, str] = {
     "rescale": STRATEGY_RESCALE,
     "cap": STRATEGY_CAP,
     "conf": STRATEGY_CONF,

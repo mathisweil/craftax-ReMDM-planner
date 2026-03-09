@@ -1,5 +1,5 @@
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -68,7 +68,7 @@ def sample_plan_inpainting(
     return final_seq
 
 
-def run_inference(config: Dict[str, Any]) -> None:
+def run_inference(config: dict[str, Any]) -> None:
     env_name = config["ENV_NAME"]
     
     # Notice we REMOVED the AutoReset and Log wrappers. We want raw game access.

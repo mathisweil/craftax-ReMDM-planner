@@ -1,5 +1,5 @@
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Optional
 
 import jax
 import jax.numpy as jnp
@@ -21,9 +21,9 @@ from .utils import (
 )
 
 def make_train_online(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     init_params: Optional[Any] = None,
-) -> Callable[[jax.Array], Dict[str, Any]]:
+) -> Callable[[jax.Array], dict[str, Any]]:
     assert config["NUM_STEPS"] % config["REPLAN_EVERY"] == 0, "NUM_STEPS must be divisible by REPLAN_EVERY"
 
     num_envs: int = config["NUM_ENVS"]
@@ -62,7 +62,7 @@ def make_train_online(
     )
     minibatch_size = total_samples // num_minibatches
 
-    def train(rng: jax.Array) -> Dict[str, Any]:
+    def train(rng: jax.Array) -> dict[str, Any]:
         rng, init_rng, env_rng = jax.random.split(rng, 3)
         params = init_params if init_params is not None else _init_model_params(model, init_rng, obs_dim, plan_horizon)
         train_state = _create_train_state(model, params, config["LR"], config["MAX_GRAD_NORM"])
@@ -174,7 +174,7 @@ def make_train_online(
 
     return train
 
-def run_online(config: Dict[str, Any]) -> None:
+def run_online(config: dict[str, Any]) -> None:
     env = make_craftax_env_from_name(config["ENV_NAME"], True)
     config["NUM_ACTIONS"] = env.action_space(env.default_params).n
     config["OBS_DIM"] = env.observation_space(env.default_params).shape[0]

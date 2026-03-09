@@ -39,7 +39,7 @@ from __future__ import annotations
 import argparse
 import pathlib
 import sys
-from typing import Any, Dict
+from typing import Any
 
 import jax
 import numpy as np
@@ -59,7 +59,7 @@ from src.planners import (
     run_inference,
 )
 
-SCHEDULE_MAP: Dict[str, ScheduleFn] = {
+SCHEDULE_MAP: dict[str, ScheduleFn] = {
     "cosine": cosine_schedule,
     "linear": linear_schedule,
 }
@@ -214,7 +214,7 @@ if __name__ == "__main__":
     if args.seed is None:
         args.seed = np.random.randint(2**31)
 
-    config: Dict[str, Any] = {k.upper(): v for k, v in vars(args).items()}
+    config: dict[str, Any] = {k.upper(): v for k, v in vars(args).items()}
     config.pop("CONFIG", None)
 
     def _run() -> None:
