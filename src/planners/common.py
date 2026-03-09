@@ -41,7 +41,10 @@ def _make_grad_step(apply_train, num_actions: int, schedule_fn, sigma_t: float):
                 sigma_t=sigma_t,
             )
 
-        (_, info), grads = jax.value_and_grad(loss_fn, has_aux=True)(train_state.params)
+        (loss, info), grads = jax.value_and_grad(loss_fn, has_aux=True)(train_state.params)
+        
+        info["loss"] = loss 
+        
         info["grad_norm"] = _global_grad_norm(grads)
         info.update(_action_stats(act_batch, num_actions))
         train_state = train_state.apply_gradients(grads=grads)

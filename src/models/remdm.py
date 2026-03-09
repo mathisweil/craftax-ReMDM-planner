@@ -174,10 +174,22 @@ def compute_loss(
     per_sample_loss = weight * (masked_ce.sum(axis=-1) / num_masked)
     loss = jnp.mean(per_sample_loss)
 
+    # --- ADD ACCURACY MATH HERE ---
+    # 1. Get the network's top guess for every position
+    predicted_actions = jnp.argmax(logits, axis=-1)         # [B, H]
+    
+    # 2. Check where the guess matches the PPO expert (x_0)
+    correct_guesses = (predicted_actions == x_0)            # [B, H]
+    
+    # 3. Calculate accuracy ONLY on the tokens that were actually masked
+    masked_accuracy = jnp.sum(correct_guesses * is_masked) / jnp.maximum(jnp.sum(is_masked), 1.0)
+    # ------------------------------
+
     info: Dict[str, jnp.ndarray] = {
         "loss": loss,
         "mean_t": jnp.mean(t),
         "frac_masked": jnp.mean(is_masked),
+        "accuracy": masked_accuracy,  
     }
     return loss, info
 

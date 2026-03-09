@@ -89,18 +89,24 @@ def _make_collect_chunk_fn(ppo_agent, env_w, env_params, collect_steps: int):
         def _step(carry, _):
             rng, env_state, obs, done, hidden = carry
             rng, k1, k2 = jax.random.split(rng, 3)
+            
             if is_rnn:
                 pi, _, new_hidden = ppo_agent.apply(ppo_agent.params, obs, hidden=hidden, done=done)
             else:
                 pi, _, _ = ppo_agent.apply(ppo_agent.params, obs)
                 new_hidden = hidden
-            action = pi.sample(seed=k1)
+            
+            temperature = 2.0 
+            noisy_logits = pi.logits / temperature
+            action = jax.random.categorical(k1, noisy_logits)
+
             obs_next, env_state, _, done_next, _ = env_w.step(k2, env_state, action, env_params)
             return (rng, env_state, obs_next, done_next, new_hidden), (obs, action, done)
 
         (rng, env_state, obs, done, hidden), (all_obs, all_acts, all_dones) = jax.lax.scan(
             _step, (rng, env_state, obs, done, hidden), None, collect_steps
         )
+        
         return rng, env_state, obs, done, hidden, all_obs, all_acts, all_dones
 
     return _collect_chunk
@@ -156,12 +162,13 @@ def make_train_offline_from_agent(
             )(act_data[sel_env], sel_time)
 
             train_state, info = grad_step(train_state, act_batch, obs_batch, loss_rng)
-            return (train_state, rng), info["loss"]
+            return (train_state, rng), info
 
-        (train_state, rng), losses = jax.lax.scan(
+        (train_state, rng), infos = jax.lax.scan(
             _train_step, (train_state, rng), jnp.arange(train_steps_per_chunk)
         )
-        return train_state, rng, losses[-1]
+        mean_infos = jax.tree.map(lambda x: jnp.mean(x), infos)
+        return train_state, rng, mean_infos
 
     def train(rng: jax.Array) -> Dict[str, Any]:
         rng, init_rng, env_rng = jax.random.split(rng, 3)
@@ -197,31 +204,43 @@ def make_train_offline_from_agent(
             padded_env[:num_valid] = env_idxs
             padded_time[:num_valid] = time_idxs
 
+            # --- THIS IS THE PART THAT GOT DELETED ACCIDENTALLY ---
             data = {
                 "obs": jnp.array(chunk_obs_np, dtype=jnp.float32),
                 "act": jnp.array(chunk_acts_np, dtype=jnp.int32),
                 "env_idx": jnp.array(padded_env),
                 "time_idx": jnp.array(padded_time),
             }
+            # ------------------------------------------------------
 
             rng, train_rng = jax.random.split(rng)
-            train_state, _, last_loss = _train_chunk(
+            
+            # 1. Capture the dictionary (chunk_metrics) instead of last_loss
+            train_state, _, chunk_metrics = _train_chunk(
                 train_state, train_rng, data, jnp.int32(num_valid)
             )
 
             step = (chunk_idx + 1) * train_steps_per_chunk
+            
+            # 2. Dynamically loop through the dictionary to log everything!
             if use_wandb:
                 elapsed = time.time() - t0
-                wandb.log({
-                    "offline/loss": float(last_loss),
+                log_data = {
                     "offline/step": step,
                     "offline/steps_per_second": step / max(elapsed, 1e-6),
-                }, step=step)
+                }
+                
+                # This automatically logs loss, accuracy, entropy, grad_norm, etc.
+                for key, val in chunk_metrics.items():
+                    log_data[f"offline/{key}"] = float(val)
+                    
+                wandb.log(log_data, step=step)
 
+            # 3. Update the print statement to pull 'loss' from the dictionary
             if (chunk_idx + 1) % log_every == 0 or chunk_idx == num_chunks - 1:
                 elapsed = time.time() - t0
                 total_steps = num_chunks * train_steps_per_chunk
-                print(f"  [{step:>6}/{total_steps}] loss={float(last_loss):.4f}  elapsed={elapsed:.0f}s")
+                print(f"  [{step:>6}/{total_steps}] loss={float(chunk_metrics['loss']):.4f}  accuracy={float(chunk_metrics.get('accuracy', 0.0)):.2f}  elapsed={elapsed:.0f}s")
 
         return {"train_state": train_state}
 

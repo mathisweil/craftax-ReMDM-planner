@@ -2,6 +2,7 @@ tmp/
 wandb/
 res/
 runs/
+checkpoint/
 
 play_data
 
