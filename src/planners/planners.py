@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import pathlib
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import wandb
 from craftax.craftax_env import make_craftax_env_from_name
+from flax.training.train_state import TrainState
 
 from src.models.remdm import (
     ScheduleFn,
@@ -170,8 +171,19 @@ def collect_offline_data(config: Dict[str, Any]) -> None:
 def make_train_offline(
     config: Dict[str, Any],
     offline_data: Dict[str, np.ndarray],
-) -> Callable[[jax.Array], Dict[str, Any]]:
-    """Return ``train(rng)`` for offline MDLM training on pre-collected trajectories."""
+) -> Tuple[Callable, Dict[str, jnp.ndarray]]:
+    """Return ``(train_fn, data_arrays)`` for offline MDLM training.
+
+    The data arrays are returned separately so they can be passed as explicit
+    arguments to the JIT-compiled ``train_fn``, avoiding the capture of ~5GB
+    of constants into the XLA computation.
+
+    Usage::
+
+        train_fn, data = make_train_offline(config, offline_data)
+        train_jit = jax.jit(train_fn)
+        outs = train_jit(rng, data)
+    """
     raw_obs, raw_act, raw_done = offline_data["obs"], offline_data["actions"], offline_data["dones"]
     num_envs_data, traj_len, obs_dim = raw_obs.shape
 
@@ -189,16 +201,22 @@ def make_train_offline(
     )
     print(f"Offline data: {num_valid:,} valid {plan_horizon}-step windows from {num_envs_data}x{traj_len}")
 
-    obs_data = jnp.array(raw_obs, dtype=jnp.float32)
-    act_data = jnp.array(raw_act, dtype=jnp.int32)
-    env_idx_arr = jnp.array(env_indices, dtype=jnp.int32)
-    time_idx_arr = jnp.array(time_indices, dtype=jnp.int32)
+    # Keep on device but pass explicitly — NOT closed over inside train().
+    data_arrays = {
+        "obs": jnp.array(raw_obs, dtype=jnp.float32),
+        "act": jnp.array(raw_act, dtype=jnp.int32),
+        "env_idx": jnp.array(env_indices, dtype=jnp.int32),
+        "time_idx": jnp.array(time_indices, dtype=jnp.int32),
+    }
 
     model = _build_model(config, num_actions)
     _, apply_train = _make_apply_fns(model)
     grad_step = _make_grad_step(apply_train, num_actions, schedule_fn, config.get("TRAIN_SIGMA", 0.0))
 
-    def train(rng: jax.Array) -> Dict[str, Any]:
+    def train(rng: jax.Array, data: Dict[str, jnp.ndarray]) -> Dict[str, Any]:
+        obs_data, act_data = data["obs"], data["act"]
+        env_idx_arr, time_idx_arr = data["env_idx"], data["time_idx"]
+
         rng, init_rng = jax.random.split(rng)
         params = _init_model_params(model, init_rng, obs_dim, plan_horizon)
         train_state = _create_train_state(model, params, config["LR"], config["MAX_GRAD_NORM"])
@@ -217,14 +235,16 @@ def make_train_offline(
 
             train_state, info = grad_step(train_state, act_batch, obs_batch, loss_rng)
             _maybe_log(config, info, step_idx, "offline")
-            return (train_state, rng), info
+            # Only carry the scalar loss through the scan to avoid OOM from
+            # accumulating full metric dicts across all training steps.
+            return (train_state, rng), info["loss"]
 
-        (train_state, _), metrics = jax.lax.scan(
+        (train_state, _), scan_losses = jax.lax.scan(
             _train_step, (train_state, rng), jnp.arange(num_train_steps)
         )
-        return {"train_state": train_state, "metrics": metrics}
+        return {"train_state": train_state, "final_loss": scan_losses[-1]}
 
-    return train
+    return train, data_arrays
 
 
 # =============================================================================
@@ -547,16 +567,15 @@ def run_offline(config: Dict[str, Any]) -> None:
         print(f"Loaded {n_envs}x{n_steps} transitions (obs_dim={obs_dim}, num_actions={config['NUM_ACTIONS']})")
 
         rng = jax.random.PRNGKey(config["SEED"])
-        train_jit = jax.jit(make_train_offline(config, offline_data))
+        train_fn, data_arrays = make_train_offline(config, offline_data)
+        train_jit = jax.jit(train_fn)
         t0 = time.time()
-        outs = [train_jit(jax.random.fold_in(rng, i)) for i in range(config["NUM_REPEATS"])]
+        outs = [train_jit(jax.random.fold_in(rng, i), data_arrays) for i in range(config["NUM_REPEATS"])]
         elapsed = time.time() - t0
         print(f"Offline training time: {elapsed:.1f}s")
 
         if config.get("USE_WANDB"):
-            # Log final summary of scan-returned metrics
-            final_loss = float(outs[0]["metrics"]["loss"][-1])
-            wandb.log({"offline/final_loss": final_loss})
+            wandb.log({"offline/final_loss": float(outs[0]["final_loss"])})
 
         if config["SAVE_POLICY"]:
             _save_model(outs[0]["train_state"], config, "diffusion_offline")
