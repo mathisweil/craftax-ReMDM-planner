@@ -52,7 +52,7 @@ from src.models.remdm import (
     linear_schedule,
 )
 
-from src.planners.planners import (
+from src.planners import (
     run_collect,
     run_offline,
     run_online,

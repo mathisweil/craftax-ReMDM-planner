@@ -63,7 +63,7 @@ use_wandb: true
 debug: true
 wandb_project: "remdm-craftax"
 wandb_entity: ""
-save_policy: false        # Save the model checkpoint at the end of training
+save_policy: true        # Save the model checkpoint at the end of training
 num_repeats: 1            # Number of independent training runs (vmapped)
 seed: null                # RNG seed (null → random)
 jit: true                 # Disable with --no-jit for easier debugging
