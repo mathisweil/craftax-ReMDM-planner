@@ -11,6 +11,7 @@ plan_horizon: 32          # Length of the action plan H
 diffusion_steps: 50       # Number of denoising steps T at inference
 diffusion_schedule: "cosine"   # Noise schedule: cosine | linear
 remask_strategy: "rescale"     # Remasking strategy: rescale | cap | conf | loop
+train_sigma: 0.0
 eta: 0.5                  # Remasking strength
 t_on: 0.7                 # Loop strategy: upper time bound for remasking window
 t_off: 0.3                # Loop strategy: lower time bound for remasking window

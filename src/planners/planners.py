@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pathlib
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple, Sequence
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -50,16 +50,7 @@ SCHEDULE_MAP: Dict[str, ScheduleFn] = {
 
 
 def collect_offline_data(config: Dict[str, Any]) -> None:
-    """Roll out a pre-trained PPO checkpoint and save (obs, actions, dones) to disk.
-
-    Requires ``--ppo_checkpoint_path`` pointing to a pre-trained ActorCritic checkpoint.
-
-    Data is saved with per-environment contiguity preserved::
-
-        obs:     [num_envs, num_iters, obs_dim]
-        actions: [num_envs, num_iters]
-        dones:   [num_envs, num_iters]
-    """
+    """Roll out a pre-trained PPO checkpoint and save (obs, actions, dones) to disk."""
     assert config.get("PPO_CHECKPOINT_PATH"), (
         "--ppo_checkpoint_path is required for --mode collect.\n"
         "Train a PPO agent first with ppo_rnn.py or ppo_rnd.py."
@@ -67,15 +58,17 @@ def collect_offline_data(config: Dict[str, Any]) -> None:
 
     env = make_craftax_env_from_name(config["ENV_NAME"], True)
     env_params = env.default_params
-    num_actions: Sequence[int] | int = env.action_space(env_params).n
-    obs_dim: int = env.observation_space(env_params).shape[0]
+    num_actions = env.action_space(env_params).n
+    obs_dim = env.observation_space(env_params).shape[0]
     num_envs: int = config["COLLECT_NUM_ENVS"]
     layer_size: int = config.get("LAYER_SIZE", 512)
+    num_iters: int = config["COLLECT_NUM_STEPS"] // num_envs
 
     ppo_agent = _load_ppo_checkpoint(
         config["PPO_CHECKPOINT_PATH"], num_actions, obs_dim, layer_size,
         model_type=config.get("PPO_MODEL_TYPE"),
     )
+    is_rnn = ppo_agent.model_type == "ppo_rnn"
 
     env_w, _ = _make_env_stack(config, num_envs)
 
@@ -85,74 +78,37 @@ def collect_offline_data(config: Dict[str, Any]) -> None:
     obs, env_state = env_w.reset(env_rng, env_params)
     done = jnp.zeros(num_envs, dtype=bool)
     hidden = ppo_agent.init_hidden(num_envs)
-    num_iters: int = config["COLLECT_NUM_STEPS"] // num_envs
 
-    all_obs: List[np.ndarray] = []
-    all_actions: List[np.ndarray] = []
-    all_dones: List[np.ndarray] = []
+    def _step_fn(carry, _):
+        rng, env_state, obs, done, hidden = carry
+        rng, k1, k2 = jax.random.split(rng, 3)
 
-    if ppo_agent.model_type == "ppo_rnn":
-        @jax.jit
-        def _step_rnn(
-            rng: jax.Array,
-            env_state: Any,
-            obs: jnp.ndarray,
-            done: jnp.ndarray,
-            hidden: jax.Array,
-        ) -> Tuple[jax.Array, Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array]:
-            rng, k1, k2 = jax.random.split(rng, 3)
+        if is_rnn:
             pi, _, new_hidden = ppo_agent.apply(
                 ppo_agent.params, obs, hidden=hidden, done=done
             )
-            action = pi.sample(seed=k1)
-            obs_next, env_state, _, done_next, _ = env_w.step(
-                k2, env_state, action, env_params
-            )
-            return rng, env_state, obs_next, action, done_next, new_hidden
-
-        done_before = done
-        for i in range(num_iters):
-            collect_rng, env_state, obs_next, action, done, hidden = _step_rnn(
-                collect_rng, env_state, obs, done, hidden
-            )
-            all_obs.append(np.array(obs))
-            all_actions.append(np.array(action))
-            all_dones.append(np.array(done_before))
-            obs = obs_next
-            if (i + 1) % 500 == 0:
-                print(f"  {(i + 1) * num_envs:,} / {config['COLLECT_NUM_STEPS']:,} steps")
-    else:
-        @jax.jit
-        def _step(
-            rng: jax.Array,
-            env_state: Any,
-            obs: jnp.ndarray,
-            done: jnp.ndarray,
-        ) -> Tuple[jax.Array, Any, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-            rng, k1, k2 = jax.random.split(rng, 3)
+        else:
             pi, _, _ = ppo_agent.apply(ppo_agent.params, obs)
-            action = pi.sample(seed=k1)
-            obs_next, env_state, _, done_next, _ = env_w.step(
-                k2, env_state, action, env_params
-            )
-            return rng, env_state, obs_next, action, done_next
+            new_hidden = hidden
 
-        done_before = done
-        for i in range(num_iters):
-            collect_rng, env_state, obs_next, action, done = _step(
-                collect_rng, env_state, obs, done
-            )
-            all_obs.append(np.array(obs))
-            all_actions.append(np.array(action))
-            all_dones.append(np.array(done_before))
-            obs = obs_next
-            if (i + 1) % 500 == 0:
-                print(f"  {(i + 1) * num_envs:,} / {config['COLLECT_NUM_STEPS']:,} steps")
+        action = pi.sample(seed=k1)
+        obs_next, env_state, _, done_next, _ = env_w.step(
+            k2, env_state, action, env_params
+        )
 
-    # Stack into [num_iters, num_envs, ...] then transpose -> [num_envs, num_iters, ...]
-    obs_arr = np.stack(all_obs, axis=0).transpose(1, 0, 2)   # [E, T, obs_dim]
-    act_arr = np.stack(all_actions, axis=0).transpose(1, 0)   # [E, T]
-    done_arr = np.stack(all_dones, axis=0).transpose(1, 0)    # [E, T]
+        transition = (obs, action, done)
+        new_carry = (rng, env_state, obs_next, done_next, new_hidden)
+
+        return new_carry, transition
+
+    rollout_fn = jax.jit(lambda c: jax.lax.scan(_step_fn, c, None, length=num_iters))
+
+    init_carry = (collect_rng, env_state, obs, done, hidden)
+    _, (obs_arr, act_arr, done_arr) = rollout_fn(init_carry)
+
+    obs_arr = np.array(obs_arr).transpose(1, 0, 2)
+    act_arr = np.array(act_arr).transpose(1, 0)
+    done_arr = np.array(done_arr).transpose(1, 0)
 
     out_path = config["OFFLINE_DATA_PATH"]
     pathlib.Path(out_path).parent.mkdir(parents=True, exist_ok=True)
@@ -241,6 +197,7 @@ def make_train_offline(
                 return compute_loss(
                     apply_train, params, loss_rng,
                     act_batch, obs_batch, num_actions, schedule_fn,
+                    sigma_t=config.get("TRAIN_SIGMA", 0.0),
                 )
 
             (_, info), grads = jax.value_and_grad(loss_fn, has_aux=True)(
@@ -402,7 +359,8 @@ def make_train_offline_from_agent(
     ) -> Tuple[TrainState, Dict[str, jnp.ndarray]]:
         def loss_fn(params: Any) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
             return compute_loss(
-                apply_train, params, rng, act_batch, obs_batch, num_actions, schedule_fn
+                apply_train, params, rng, act_batch, obs_batch, num_actions, schedule_fn,
+                sigma_t=config.get("TRAIN_SIGMA", 0.0),
             )
 
         (_, info), grads = jax.value_and_grad(loss_fn, has_aux=True)(train_state.params)
@@ -509,6 +467,9 @@ def make_train_online(
     eta: float = config["ETA"]
     t_on: float = config.get("T_ON", 0.7)
     t_off: float = config.get("T_OFF", 0.3)
+    use_loop: bool = config.get("USE_LOOP", False)
+    temperature: float = config.get("TEMPERATURE", 1.0)
+    top_p: Optional[float] = config.get("TOP_P", None)
     num_plan_cycles: int = config["NUM_STEPS"] // replan_every
     use_optimistic_resets: bool = config.get("USE_OPTIMISTIC_RESETS", False)
 
@@ -552,7 +513,8 @@ def make_train_online(
                 plan = sample_plan(
                     apply_inference, train_state.params, plan_rng, obs,
                     num_actions, plan_horizon, diffusion_steps, schedule_fn,
-                    remask_strategy, eta, t_on, t_off,
+                    remask_strategy, eta, use_loop, t_on,
+                    t_off, temperature, top_p,
                 )
 
                 def _exec_step(
@@ -609,6 +571,7 @@ def make_train_online(
                         return compute_loss(
                             apply_train, params, loss_rng,
                             plan_mb, obs_mb, num_actions, schedule_fn,
+                            sigma_t=config.get("TRAIN_SIGMA", 0.0),
                         )
 
                     (_, info), grads = jax.value_and_grad(loss_fn, has_aux=True)(ts.params)
@@ -827,6 +790,9 @@ def run_inference(config: Dict[str, Any]) -> None:
     eta: float = config["ETA"]
     t_on: float = config.get("T_ON", 0.7)
     t_off: float = config.get("T_OFF", 0.3)
+    use_loop: bool = config.get("USE_LOOP", False)
+    temperature: float = config.get("TEMPERATURE", 1.0)
+    top_p: Optional[float] = config.get("TOP_P", None)
     eval_steps: int = config.get("EVAL_STEPS", 1000)
 
     model = _build_model(config, num_actions)
@@ -843,7 +809,8 @@ def run_inference(config: Dict[str, Any]) -> None:
         return sample_plan(
             apply_inference, model_params, rng, obs,
             num_actions, plan_horizon, diffusion_steps, schedule_fn,
-            remask_strategy, eta, t_on, t_off,
+            remask_strategy, eta, use_loop, t_on,
+            t_off, temperature, top_p,
         )
 
     env_w = LogWrapper(env)

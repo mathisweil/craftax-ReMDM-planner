@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 import pytest
 
 
@@ -116,7 +115,7 @@ def dummy_env():
 
 def make_dummy_model_apply(num_actions: int):
     """Create a trivial model_apply closed over num_actions (JIT-safe)."""
-    def apply_fn(params, obs, z_t, t):
+    def apply_fn(params, obs, z_t, t, rng=None):
         batch_size = obs.shape[0]
         plan_horizon = z_t.shape[1]
         return jnp.zeros((batch_size, plan_horizon, num_actions))

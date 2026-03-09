@@ -14,7 +14,7 @@ class TestMainImports:
     def test_strategy_map_imported(self):
         from src.models.remdm import STRATEGY_MAP
         assert isinstance(STRATEGY_MAP, dict)
-        assert len(STRATEGY_MAP) == 4
+        assert len(STRATEGY_MAP) == 3
 
     def test_run_functions_importable(self):
         from src.planners.planners import run_collect, run_offline, run_online, run_inference

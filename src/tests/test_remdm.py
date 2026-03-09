@@ -13,8 +13,7 @@ from src.models.remdm import (
     compute_loss,
     remask_rescale,
     remask_cap,
-    remask_conf,
-    remask_loop,
+    compute_sigma_conf,
     sample_plan,
     _sigma_max,
     STRATEGY_MAP,
@@ -176,9 +175,29 @@ class TestComputeLoss:
 
     def test_jit_compatible(self, loss_setup):
         apply_fn, params, rng, x_0, obs, num_actions = loss_setup
-        jit_loss = jax.jit(compute_loss, static_argnums=(0, 5, 6))
-        loss, info = jit_loss(apply_fn, params, rng, x_0, obs, num_actions, cosine_schedule)
+        jit_loss = jax.jit(compute_loss, static_argnums=(0, 5, 6, 7))
+        loss, info = jit_loss(apply_fn, params, rng, x_0, obs, num_actions, cosine_schedule, 0.0)
         assert jnp.isfinite(loss)
+
+    def test_sigma_zero_matches_default(self, loss_setup):
+        """Passing sigma_t=0.0 explicitly should match omitting it."""
+        apply_fn, params, rng, x_0, obs, num_actions = loss_setup
+        loss_default, _ = compute_loss(apply_fn, params, rng, x_0, obs, num_actions, cosine_schedule)
+        loss_explicit, _ = compute_loss(apply_fn, params, rng, x_0, obs, num_actions, cosine_schedule, sigma_t=0.0)
+        assert jnp.isclose(loss_default, loss_explicit)
+
+    def test_sigma_positive_reduces_weight(self, loss_setup):
+        """ReMDM NELBO with sigma_t > 0 scales the weight by (1 - sigma_t), so loss should decrease."""
+        apply_fn, params, rng, x_0, obs, num_actions = loss_setup
+        loss_mdlm, _ = compute_loss(apply_fn, params, rng, x_0, obs, num_actions, cosine_schedule, sigma_t=0.0)
+        loss_remdm, _ = compute_loss(apply_fn, params, rng, x_0, obs, num_actions, cosine_schedule, sigma_t=0.5)
+        assert float(loss_remdm) < float(loss_mdlm)
+
+    def test_sigma_one_gives_zero_loss(self, loss_setup):
+        """sigma_t=1.0 makes weight = 0, so loss should be zero."""
+        apply_fn, params, rng, x_0, obs, num_actions = loss_setup
+        loss, _ = compute_loss(apply_fn, params, rng, x_0, obs, num_actions, cosine_schedule, sigma_t=1.0)
+        assert jnp.isclose(loss, 0.0)
 
 
 # =============================================================================
@@ -237,47 +256,25 @@ class TestRemaskCap:
 
 class TestRemaskConf:
     def test_output_shape(self):
-        batch, horizon, num_actions = 4, 6, 5
-        alpha_t = jnp.array([0.5] * batch)
-        alpha_s = jnp.array([0.3] * batch)
-        logits = jnp.ones((batch, horizon, num_actions))
-        result = remask_conf(alpha_t, alpha_s, 0.5, logits)
+        batch, horizon = 4, 6
+        alpha_t = jnp.array(0.5)
+        alpha_s = jnp.array(0.3)
+        psi = jnp.full((batch, horizon), 0.8)
+        is_unmasked = jnp.ones((batch, horizon), dtype=bool)
+        result = compute_sigma_conf(alpha_t, alpha_s, 0.5, psi, is_unmasked)
         assert result.shape == (batch, horizon)
 
     def test_high_confidence_low_remask(self):
-        batch, horizon, num_actions = 2, 3, 5
-        alpha_t = jnp.array([0.5, 0.5])
-        alpha_s = jnp.array([0.3, 0.3])
-        # logits with one dominant class -> high confidence -> low remasking
-        logits_confident = jnp.zeros((batch, horizon, num_actions)).at[:, :, 0].set(100.0)
-        logits_uniform = jnp.zeros((batch, horizon, num_actions))
-        sigma_conf = remask_conf(alpha_t, alpha_s, 0.5, logits_confident)
-        sigma_unif = remask_conf(alpha_t, alpha_s, 0.5, logits_uniform)
-        # Confident predictions should have lower remasking
-        assert float(sigma_conf.mean()) < float(sigma_unif.mean())
-
-
-class TestRemaskLoop:
-    def test_in_window(self):
+        batch, horizon = 1, 4
         alpha_t = jnp.array(0.5)
         alpha_s = jnp.array(0.3)
-        t = jnp.array(0.5)  # within [0.3, 0.7]
-        result = remask_loop(alpha_t, alpha_s, 0.5, t, t_on=0.7, t_off=0.3)
-        assert float(result) > 0.0
-
-    def test_outside_window(self):
-        alpha_t = jnp.array(0.5)
-        alpha_s = jnp.array(0.3)
-        t = jnp.array(0.1)  # outside [0.3, 0.7]
-        result = remask_loop(alpha_t, alpha_s, 0.5, t, t_on=0.7, t_off=0.3)
-        assert jnp.isclose(result, 0.0)
-
-    def test_at_boundary(self):
-        alpha_t = jnp.array(0.5)
-        alpha_s = jnp.array(0.3)
-        t = jnp.array(0.7)  # exactly at t_on
-        result = remask_loop(alpha_t, alpha_s, 0.5, t, t_on=0.7, t_off=0.3)
-        assert float(result) > 0.0
+        is_unmasked = jnp.ones((batch, horizon), dtype=bool)
+        # One token decoded with low confidence, rest high.
+        # The low-confidence token should get higher sigma.
+        psi = jnp.array([[0.99, 0.99, 0.99, 0.01]])
+        sigma = compute_sigma_conf(alpha_t, alpha_s, 0.5, psi, is_unmasked)
+        # Token 3 (psi=0.01) should be remasked more than token 0 (psi=0.99)
+        assert float(sigma[0, 3]) > float(sigma[0, 0])
 
 
 # =============================================================================
@@ -315,7 +312,7 @@ class TestSamplePlan:
         p2 = sample_plan(apply_fn, params, rng, obs, 5, 6, 3, cosine_schedule, "rescale")
         assert jnp.array_equal(p1, p2)
 
-    @pytest.mark.parametrize("strategy", ["rescale", "cap", "conf", "loop"])
+    @pytest.mark.parametrize("strategy", ["rescale", "cap", "conf"])
     def test_all_strategies_run(self, plan_setup, strategy):
         apply_fn, params, rng, obs, batch = plan_setup
         plan = sample_plan(
@@ -326,9 +323,12 @@ class TestSamplePlan:
     def test_jit_compatible(self, plan_setup):
         apply_fn, params, rng, obs, batch = plan_setup
         jit_plan = jax.jit(
-            sample_plan, static_argnums=(0, 4, 5, 6, 7, 8)
+            sample_plan, static_argnums=(0, 4, 5, 6, 7, 8, 10)
         )
-        plan = jit_plan(apply_fn, params, rng, obs, 5, 6, 3, cosine_schedule, "rescale")
+        plan = jit_plan(
+            apply_fn, params, rng, obs, 5, 6, 3, cosine_schedule, "rescale",
+            0.5, False,
+        )
         assert plan.shape == (batch, 6)
 
     def test_single_step(self, plan_setup):
@@ -336,11 +336,21 @@ class TestSamplePlan:
         plan = sample_plan(apply_fn, params, rng, obs, 5, 6, 1, cosine_schedule, "rescale")
         assert plan.shape == (batch, 6)
 
+    def test_loop_mode_runs(self, plan_setup):
+        apply_fn, params, rng, obs, batch = plan_setup
+        plan = sample_plan(
+            apply_fn, params, rng, obs, 5, 6, 10, cosine_schedule, "cap",
+            eta=0.5, use_loop=True, t_on=0.55, t_off=0.05,
+        )
+        assert plan.shape == (batch, 6)
+        assert jnp.all(plan >= 0)
+        assert jnp.all(plan < 5)
+
 
 class TestStrategyMap:
     def test_contains_all_strategies(self):
-        assert set(STRATEGY_MAP.keys()) == {"rescale", "cap", "conf", "loop"}
+        assert set(STRATEGY_MAP.keys()) == {"rescale", "cap", "conf"}
 
-    def test_unique_indices(self):
+    def test_unique_values(self):
         vals = list(STRATEGY_MAP.values())
         assert len(vals) == len(set(vals))
