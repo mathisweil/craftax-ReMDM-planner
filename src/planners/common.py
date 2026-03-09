@@ -16,15 +16,15 @@ SCHEDULE_MAP: dict[str, ScheduleFn] = {
 def _global_grad_norm(grads) -> jnp.ndarray:
     """L2 norm across all gradient leaves."""
     leaves = jax.tree.leaves(grads)
-    return jnp.sqrt(sum(jnp.sum(g ** 2) for g in leaves))
+    sq_sum = jnp.array([jnp.sum(g ** 2) for g in leaves])
+    return jnp.sqrt(jnp.sum(sq_sum))
 
 def _action_stats(act_batch: jnp.ndarray, num_actions: int) -> dict[str, jnp.ndarray]:
     """Compute action distribution entropy and mode fraction over a batch of action sequences."""
-    counts = jnp.zeros(num_actions, dtype=jnp.float32)
     flat = act_batch.reshape(-1)
     counts = jnp.bincount(flat, length=num_actions).astype(jnp.float32)
     probs = counts / jnp.maximum(counts.sum(), 1.0)
-    log_probs = jnp.where(probs > 0, jnp.log(probs), 0.0)
+    log_probs = jnp.log(jnp.where(probs > 0, probs, 1.0))
     entropy = -jnp.sum(probs * log_probs)
     unique_frac = jnp.sum(probs > 0).astype(jnp.float32) / num_actions
     return {"action_entropy": entropy, "action_unique_frac": unique_frac}

@@ -51,14 +51,14 @@ def sample_plan_inpainting(
         remdm_mask = (jax.random.uniform(remask_rng, seq_new.shape) < remask_prob) & is_unmasked
         seq_new = jnp.where(remdm_mask, mask_token_id, seq_new)
 
-        idx_matrix = jnp.arange(plan_horizon)[None, :].repeat(batch_size, axis=0)
+        idx_matrix = jnp.broadcast_to(jnp.arange(plan_horizon)[None, :], (batch_size, plan_horizon))
         lock_mask = idx_matrix < hist_len[:, None]
         seq_new = jnp.where(lock_mask, history, seq_new)
 
         return (seq_new, step_rng), None
 
     init_seq = jnp.full((batch_size, plan_horizon), mask_token_id, dtype=jnp.int32)
-    idx_matrix = jnp.arange(plan_horizon)[None, :].repeat(batch_size, axis=0)
+    idx_matrix = jnp.broadcast_to(jnp.arange(plan_horizon)[None, :], (batch_size, plan_horizon))
     lock_mask = idx_matrix < hist_len[:, None]
     init_seq = jnp.where(lock_mask, history, init_seq)
 
@@ -94,7 +94,7 @@ def run_inference(config: dict[str, Any]) -> None:
     model_params = _load_checkpoint(config, model, obs_dim, config["CHECKPOINT_PATH"])
 
     rng = jax.random.PRNGKey(config.get("SEED", 42))
-
+    env_indices = jnp.arange(num_envs)
     @jax.jit
     def mpc_step(carry, step_idx):
         obs, state, rng, history, hist_len = carry
@@ -112,7 +112,7 @@ def run_inference(config: dict[str, Any]) -> None:
         )
 
         action = jnp.take_along_axis(plan, hist_len[:, None], axis=-1).squeeze(-1)
-        history = history.at[jnp.arange(num_envs), hist_len].set(action)
+        history = history.at[env_indices, hist_len].set(action)
         hist_len += 1
 
         obs_next, state_next, reward, done, info = jax.vmap(env.step, in_axes=(0, 0, 0, None))(
@@ -153,33 +153,21 @@ def run_inference(config: dict[str, Any]) -> None:
 
     print("\n" + "="*50)
     print(f"EVALUATION COMPLETE IN {elapsed:.1f} SECONDS")
-    # --- CALCULATE EXACT REPORT CARD ---
-    max_achievements_per_agent = jnp.max(achievements, axis=0)
-    total_agents_with_achievement = jnp.sum(max_achievements_per_agent, axis=0)
-    total_reward_per_agent = jnp.sum(rewards, axis=0)
-
     print("\n" + "="*50)
     print(f"EVALUATION COMPLETE IN {elapsed:.1f} SECONDS")
     print("="*50)
     print(f"Average Score across 32 games: {float(jnp.mean(total_reward_per_agent)):.1f}")
     print(f"Highest Score in a single game: {float(jnp.max(total_reward_per_agent)):.1f}")
     print("\nACHIEVEMENT REPORT CARD (Out of 32 Agents):")
-    
-    if "Classic" in env_name:
-        achievement_names = [a.name.replace("_", " ").title() for a in ClassicAchievements]
-    else:
-        achievement_names = [a.name.replace("_", " ").title() for a in FullCraftaxAchievements]
+
+    achievement_cls = ClassicAchievements if "Classic" in env_name else FullCraftaxAchievements
+    achievement_names = [(a.name.replace("_", " ").title(), a.name.lower()) for a in achievement_cls]
 
     # REMOVED the "if count > 0" check. Now it prints the entire tech tree!
     for i, count in enumerate(total_agents_with_achievement):
-        name = achievement_names[i] if i < len(achievement_names) else f"Achievement {i}"
-        
-        # Color code it slightly: show hits clearly, and misses as 0
-        if count > 0:
-            print(f"  ✅ {name}: {int(count)} / {num_envs} agents")
-        else:
-            print(f"  ❌ {name}: 0 / {num_envs} agents")
-
+        name, key = achievement_names[i] if i < len(achievement_names) else (f"Achievement {i}", f"ach_{i}")
+        icon = "✅" if count > 0 else "❌"
+        print(f"  {icon} {name}: {int(count)} / {num_envs} agents")
     print("="*50)
 
     # --- WANDB LOGGING ---
@@ -193,16 +181,15 @@ def run_inference(config: dict[str, Any]) -> None:
         
         summary_log = {"eval/average_score": float(jnp.mean(total_reward_per_agent))}
         for i, count in enumerate(total_agents_with_achievement):
-            name = achievement_names[i] if i < len(achievement_names) else f"Ach_{i}"
-            # Log all of them to WandB as well
-            summary_log[f"eval/achievements/{name.replace(' ', '_')}"] = float(count) / num_envs * 100
+            _, key = achievement_names[i] if i < len(achievement_names) else (None, f"ach_{i}")
+            summary_log[f"eval/achievements/{key}"] = float(count) / num_envs * 100
         wandb.log(summary_log)
         
         table = wandb.Table(columns=["Game ID", "Total Score", "Max Achievements Unlocked"])
-        for env_id in range(num_envs):
-            score = float(total_reward_per_agent[env_id])
-            unlocked = int(jnp.sum(max_achievements_per_agent[env_id]))
-            table.add_data(f"Agent {env_id+1}", score, unlocked)
+        scores = total_reward_per_agent.tolist()
+        unlocked_counts = jnp.sum(max_achievements_per_agent, axis=-1).tolist()
+        for env_id, (score, unlocked) in enumerate(zip(scores, unlocked_counts)):
+            table.add_data(f"Agent {env_id + 1}", float(score), int(unlocked))
             
         wandb.log({"Individual Game Results": table})
         wandb.finish()

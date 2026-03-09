@@ -68,8 +68,8 @@ def make_train_offline(
 
             obs_batch = obs_data[sel_env, sel_time]
             act_batch = jax.vmap(
-                lambda row, t: jax.lax.dynamic_slice(row, (t,), (plan_horizon,))
-            )(act_data[sel_env], sel_time)
+                lambda e, t: jax.lax.dynamic_slice(act_data[e], (t,), (plan_horizon,))
+            )(sel_env, sel_time)
 
             train_state, info = grad_step(train_state, act_batch, obs_batch, loss_rng)
             return (train_state, rng), info["loss"]
@@ -158,8 +158,8 @@ def make_train_offline_from_agent(
 
             obs_batch = obs_data[sel_env, sel_time]
             act_batch = jax.vmap(
-                lambda row, t: jax.lax.dynamic_slice(row, (t,), (plan_horizon,))
-            )(act_data[sel_env], sel_time)
+                lambda e, t: jax.lax.dynamic_slice(act_data[e], (t,), (plan_horizon,))
+            )(sel_env, sel_time)
 
             train_state, info = grad_step(train_state, act_batch, obs_batch, loss_rng)
             return (train_state, rng), info
@@ -167,7 +167,7 @@ def make_train_offline_from_agent(
         (train_state, rng), infos = jax.lax.scan(
             _train_step, (train_state, rng), jnp.arange(train_steps_per_chunk)
         )
-        mean_infos = jax.tree.map(lambda x: jnp.mean(x), infos)
+        mean_infos = jax.tree.map(jnp.mean, infos)
         return train_state, rng, mean_infos
 
     def train(rng: jax.Array) -> dict[str, Any]:
@@ -179,7 +179,6 @@ def make_train_offline_from_agent(
         done = jnp.zeros(num_envs, dtype=bool)
         hidden = ppo_agent.init_hidden(num_envs)
 
-        use_wandb = config.get("USE_WANDB", False)
         t0 = time.time()
         log_every = max(num_chunks // 20, 1)
 
@@ -189,9 +188,9 @@ def make_train_offline_from_agent(
                 _collect_chunk(collect_rng, env_state, obs, done, hidden)
             )
 
-            chunk_obs_np = np.array(chunk_obs).transpose(1, 0, 2)
-            chunk_acts_np = np.array(chunk_acts).T
-            chunk_dones_np = np.array(chunk_dones).T
+            chunk_obs_np = np.asarray(chunk_obs).transpose(1, 0, 2)
+            chunk_acts_np = np.asarray(chunk_acts).T
+            chunk_dones_np = np.asarray(chunk_dones).T
 
             valid = _valid_window_mask(chunk_dones_np, plan_horizon)
             env_idxs, time_idxs = np.where(valid)
@@ -223,24 +222,23 @@ def make_train_offline_from_agent(
             step = (chunk_idx + 1) * train_steps_per_chunk
             
             # 2. Dynamically loop through the dictionary to log everything!
-            if use_wandb:
+            if config.get("USE_WANDB", False):
                 elapsed = time.time() - t0
                 log_data = {
                     "offline/step": step,
                     "offline/steps_per_second": step / max(elapsed, 1e-6),
                 }
-                
-                # This automatically logs loss, accuracy, entropy, grad_norm, etc.
+
                 for key, val in chunk_metrics.items():
                     log_data[f"offline/{key}"] = float(val)
                     
                 wandb.log(log_data, step=step)
 
-            # 3. Update the print statement to pull 'loss' from the dictionary
             if (chunk_idx + 1) % log_every == 0 or chunk_idx == num_chunks - 1:
                 elapsed = time.time() - t0
                 total_steps = num_chunks * train_steps_per_chunk
-                print(f"  [{step:>6}/{total_steps}] loss={float(chunk_metrics['loss']):.4f}  accuracy={float(chunk_metrics.get('accuracy', 0.0)):.2f}  elapsed={elapsed:.0f}s")
+                metrics_str = "  ".join(f"{k}={float(v):.4f}" for k, v in chunk_metrics.items())
+                print(f"  [{step:>6}/{total_steps}]  {metrics_str}  elapsed={elapsed:.0f}s")
 
         return {"train_state": train_state}
 
