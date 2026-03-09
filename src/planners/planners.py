@@ -24,6 +24,7 @@ from Craftax_Baselines.wrappers import (
     LogWrapper,
 )
 from src.envs.wrappers import PlannerWrapper
+from src.logz.batch_logging import create_log_dict, batch_log
 from .utils import (
     _build_model,
     _init_model_params,
@@ -543,6 +544,24 @@ def make_train_online(
                 )(flat_plans).mean(),
             }
 
+            # Craftax achievements — aggregate any achievement keys from env info.
+            for k, v in all_infos.items():
+                if "achievement" in k.lower():
+                    metric[k] = jnp.where(
+                        n_completed > 0,
+                        (v * ep_mask).sum() / safe_n,
+                        jnp.nan,
+                    )
+
+            # Real-time wandb logging via jax.debug.callback (baselines pattern).
+            # With ~1000 update steps this is the same overhead as PPO baselines.
+            if config.get("DEBUG") and config.get("USE_WANDB"):
+                def _wandb_callback(metric, update_step):
+                    to_log = create_log_dict(metric, config)
+                    batch_log(update_step, to_log, config)
+
+                jax.debug.callback(_wandb_callback, metric, update_step)
+
             return (train_state, env_state, obs, rng), metric
 
         runner_state = (train_state, env_state, obs, rng)
@@ -567,11 +586,15 @@ def run_collect(config: Dict[str, Any]) -> None:
 def run_offline(config: Dict[str, Any]) -> None:
     """Offline training dispatcher."""
     if config.get("USE_WANDB"):
+        total_steps = config["NUM_TRAIN_STEPS"] * config["BATCH_SIZE"]
         wandb.init(
             project=config["WANDB_PROJECT"],
             entity=config["WANDB_ENTITY"],
             config=config,
-            name=f"remdm-offline-{config['ENV_NAME']}",
+            name=config["ENV_NAME"]
+            + "-remdm-offline-"
+            + str(int(total_steps // 1e6))
+            + "M",
         )
 
     if config.get("PPO_CHECKPOINT_PATH"):
@@ -631,12 +654,17 @@ def run_online(config: Dict[str, Any]) -> None:
     config["NUM_ACTIONS"] = env.action_space(env.default_params).n
     config["OBS_DIM"] = env.observation_space(env.default_params).shape[0]
 
+    total_steps = config["NUM_UPDATES"] * config["NUM_STEPS"] * config["NUM_ENVS"]
+
     if config.get("USE_WANDB"):
         wandb.init(
             project=config["WANDB_PROJECT"],
             entity=config["WANDB_ENTITY"],
             config=config,
-            name=f"remdm-online-{config['ENV_NAME']}",
+            name=config["ENV_NAME"]
+            + "-remdm-online-"
+            + str(int(total_steps // 1e6))
+            + "M",
         )
 
     init_params: Optional[Any] = None
@@ -657,11 +685,12 @@ def run_online(config: Dict[str, Any]) -> None:
         first_out = jax.jit(train_fn)(rng)
     elapsed = time.time() - t0
 
-    total_steps = config["NUM_UPDATES"] * config["NUM_STEPS"] * config["NUM_ENVS"]
     sps = total_steps / max(elapsed, 1e-6)
     print(f"Online training time: {elapsed:.1f}s | SPS: {sps:.0f}")
 
-    if config.get("USE_WANDB"):
+    # If DEBUG+USE_WANDB, real-time logging already happened via
+    # jax.debug.callback inside _update_step.  Otherwise, log post-hoc.
+    if config.get("USE_WANDB") and not config.get("DEBUG"):
         metrics = first_out["metrics"]
         num_updates = config["NUM_UPDATES"]
         log_interval = max(num_updates // 100, 1)
@@ -669,6 +698,8 @@ def run_online(config: Dict[str, Any]) -> None:
             payload = {f"online/{k}": float(v[i]) for k, v in metrics.items()}
             payload["online/step"] = int(i)
             wandb.log(payload, step=int(i))
+
+    if config.get("USE_WANDB"):
         wandb.log({"online/total_sps": sps, "online/total_time_s": elapsed})
 
     if config["SAVE_POLICY"]:
@@ -753,9 +784,22 @@ def run_inference(config: Dict[str, Any]) -> None:
     print(f"Completed episodes: {int(completed)} | Mean return: {float(mean_return):.2f} | Mean step reward: {float(rewards.mean()):.4f}")
 
     if config.get("USE_WANDB"):
-        wandb.log({
+        eval_log = {
             "eval/mean_return": float(mean_return),
             "eval/completed_episodes": int(completed),
             "eval/mean_step_reward": float(rewards.mean()),
             "eval/sps": eval_steps * num_envs / max(elapsed, 1e-6),
-        })
+        }
+        # Log Craftax achievements.
+        sum_achievements = 0.0
+        for k, v in infos.items():
+            if "achievement" in k.lower():
+                val = float(jnp.where(
+                    completed > 0,
+                    (v * ep_mask).sum() / completed,
+                    jnp.nan,
+                ))
+                eval_log[f"eval/{k}"] = val
+                sum_achievements += val / 100.0
+        eval_log["eval/achievements"] = sum_achievements
+        wandb.log(eval_log)
