@@ -70,6 +70,16 @@ SCHEDULE_MAP: Dict[str, ScheduleFn] = {
 # =============================================================================
 
 if __name__ == "__main__":
+    backend = jax.default_backend()
+    devices = jax.devices()
+    print(f"JAX backend: {backend} | Devices: {devices}")
+    if backend != "gpu":
+        import warnings
+        warnings.warn(
+            f"JAX is using '{backend}', not GPU. "
+            "Install jaxlib with CUDA support: pip install jax[cuda12]"
+        )
+
     _src_dir = pathlib.Path(__file__).parent
     _default_cfg_path = _src_dir / "configs" / "defaults.yaml"
 

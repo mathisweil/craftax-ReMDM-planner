@@ -342,7 +342,7 @@ env  →  LogWrapper  →  AutoResetEnvWrapper  →  BatchEnvWrapper  →  Plann
 ## Project Structure
 
 ```
-craftax-ReMDM-planner2/
+craftax-ReMDM-planner/
 ├── Craftax_Baselines/             # Git submodule (MichaelTMatthews/Craftax_Baselines)
 │   ├── wrappers.py                # LogWrapper, BatchEnvWrapper, AutoResetEnvWrapper, etc.
 │   ├── ppo_rnn.py                 # PPO-RNN training script (data generation)

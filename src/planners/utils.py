@@ -436,11 +436,8 @@ def _sample_windows_from_chunk(
     sel_t = time_idxs[idx]
 
     obs_batch = jnp.array(chunk_obs[sel_e, sel_t])
-    act_batch = jnp.array(
-        np.stack(
-            [chunk_acts[e, t: t + plan_horizon] for e, t in zip(sel_e, sel_t)]
-        )
-    )
+    offsets = np.arange(plan_horizon)[None, :] + sel_t[:, None]  # [batch, H]
+    act_batch = jnp.array(chunk_acts[sel_e[:, None], offsets])
     return obs_batch, act_batch
 
 

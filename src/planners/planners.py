@@ -33,7 +33,6 @@ from .utils import (
     _save_model,
     _make_env_stack,
     _valid_window_mask,
-    _sample_windows_from_chunk,
     _make_apply_fns,
 )
 
@@ -88,18 +87,6 @@ def _make_grad_step(apply_train, num_actions: int, schedule_fn, sigma_t: float):
 
     return grad_step
 
-
-def _wandb_log_callback(metric_dict: Dict[str, jnp.ndarray], step: jnp.ndarray, prefix: str) -> None:
-    """Host-side wandb.log callback — safe to call from jax.debug.callback."""
-    payload = {f"{prefix}/{k}": float(v) for k, v in metric_dict.items()}
-    payload[f"{prefix}/step"] = int(step)
-    wandb.log(payload, step=int(step))
-
-
-def _maybe_log(config, metrics: Dict[str, jnp.ndarray], step: jnp.ndarray, prefix: str):
-    """Conditionally emit a jax.debug.callback for wandb logging."""
-    if config.get("USE_WANDB"):
-        jax.debug.callback(_wandb_log_callback, metrics, step, prefix)
 
 
 # =============================================================================
@@ -234,7 +221,6 @@ def make_train_offline(
             )(act_data[sel_env], sel_time)
 
             train_state, info = grad_step(train_state, act_batch, obs_batch, loss_rng)
-            _maybe_log(config, info, step_idx, "offline")
             # Only carry the scalar loss through the scan to avoid OOM from
             # accumulating full metric dicts across all training steps.
             return (train_state, rng), info["loss"]
@@ -282,7 +268,13 @@ def make_train_offline_from_agent(
     config: Dict[str, Any],
     ppo_checkpoint_path: str,
 ) -> Callable[[jax.Array], Dict[str, Any]]:
-    """Train the diffusion model using a PPO agent for live data collection (Python loop)."""
+    """Train the diffusion model using a PPO agent for live data collection.
+
+    Data is collected in chunks on-device, transferred to host once per chunk
+    for valid-window computation, then training runs as a ``jax.lax.scan``
+    on-device.  This reduces host-device transfers from O(num_train_steps) to
+    O(num_chunks).
+    """
     env = make_craftax_env_from_name(config["ENV_NAME"], True)
     env_params = env.default_params
     num_actions: int = env.action_space(env_params).n
@@ -297,6 +289,10 @@ def make_train_offline_from_agent(
 
     collect_steps = max(plan_horizon * 2, (batch_size // num_envs + 2) * plan_horizon)
 
+    # Split training into chunks: collect once, train N steps on device.
+    train_steps_per_chunk = min(num_train_steps, 100)
+    num_chunks = (num_train_steps + train_steps_per_chunk - 1) // train_steps_per_chunk
+
     ppo_agent = _load_ppo_checkpoint(
         ppo_checkpoint_path, num_actions, obs_dim,
         config.get("LAYER_SIZE", 512),
@@ -309,9 +305,34 @@ def make_train_offline_from_agent(
 
     _collect_chunk = _make_collect_chunk_fn(ppo_agent, env_w, env_params, collect_steps)
 
+    # Fixed size for valid-index arrays so JIT never retraces.
+    max_valid_indices = num_envs * collect_steps
+
     @jax.jit
-    def _jit_grad_step(train_state, obs_batch, act_batch, rng):
-        return grad_step(train_state, act_batch, obs_batch, rng)
+    def _train_chunk(train_state, rng, data, num_valid):
+        """Run ``train_steps_per_chunk`` gradient steps entirely on device."""
+        obs_data, act_data = data["obs"], data["act"]
+        env_idx_arr, time_idx_arr = data["env_idx"], data["time_idx"]
+
+        def _train_step(carry, step_idx):
+            train_state, rng = carry
+            rng, sample_rng, loss_rng = jax.random.split(rng, 3)
+
+            flat_idxs = jax.random.randint(sample_rng, (batch_size,), 0, num_valid)
+            sel_env, sel_time = env_idx_arr[flat_idxs], time_idx_arr[flat_idxs]
+
+            obs_batch = obs_data[sel_env, sel_time]
+            act_batch = jax.vmap(
+                lambda row, t: jax.lax.dynamic_slice(row, (t,), (plan_horizon,))
+            )(act_data[sel_env], sel_time)
+
+            train_state, info = grad_step(train_state, act_batch, obs_batch, loss_rng)
+            return (train_state, rng), info["loss"]
+
+        (train_state, rng), losses = jax.lax.scan(
+            _train_step, (train_state, rng), jnp.arange(train_steps_per_chunk)
+        )
+        return train_state, rng, losses[-1]
 
     def train(rng: jax.Array) -> Dict[str, Any]:
         rng, init_rng, env_rng = jax.random.split(rng, 3)
@@ -322,42 +343,61 @@ def make_train_offline_from_agent(
         done = jnp.zeros(num_envs, dtype=bool)
         hidden = ppo_agent.init_hidden(num_envs)
 
-        rng, np_seed_rng = jax.random.split(rng)
-        np_rng = np.random.default_rng(int(jax.random.randint(np_seed_rng, (), 0, 2 ** 31 - 1)))
-
         use_wandb = config.get("USE_WANDB", False)
         t0 = time.time()
+        log_every = max(num_chunks // 20, 1)
 
-        for step in range(num_train_steps):
-            rng, collect_rng, loss_rng = jax.random.split(rng, 3)
+        for chunk_idx in range(num_chunks):
+            # 1. Collect on device (single JIT call).
+            rng, collect_rng = jax.random.split(rng)
             _, env_state, obs, done, hidden, chunk_obs, chunk_acts, chunk_dones = (
                 _collect_chunk(collect_rng, env_state, obs, done, hidden)
             )
 
+            # 2. Transfer to host ONCE, compute valid windows.
             chunk_obs_np = np.array(chunk_obs).transpose(1, 0, 2)
             chunk_acts_np = np.array(chunk_acts).T
             chunk_dones_np = np.array(chunk_dones).T
 
-            result = _sample_windows_from_chunk(
-                chunk_obs_np, chunk_acts_np, chunk_dones_np,
-                plan_horizon, batch_size, np_rng,
-            )
-            if result is None:
+            valid = _valid_window_mask(chunk_dones_np, plan_horizon)
+            env_idxs, time_idxs = np.where(valid)
+            if len(env_idxs) == 0:
                 continue
 
-            obs_batch, act_batch = result
-            train_state, info = _jit_grad_step(train_state, obs_batch, act_batch, loss_rng)
+            # 3. Transfer to device ONCE (pad indices to fixed size).
+            num_valid = len(env_idxs)
+            padded_env = np.zeros(max_valid_indices, dtype=np.int32)
+            padded_time = np.zeros(max_valid_indices, dtype=np.int32)
+            padded_env[:num_valid] = env_idxs
+            padded_time[:num_valid] = time_idxs
 
+            data = {
+                "obs": jnp.array(chunk_obs_np, dtype=jnp.float32),
+                "act": jnp.array(chunk_acts_np, dtype=jnp.int32),
+                "env_idx": jnp.array(padded_env),
+                "time_idx": jnp.array(padded_time),
+            }
+
+            # 4. Train on device via jax.lax.scan.
+            rng, train_rng = jax.random.split(rng)
+            train_state, _, last_loss = _train_chunk(
+                train_state, train_rng, data, jnp.int32(num_valid)
+            )
+
+            # 5. Periodic logging (host-side, once per chunk — not per step).
+            step = (chunk_idx + 1) * train_steps_per_chunk
             if use_wandb:
-                payload = {f"offline/{k}": float(v) for k, v in info.items()}
-                payload["offline/step"] = step
                 elapsed = time.time() - t0
-                payload["offline/steps_per_second"] = (step + 1) / max(elapsed, 1e-6)
-                wandb.log(payload, step=step)
+                wandb.log({
+                    "offline/loss": float(last_loss),
+                    "offline/step": step,
+                    "offline/steps_per_second": step / max(elapsed, 1e-6),
+                }, step=step)
 
-            if (step + 1) % 1000 == 0:
+            if (chunk_idx + 1) % log_every == 0 or chunk_idx == num_chunks - 1:
                 elapsed = time.time() - t0
-                print(f"  [{step + 1:>6}/{num_train_steps}] loss={float(info['loss']):.4f}  elapsed={elapsed:.0f}s")
+                total_steps = num_chunks * train_steps_per_chunk
+                print(f"  [{step:>6}/{total_steps}] loss={float(last_loss):.4f}  elapsed={elapsed:.0f}s")
 
         return {"train_state": train_state}
 
@@ -503,7 +543,6 @@ def make_train_online(
                 )(flat_plans).mean(),
             }
 
-            _maybe_log(config, metric, update_step, "online")
             return (train_state, env_state, obs, rng), metric
 
         runner_state = (train_state, env_state, obs, rng)
@@ -568,17 +607,22 @@ def run_offline(config: Dict[str, Any]) -> None:
 
         rng = jax.random.PRNGKey(config["SEED"])
         train_fn, data_arrays = make_train_offline(config, offline_data)
-        train_jit = jax.jit(train_fn)
+        num_repeats = config["NUM_REPEATS"]
         t0 = time.time()
-        outs = [train_jit(jax.random.fold_in(rng, i), data_arrays) for i in range(config["NUM_REPEATS"])]
+        if num_repeats > 1:
+            rngs = jnp.stack([jax.random.fold_in(rng, i) for i in range(num_repeats)])
+            first_out = jax.jit(jax.vmap(train_fn, in_axes=(0, None)))(rngs, data_arrays)
+            first_out = jax.tree.map(lambda x: x[0], first_out)
+        else:
+            first_out = jax.jit(train_fn)(rng, data_arrays)
         elapsed = time.time() - t0
         print(f"Offline training time: {elapsed:.1f}s")
 
         if config.get("USE_WANDB"):
-            wandb.log({"offline/final_loss": float(outs[0]["final_loss"])})
+            wandb.log({"offline/final_loss": float(first_out["final_loss"])})
 
         if config["SAVE_POLICY"]:
-            _save_model(outs[0]["train_state"], config, "diffusion_offline")
+            _save_model(first_out["train_state"], config, "diffusion_offline")
 
 
 def run_online(config: Dict[str, Any]) -> None:
@@ -601,10 +645,16 @@ def run_online(config: Dict[str, Any]) -> None:
         init_params = _load_checkpoint(config, model, config["OBS_DIM"], config["OFFLINE_CHECKPOINT_PATH"])
 
     rng = jax.random.PRNGKey(config["SEED"])
-    train_jit = jax.jit(make_train_online(config, init_params=init_params))
+    train_fn = make_train_online(config, init_params=init_params)
+    num_repeats = config["NUM_REPEATS"]
 
     t0 = time.time()
-    outs = [train_jit(jax.random.fold_in(rng, i)) for i in range(config["NUM_REPEATS"])]
+    if num_repeats > 1:
+        rngs = jnp.stack([jax.random.fold_in(rng, i) for i in range(num_repeats)])
+        first_out = jax.jit(jax.vmap(train_fn))(rngs)
+        first_out = jax.tree.map(lambda x: x[0], first_out)
+    else:
+        first_out = jax.jit(train_fn)(rng)
     elapsed = time.time() - t0
 
     total_steps = config["NUM_UPDATES"] * config["NUM_STEPS"] * config["NUM_ENVS"]
@@ -612,10 +662,17 @@ def run_online(config: Dict[str, Any]) -> None:
     print(f"Online training time: {elapsed:.1f}s | SPS: {sps:.0f}")
 
     if config.get("USE_WANDB"):
+        metrics = first_out["metrics"]
+        num_updates = config["NUM_UPDATES"]
+        log_interval = max(num_updates // 100, 1)
+        for i in range(0, num_updates, log_interval):
+            payload = {f"online/{k}": float(v[i]) for k, v in metrics.items()}
+            payload["online/step"] = int(i)
+            wandb.log(payload, step=int(i))
         wandb.log({"online/total_sps": sps, "online/total_time_s": elapsed})
 
     if config["SAVE_POLICY"]:
-        _save_model(outs[0]["runner_state"][0], config, "diffusion_online")
+        _save_model(first_out["runner_state"][0], config, "diffusion_online")
 
 
 # =============================================================================
