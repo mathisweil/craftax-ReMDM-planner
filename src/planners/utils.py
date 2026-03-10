@@ -326,6 +326,32 @@ def _save_model(
 
     print(f"Saved model checkpoint to '{path}'")
 
+def _resolve_ckpt_dir(config: dict[str, Any], subdir: str = "checkpoints") -> pathlib.Path:
+    """Determine the checkpoint directory from config + wandb state."""
+    ckpt_base = config.get("CKPT_DIR", subdir)
+    if config.get("USE_WANDB") and wandb.run is not None:
+        ckpt_dir = pathlib.Path(wandb.run.dir) / ckpt_base
+    else:
+        ckpt_dir = pathlib.Path(ckpt_base) / config["ENV_NAME"]
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    return ckpt_dir
+
+
+def _make_periodic_ckpt_manager(config: dict[str, Any], subdir: str = "checkpoints") -> ocp.CheckpointManager:
+    """Create a CheckpointManager configured for periodic saving during training."""
+    ckpt_dir = _resolve_ckpt_dir(config, subdir)
+    interval = config.get("CKPT_EVERY_STEPS", 500)
+    keep_n = config.get("CKPT_MAX_TO_KEEP", 3)
+    return ocp.CheckpointManager(
+        ckpt_dir,
+        options=ocp.CheckpointManagerOptions(
+            save_decision_policy=save_decision_policy_lib.FixedIntervalPolicy(interval),
+            preservation_policy=preservation_policy_lib.LatestN(keep_n),
+            enable_async_checkpointing=True,
+            enable_background_delete=True,
+        ),
+    )
+
 
 # =============================================================================
 # Environment stack construction

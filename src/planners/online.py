@@ -3,14 +3,11 @@ from typing import Any, Callable, Optional, Dict
 
 import jax
 import jax.numpy as jnp
-from flax.training import train_state
-import optax
+import orbax.checkpoint as ocp
 import wandb
 from craftax.craftax_env import make_craftax_env_from_name
 
-from src.models.reward_models import get_reward_model
 from src.models.remdm import sample_plan
-from src.logz.batch_logging import create_log_dict, batch_log
 
 from .common import SCHEDULE_MAP, _make_grad_step
 from .utils import (
@@ -21,6 +18,8 @@ from .utils import (
     _save_model,
     _make_env_stack,
     _make_apply_fns,
+    _make_periodic_ckpt_manager,
+    _resolve_ckpt_dir,
 )
 
 def make_train_online(
@@ -279,12 +278,35 @@ def make_train_online(
             
             return (train_state, env_state, obs, rng, rm_state), metrics
 
-        # --- 5. PACK INITIAL RUNNER STATE & EXECUTE ---
         runner_state = (train_state, env_state, obs, rng, rm_state)
-        
-        runner_state, metrics = jax.lax.scan(_update_step, runner_state, jnp.arange(num_updates))
-        
-        return {"runner_state": runner_state, "metrics": metrics}
+
+        _jit_update_step = jax.jit(_update_step)
+        all_metrics = []
+        t0 = time.time()
+        log_every = max(num_updates // 20, 1)
+
+        with _make_periodic_ckpt_manager(config, subdir="checkpoints_online") as ckpt_mgr:
+            for step_idx in range(num_updates):
+                runner_state, metrics = _jit_update_step(runner_state, jnp.int32(step_idx))
+                all_metrics.append(metrics)
+
+                is_final = (step_idx == num_updates - 1)
+                saved = ckpt_mgr.save(
+                    step_idx + 1,
+                    args=ocp.args.StandardSave(runner_state[0]),  # train_state
+                    force=is_final,
+                )
+                if saved:
+                    ckpt_dir = _resolve_ckpt_dir(config, subdir="checkpoints_online")
+                    print(f"  Checkpoint saved at step {step_idx + 1} -> '{ckpt_dir}'")
+
+                if (step_idx + 1) % log_every == 0 or is_final:
+                    elapsed = time.time() - t0
+                    loss_val = float(jax.device_get(metrics["loss"]))
+                    print(f"  [{step_idx + 1:>6}/{num_updates}]  loss={loss_val:.4f}  elapsed={elapsed:.0f}s")
+
+        stacked_metrics = jax.tree.map(lambda *xs: jnp.stack(xs), *all_metrics)
+        return {"runner_state": runner_state, "metrics": stacked_metrics}
 
     return train
 
@@ -305,7 +327,7 @@ def run_online(config: Dict[str, Any]) -> None:
     train_fn = make_train_online(config, init_params=init_params)
     
     print("Starting Online GRPO Training...")
-    out = jax.jit(train_fn)(jax.random.PRNGKey(config["SEED"]))
+    out = train_fn(jax.random.PRNGKey(config["SEED"]))
     
     if config["SAVE_POLICY"]:
         _save_model(out["runner_state"][0], config, "diffusion_online_grpo")

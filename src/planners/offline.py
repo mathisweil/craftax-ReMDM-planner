@@ -1,5 +1,3 @@
-import os
-import pathlib
 import time
 from typing import Any, Callable
 
@@ -7,10 +5,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import orbax.checkpoint as ocp
-from orbax.checkpoint.checkpoint_managers import (
-    preservation_policy as preservation_policy_lib,
-    save_decision_policy as save_decision_policy_lib,
-)
 import wandb
 from craftax.craftax_env import make_craftax_env_from_name
 
@@ -24,6 +18,8 @@ from .utils import (
     _make_env_stack,
     _valid_window_mask,
     _make_apply_fns,
+    _make_periodic_ckpt_manager,
+    _resolve_ckpt_dir,
 )
 
 def make_train_offline(
@@ -189,29 +185,12 @@ def make_train_offline_from_agent(
         t0 = time.time()
         log_every = max(num_chunks // 20, 1)
 
-        ckpt_interval = config.get("CKPT_EVERY_STEPS", 500)
-        keep_n = config.get("CKPT_MAX_TO_KEEP", 3)
-        ckpt_base = config.get("CKPT_DIR", "checkpoints")
-        if config.get("USE_WANDB") and wandb.run is not None:
-            ckpt_dir = pathlib.Path(wandb.run.dir) / ckpt_base
-        else:
-            ckpt_dir = pathlib.Path(ckpt_base) / config["ENV_NAME"]
-        ckpt_dir.mkdir(parents=True, exist_ok=True)
+        ckpt_dir = _resolve_ckpt_dir(config)
 
         padded_env = np.zeros(max_valid_indices, dtype=np.int32)
         padded_time = np.zeros(max_valid_indices, dtype=np.int32)
 
-        with ocp.CheckpointManager(
-            ckpt_dir,
-            options=ocp.CheckpointManagerOptions(
-                save_decision_policy=save_decision_policy_lib.FixedIntervalPolicy(
-                    ckpt_interval
-                ),
-                preservation_policy=preservation_policy_lib.LatestN(keep_n),
-                enable_async_checkpointing=True,
-                enable_background_delete=True,
-            ),
-        ) as ckpt_mgr:
+        with _make_periodic_ckpt_manager(config) as ckpt_mgr:
 
             for chunk_idx in range(num_chunks):
                 rng, collect_rng = jax.random.split(rng)
