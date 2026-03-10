@@ -39,7 +39,7 @@ from __future__ import annotations
 import argparse
 import pathlib
 import sys
-from typing import Any, Dict
+from typing import Any
 
 import jax
 import numpy as np
@@ -58,8 +58,10 @@ from src.planners import (
     run_online,
     run_inference,
 )
+from src.planners.train_reward import run_train_reward
 
-SCHEDULE_MAP: Dict[str, ScheduleFn] = {
+
+SCHEDULE_MAP: dict[str, ScheduleFn] = {
     "cosine": cosine_schedule,
     "linear": linear_schedule,
 }
@@ -70,176 +72,138 @@ SCHEDULE_MAP: Dict[str, ScheduleFn] = {
 # =============================================================================
 
 if __name__ == "__main__":
+    # --- JAX backend check ---
     backend = jax.default_backend()
-    devices = jax.devices()
-    print(f"JAX backend: {backend} | Devices: {devices}")
+    print(f"JAX backend: {backend} | Devices: {jax.devices()}")
     if backend != "gpu":
         import warnings
-        warnings.warn(
-            f"JAX is using '{backend}', not GPU. "
-            "Install jaxlib with CUDA support: pip install jax[cuda12]"
-        )
+        warnings.warn(f"JAX is using '{backend}', not GPU. pip install jax[cuda12]")
 
-    _src_dir = pathlib.Path(__file__).parent
-    _default_cfg_path = _src_dir / "configs" / "defaults.yaml"
+    # --- Two-pass parsing: config file first, then CLI overrides ---
+    _default_cfg = pathlib.Path(__file__).parent / "configs" / "defaults.yaml"
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", default=str(_default_cfg))
+    pre_args, _ = pre.parse_known_args()
 
-    _pre = argparse.ArgumentParser(add_help=False)
-    _pre.add_argument("--config", type=str, default=str(_default_cfg_path))
-    _pre_args, _ = _pre.parse_known_args()
-
-    with open(_pre_args.config) as _f:
-        _yaml_defaults = yaml.safe_load(_f)
+    with open(pre_args.config) as f:
+        yaml_cfg = yaml.safe_load(f)
 
     parser = argparse.ArgumentParser(
         description="ReMDM discrete diffusion planner for Craftax",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument(
-        "--config", type=str, default=str(_default_cfg_path),
-        help="Path to a YAML config file (overridden by any explicit CLI flag).",
-    )
+    parser.add_argument("--config", default=str(_default_cfg))
 
-    # Mode
-    parser.add_argument(
-        "--mode",
-        type=str,
-        choices=["collect", "offline", "online", "inference"],
-        required=True,
-        help=(
-            "collect: save PPO trajectories to disk. "
-            "offline: train diffusion model (from .npz or live from PPO agent). "
-            "online: fine-tune with diffusion self-rollout. "
-            "inference: evaluate."
-        ),
-    )
+    # -- Operational (CLI only, no YAML equivalent) --
+    parser.add_argument("--mode", required=True,
+                        choices=["collect", "offline", "online", "inference", "train_reward"])
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--jit", action=argparse.BooleanOptionalAction, default=True)
 
+    # -- Paths (CLI only, run-specific) --
+    parser.add_argument("--ppo_checkpoint_path", type=str, default=None)
+    parser.add_argument("--offline_data_path", type=str, default=None)
+    parser.add_argument("--offline_checkpoint_path", type=str, default=None)
+    parser.add_argument("--checkpoint_path", type=str, default=None)
+    parser.add_argument("--ckpt_dir", type=str, default=None)
+    parser.add_argument("--reward_load_path", type=str, default=None)
+    parser.add_argument("--reward_save_path", type=str, default=None)
+
+    # -- Hyperparameter overrides (default=None, YAML is source of truth) --
     # Environment
-    parser.add_argument("--env_name", type=str)
-
-    # Diffusion model
-    parser.add_argument("--plan_horizon", type=int)
-    parser.add_argument("--diffusion_steps", type=int)
-    parser.add_argument("--diffusion_schedule", type=str, choices=["cosine", "linear"])
-    parser.add_argument("--remask_strategy", type=str, choices=list(STRATEGY_MAP.keys()))
-    parser.add_argument("--eta", type=float)
-    parser.add_argument("--t_on", type=float)
-    parser.add_argument("--t_off", type=float)
-
-    # Transformer architecture
-    parser.add_argument("--d_model", type=int)
-    parser.add_argument("--n_heads", type=int)
-    parser.add_argument("--n_layers", type=int)
-    parser.add_argument("--d_ff", type=int)
-    parser.add_argument("--obs_encoder_layers", type=int)
-    parser.add_argument("--obs_encoder_width", type=int)
-    parser.add_argument("--dropout_rate", type=float)
-
+    parser.add_argument("--env_name", type=str, default=None)
+    # Diffusion
+    parser.add_argument("--plan_horizon", type=int, default=None)
+    parser.add_argument("--diffusion_steps", type=int, default=None)
+    parser.add_argument("--diffusion_schedule", type=str, choices=["cosine", "linear"], default=None)
+    parser.add_argument("--remask_strategy", type=str, choices=list(STRATEGY_MAP.keys()), default=None)
+    parser.add_argument("--eta", type=float, default=None)
+    parser.add_argument("--t_on", type=float, default=None)
+    parser.add_argument("--t_off", type=float, default=None)
+    parser.add_argument("--top_p", type=int, default=None)
+    parser.add_argument("--use_loop", action=argparse.BooleanOptionalAction, default=None)
+    # Architecture
+    parser.add_argument("--d_model", type=int, default=None)
+    parser.add_argument("--n_heads", type=int, default=None)
+    parser.add_argument("--n_layers", type=int, default=None)
+    parser.add_argument("--d_ff", type=int, default=None)
+    parser.add_argument("--obs_encoder_layers", type=int, default=None)
+    parser.add_argument("--obs_encoder_width", type=int, default=None)
+    parser.add_argument("--dropout_rate", type=float, default=None)
     # Optimisation
-    parser.add_argument("--lr", type=float)
-    parser.add_argument("--max_grad_norm", type=float)
-    parser.add_argument("--batch_size", type=int)
-
-    # Offline training
-    parser.add_argument(
-        "--offline_data_path", type=str,
-        help="Path to .npz trajectories (--mode offline file-based).",
-    )
-    parser.add_argument("--num_train_steps", type=lambda x: int(float(x)))
-
-    # Online training
-    parser.add_argument("--num_envs", type=int)
-    parser.add_argument("--num_steps", type=int)
-    parser.add_argument("--num_updates", type=lambda x: int(float(x)))
-    parser.add_argument("--replan_every", type=int)
-    parser.add_argument("--update_epochs", type=int)
-    parser.add_argument("--num_minibatches", type=int)
-    parser.add_argument(
-        "--offline_checkpoint_path", type=str,
-        help="Path to an offline-trained checkpoint to warm-start online training.",
-    )
-    parser.add_argument("--use_optimistic_resets", action=argparse.BooleanOptionalAction)
-    parser.add_argument("--optimistic_reset_ratio", type=int)
-
-    # Inference
-    parser.add_argument(
-        "--checkpoint_path", type=str,
-        help="Path to a trained model checkpoint for inference.",
-    )
-    parser.add_argument("--eval_steps", type=int)
-
-    # Data collection / agent-based offline training
-    parser.add_argument(
-        "--ppo_checkpoint_path", type=str,
-        help=(
-            "Path to a pre-trained PPO (ActorCritic) checkpoint. "
-            "Used by --mode collect (save trajectories to disk) and "
-            "--mode offline (train directly from agent without saving)."
-        ),
-    )
-    parser.add_argument(
-        "--ppo_model_type", type=str,
-        choices=["ppo", "ppo_rnn", "ppo_rnd"],
-        help=(
-            "Override the PPO model architecture used for checkpoint loading. "
-            "When null (default), the architecture is auto-detected from the "
-            "checkpoint directory contents. Valid values: ppo, ppo_rnn, ppo_rnd."
-        ),
-    )
-    parser.add_argument(
-        "--collect_num_steps", type=lambda x: int(float(x)),
-        help="Total env steps to collect (--mode collect).",
-    )
-    parser.add_argument("--collect_num_envs", type=int)
-    parser.add_argument(
-        "--layer_size", type=int,
-        help="Hidden layer width of the ActorCritic PPO network.",
-    )
-
-    # W&B / logging
-    parser.add_argument("--use_wandb", action=argparse.BooleanOptionalAction)
-    parser.add_argument("--debug", action=argparse.BooleanOptionalAction)
-    parser.add_argument("--wandb_project", type=str)
-    parser.add_argument("--wandb_entity", type=str)
-    parser.add_argument("--save_policy", action=argparse.BooleanOptionalAction)
-    parser.add_argument("--num_repeats", type=int)
-    parser.add_argument("--seed", type=int)
-    parser.add_argument("--jit", action=argparse.BooleanOptionalAction)
-
-    parser.set_defaults(**_yaml_defaults)
+    parser.add_argument("--lr", type=float, default=None)
+    parser.add_argument("--max_grad_norm", type=float, default=None)
+    parser.add_argument("--batch_size", type=int, default=None)
+    # Training
+    parser.add_argument("--num_train_steps", type=lambda x: int(float(x)), default=None)
+    parser.add_argument("--num_envs", type=int, default=None)
+    parser.add_argument("--num_steps", type=int, default=None)
+    parser.add_argument("--num_updates", type=lambda x: int(float(x)), default=None)
+    parser.add_argument("--replan_every", type=int, default=None)
+    parser.add_argument("--update_epochs", type=int, default=None)
+    parser.add_argument("--num_minibatches", type=int, default=None)
+    parser.add_argument("--grpo_group_size", type=int, default=None)
+    parser.add_argument("--ppo_init_prob", type=float, default=None)
+    parser.add_argument("--ppo_decay_rate", type=float, default=None)
+    parser.add_argument("--use_optimistic_resets", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--optimistic_reset_ratio", type=int, default=None)
+    parser.add_argument("--layer_size", type=int, default=None)
+    parser.add_argument("--collect_num_steps", type=lambda x: int(float(x)), default=None)
+    parser.add_argument("--collect_num_envs", type=int, default=None)
+    parser.add_argument("--ppo_model_type", type=str, choices=["ppo", "ppo_rnn", "ppo_rnd"], default=None)
+    parser.add_argument("--train_sigma", type=float, default=None)
+    parser.add_argument("--collect_temperature", type=float, default=None)
+    # Reward model
+    parser.add_argument("--reward_model_type", type=str, choices=["mlp", "rnd", "vision_rnd"], default=None)
+    parser.add_argument("--reward_epochs", type=int, default=None)
+    parser.add_argument("--reward_lr", type=float, default=None)
+    parser.add_argument("--reward_model_path", type=str, default=None)
+    # Logging
+    parser.add_argument("--use_wandb", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--debug", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--wandb_project", type=str, default=None)
+    parser.add_argument("--wandb_entity", type=str, default=None)
+    parser.add_argument("--save_policy", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--num_repeats", type=int, default=None)
+    parser.add_argument("--ckpt_every_steps", type=lambda x: int(float(x)), default=None)
+    parser.add_argument("--ckpt_max_to_keep", type=int, default=None)
 
     args, rest = parser.parse_known_args(sys.argv[1:])
     if rest:
         raise ValueError(f"Unknown arguments: {rest}")
 
-    if args.seed is None:
-        args.seed = np.random.randint(2**31)
+    # --- Merge: YAML base, then CLI overrides (None = not set, don't override) ---
+    config: dict[str, Any] = {k.upper(): v for k, v in yaml_cfg.items()}
+    cli_overrides = {k.upper(): v for k, v in vars(args).items() if v is not None and k != "config"}
+    config.update(cli_overrides)
 
-    config: Dict[str, Any] = {k.upper(): v for k, v in vars(args).items()}
-    config.pop("CONFIG", None)
+    if config.get("SEED") is None:
+        config["SEED"] = np.random.randint(2**31)
 
-    def _run() -> None:
-        if config["MODE"] == "collect":
-            assert config.get("PPO_CHECKPOINT_PATH"), (
-                "--ppo_checkpoint_path is required for --mode collect.\n"
-                "Train a PPO agent first:  python ppo_rnn.py  or  python ppo_rnd.py"
-            )
-            run_collect(config)
-        elif config["MODE"] == "offline":
-            assert config.get("PPO_CHECKPOINT_PATH") or config.get("OFFLINE_DATA_PATH"), (
-                "--mode offline requires either --ppo_checkpoint_path "
-                "(live agent collection) or --offline_data_path (load from .npz)."
-            )
-            run_offline(config)
-        elif config["MODE"] == "online":
-            run_online(config)
-        elif config["MODE"] == "inference":
-            assert config.get("CHECKPOINT_PATH"), (
-                "--checkpoint_path is required for --mode inference."
-            )
-            run_inference(config)
+    # --- Validate required-by-mode args ---
+    mode = config["MODE"]
+    if mode == "collect":
+        assert config.get("PPO_CHECKPOINT_PATH"), "--ppo_checkpoint_path required for --mode collect"
+    elif mode == "offline":
+        assert config.get("PPO_CHECKPOINT_PATH") or config.get("OFFLINE_DATA_PATH"), \
+            "--mode offline requires --ppo_checkpoint_path or --offline_data_path"
+    elif mode == "inference":
+        assert config.get("CHECKPOINT_PATH"), "--checkpoint_path required for --mode inference"
+    elif mode == "train_reward":
+        assert config.get("OFFLINE_DATA_PATH"), "--offline_data_path required for --mode train_reward"
 
-    if args.jit:
-        _run()
+    dispatch = {
+        "collect": run_collect,
+        "offline": run_offline,
+        "online": run_online,
+        "inference": run_inference,
+        "train_reward": run_train_reward,
+    }
+
+    run = lambda: dispatch[mode](config)
+
+    if config["JIT"]:
+        run()
     else:
         with jax.disable_jit():
-            _run()
+            run()
