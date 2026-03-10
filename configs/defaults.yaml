@@ -33,7 +33,6 @@ max_grad_norm: 1.0        # Gradient clipping norm
 batch_size: 256           # Minibatch size for offline training
 
 # ── Offline training ─────────────────────────────────────────────────────────
-offline_data_path: "trajectories.npz"   # Path to .npz file produced by --mode collect
 num_train_steps: 1e9   # Number of gradient steps for offline training
 collect_temperature: 2.0  # Softmax temperature applied to PPO logits during data collection
 
@@ -44,7 +43,6 @@ num_updates: 1000          # Total training iterations
 replan_every: 4            # Steps to execute from a plan before replanning
 update_epochs: 1           # Gradient passes per collected batch
 num_minibatches: 4         # Minibatches per epoch
-offline_checkpoint_path: null
 
 # GRPO & Teacher Injection Settings
 grpo_group_size: 4         # Number of plans to sample per state for relative advantage
@@ -56,13 +54,11 @@ use_optimistic_resets: false
 optimistic_reset_ratio: 16
 
 # ── Inference / evaluation ───────────────────────────────────────────────────
-checkpoint_path: null     # Path to trained checkpoint (required for --mode inference)
 eval_steps: 1000          # Number of environment steps to run during evaluation
 
 # ── Data collection & agent-based offline training ────────────────────────────
 # Used by both --mode collect (save to disk) and --mode offline (live from agent).
 # Train a PPO agent first with ppo_rnn.py or ppo_rnd.py, then point here.
-ppo_checkpoint_path: null      # Path to a pre-trained ActorCritic PPO checkpoint
 ppo_model_type: ppo_rnd           # PPO architecture override: null (auto) | ppo | ppo_rnn | ppo_rnd
 collect_num_steps: 10000000     # Total env steps to collect (--mode collect)
 collect_num_envs: 128           # Parallel environments during collection
@@ -70,21 +66,15 @@ layer_size: 512                # Hidden layer width of the ActorCritic network
 
 # ── Logging / W&B ────────────────────────────────────────────────────────────
 use_wandb: true
-debug: true
 wandb_project: "remdm-craftax"
-wandb_entity: ""
 save_policy: true        # Save the model checkpoint at the end of training
 num_repeats: 1            # Number of independent training runs (vmapped)
-seed: null                # RNG seed (null → random)
-jit: true                 # Disable with --no-jit for easier debugging
 
 # ── Reward model training (--mode train_reward) ──────────────────────────────
 reward_model_type: "mlp"                              # Architecture: mlp | rnd | vision_rnd
 reward_epochs: 10                                     # Training epochs over offline data
 reward_lr: 1.0e-4                                     # Adam learning rate for reward model
 reward_model_path: "checkpoints/reward_model"         # Directory for periodic reward checkpoints
-reward_load_path: null                                # Pre-trained reward weights to warm-start (.msgpack)
-reward_save_path: "checkpoints/reward_model.msgpack"  # Final saved reward weights
 
 # ── Checkpointing (periodic) ────────────────────────────────────────────────
 ckpt_every_steps: 5e5     # Save a checkpoint every N training steps

@@ -15,7 +15,6 @@ from .utils import (
     _init_model_params,
     _create_train_state,
     _load_checkpoint,
-    _save_model,
     _make_env_stack,
     _make_apply_fns,
     _make_periodic_ckpt_manager,
@@ -256,7 +255,7 @@ def make_train_online(
                 ppo=metrics["ppo_prob"]
             )
 
-            if config.get("USE_WANDB") and config.get("DEBUG", True):
+            if config["USE_WANDB"] and config["DEBUG"]:
                 def _wandb_callback(mets, step):
                     import numpy as np
                     try:
@@ -319,17 +318,13 @@ def run_online(config: Dict[str, Any]) -> None:
     if config.get("OFFLINE_CHECKPOINT_PATH"):
         model = _build_model(config, config["NUM_ACTIONS"])
         init_params = _load_checkpoint(config, model, config["OBS_DIM"], config["OFFLINE_CHECKPOINT_PATH"])
-    
-    # Standard setup and WandB init
-    if config.get("USE_WANDB"):
+
+    if config["USE_WANDB"]:
         wandb.init(project=config["WANDB_PROJECT"], config=config, name=f"GRPO-{config['ENV_NAME']}")
 
     train_fn = make_train_online(config, init_params=init_params)
     
     print("Starting Online GRPO Training...")
     out = train_fn(jax.random.PRNGKey(config["SEED"]))
-    
-    if config["SAVE_POLICY"]:
-        _save_model(out["runner_state"][0], config, "diffusion_online_grpo")
     
     print("Training Complete.")
