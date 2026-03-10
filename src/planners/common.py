@@ -30,13 +30,15 @@ def _action_stats(act_batch: jnp.ndarray, num_actions: int) -> dict[str, jnp.nda
     return {"action_entropy": entropy, "action_unique_frac": unique_frac}
 
 def _make_grad_step(apply_train, num_actions: int, schedule_fn, sigma_t: float):
-    """Return a pure function: (train_state, act_batch, obs_batch, rng) -> (train_state, info)."""
-    def grad_step(train_state, act_batch, obs_batch, rng):
+    """Return a pure function: (train_state, act_batch, obs_batch, rng, advantages) -> (train_state, info)."""
+    # 1. Added advantages=None to the signature here
+    def grad_step(train_state, act_batch, obs_batch, rng, advantages=None):
         def loss_fn(params):
+            # 2. Passed advantages down into the compute_loss function
             return compute_loss(
                 apply_train, params, rng,
                 act_batch, obs_batch, num_actions, schedule_fn,
-                sigma_t=sigma_t,
+                sigma_t=sigma_t, advantages=advantages
             )
 
         (loss, info), grads = jax.value_and_grad(loss_fn, has_aux=True)(train_state.params)

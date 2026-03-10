@@ -58,6 +58,8 @@ from src.planners import (
     run_online,
     run_inference,
 )
+from src.planners.train_reward import run_train_reward 
+            
 
 SCHEDULE_MAP: dict[str, ScheduleFn] = {
     "cosine": cosine_schedule,
@@ -103,13 +105,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["collect", "offline", "online", "inference"],
+        choices=["collect", "offline", "online", "inference", "train_reward"], 
         required=True,
         help=(
             "collect: save PPO trajectories to disk. "
-            "offline: train diffusion model (from .npz or live from PPO agent). "
+            "offline: train diffusion model (from .npz or live). "
             "online: fine-tune with diffusion self-rollout. "
-            "inference: evaluate."
+            "inference: evaluate. "
+            "train_reward: train the deterministic neural reward model." 
         ),
     )
 
@@ -147,6 +150,13 @@ if __name__ == "__main__":
     parser.add_argument("--num_train_steps", type=lambda x: int(float(x)))
 
     # Online training
+    # GRPO & Teacher Injection
+    parser.add_argument("--grpo_group_size", type=int, default=4, 
+                        help="Number of plans to sample per state for relative advantage.")
+    parser.add_argument("--ppo_init_prob", type=float, default=0.1, 
+                        help="Starting probability of using PPO expert actions.")
+    parser.add_argument("--ppo_decay_rate", type=float, default=0.99, 
+                        help="Exponential decay rate for PPO injection per update.")
     parser.add_argument("--num_envs", type=int)
     parser.add_argument("--num_steps", type=int)
     parser.add_argument("--num_updates", type=lambda x: int(float(x)))
@@ -195,9 +205,20 @@ if __name__ == "__main__":
         help="Hidden layer width of the ActorCritic PPO network.",
     )
 
+    # Neural Reward Training
+    parser.add_argument("--reward_epochs", type=int, default=10)
+    parser.add_argument("--reward_lr", type=float, default=1e-4)
+    parser.add_argument(
+        "--reward_model_path", type=str, default="checkpoints/reward_model",
+        help="Path to save the trained neural reward model."
+    )
+    parser.add_argument("--reward_model_type", type=str, default="mlp", choices=["mlp", "curiosity", "rnd"])
+    parser.add_argument("--reward_load_path", type=str, default=None, help="Path to load pre-trained reward weights (.msgpack)")
+    parser.add_argument("--reward_save_path", type=str, default="checkpoints/reward_model.msgpack", help="Where to save reward weights")
+
     # Periodic checkpointing
-    parser.add_argument("--ckpt_every_steps", type=int)
-    parser.add_argument("--ckpt_max_to_keep", type=int)
+    parser.add_argument("--ckpt_every_steps", type=lambda x: int(float(x)))
+    parser.add_argument("--ckpt_max_to_keep", type=lambda x: int(float(x)))
     parser.add_argument("--ckpt_dir", type=str)
 
     # W&B / logging
@@ -242,6 +263,11 @@ if __name__ == "__main__":
                 "--checkpoint_path is required for --mode inference."
             )
             run_inference(config)
+        elif config["MODE"] == "train_reward":
+            assert config.get("OFFLINE_DATA_PATH"), (
+                "--offline_data_path is required to train the reward model."
+            )
+            run_train_reward(config)
 
     if args.jit:
         _run()

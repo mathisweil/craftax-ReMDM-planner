@@ -103,7 +103,7 @@ def compute_loss(
     obs: jnp.ndarray,
     num_actions: int,
     schedule_fn: ScheduleFn,
-    sigma_t: float = 0.0,
+    sigma_t: float = 0.0, advantages=None
 ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
     """Compute the MDLM / ReMDM training loss.
 
@@ -172,6 +172,14 @@ def compute_loss(
     masked_ce = ce * is_masked
     num_masked = jnp.maximum(is_masked.sum(axis=-1), 1.0)   # [B]
     per_sample_loss = weight * (masked_ce.sum(axis=-1) / num_masked)
+
+    # --- GRPO ADVANTAGE WEIGHTING ---
+    if advantages is not None:
+        # Stop gradients on advantages to ensure they act strictly as constant weights
+        # rather than part of the computation graph
+        adv_weights = jax.lax.stop_gradient(advantages)
+        per_sample_loss = per_sample_loss * adv_weights
+        
     loss = jnp.mean(per_sample_loss)
 
     # --- ADD ACCURACY MATH HERE ---
