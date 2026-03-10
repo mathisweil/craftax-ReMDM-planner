@@ -64,7 +64,7 @@ eval_steps: 1000          # Number of environment steps to run during evaluation
 # Train a PPO agent first with ppo_rnn.py or ppo_rnd.py, then point here.
 ppo_checkpoint_path: null      # Path to a pre-trained ActorCritic PPO checkpoint
 ppo_model_type: ppo_rnd           # PPO architecture override: null (auto) | ppo | ppo_rnn | ppo_rnd
-collect_num_steps: 1000000     # Total env steps to collect (--mode collect)
+collect_num_steps: 10000000     # Total env steps to collect (--mode collect)
 collect_num_envs: 64           # Parallel environments during collection
 layer_size: 512                # Hidden layer width of the ActorCritic network
 
