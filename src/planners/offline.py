@@ -14,7 +14,6 @@ from .utils import (
     _init_model_params,
     _create_train_state,
     _load_ppo_checkpoint,
-    _save_model,
     _make_env_stack,
     _valid_window_mask,
     _make_apply_fns,
@@ -25,7 +24,7 @@ from .utils import (
 def make_train_offline(
     config: dict[str, Any],
     offline_data: dict[str, np.ndarray],
-) -> tuple[Callable, dict[str, jnp.ndarray]]:
+) -> Callable:                          # <-- no longer returns data_arrays separately
     raw_obs, raw_act, raw_done = offline_data["obs"], offline_data["actions"], offline_data["dones"]
     num_envs_data, traj_len, obs_dim = raw_obs.shape
 
@@ -54,13 +53,13 @@ def make_train_offline(
     _, apply_train = _make_apply_fns(model)
     grad_step = _make_grad_step(apply_train, num_actions, schedule_fn, config.get("TRAIN_SIGMA", 0.0))
 
-    def train(rng: jax.Array, data: dict[str, jnp.ndarray]) -> dict[str, Any]:
+    train_steps_per_chunk = min(num_train_steps, 100)
+    num_chunks = (num_train_steps + train_steps_per_chunk - 1) // train_steps_per_chunk
+
+    @jax.jit
+    def _train_chunk(train_state, rng, data):
         obs_data, act_data = data["obs"], data["act"]
         env_idx_arr, time_idx_arr = data["env_idx"], data["time_idx"]
-
-        rng, init_rng = jax.random.split(rng)
-        params = _init_model_params(model, init_rng, obs_dim, plan_horizon)
-        train_state = _create_train_state(model, params, config["LR"], config["MAX_GRAD_NORM"])
 
         def _train_step(carry, step_idx):
             train_state, rng = carry
@@ -75,14 +74,63 @@ def make_train_offline(
             )(sel_env, sel_time)
 
             train_state, info = grad_step(train_state, act_batch, obs_batch, loss_rng)
-            return (train_state, rng), info["loss"]
+            return (train_state, rng), info
 
-        (train_state, _), scan_losses = jax.lax.scan(
-            _train_step, (train_state, rng), jnp.arange(num_train_steps)
+        (train_state, rng), infos = jax.lax.scan(
+            _train_step, (train_state, rng), jnp.arange(train_steps_per_chunk)
         )
-        return {"train_state": train_state, "final_loss": scan_losses[-1]}
+        mean_infos = jax.tree.map(jnp.mean, infos)
+        return train_state, rng, mean_infos
 
-    return train, data_arrays
+    def train(rng: jax.Array) -> dict[str, Any]:
+        rng, init_rng = jax.random.split(rng)
+        params = _init_model_params(model, init_rng, obs_dim, plan_horizon)
+        train_state = _create_train_state(model, params, config["LR"], config["MAX_GRAD_NORM"])
+
+        t0 = time.time()
+        log_every = max(num_chunks // 20, 1)
+        ckpt_dir = _resolve_ckpt_dir(config)
+
+        with _make_periodic_ckpt_manager(config) as ckpt_mgr:
+            for chunk_idx in range(num_chunks):
+                rng, train_rng = jax.random.split(rng)
+                train_state, _, chunk_metrics = _train_chunk(
+                    train_state, train_rng, data_arrays
+                )
+
+                step = (chunk_idx + 1) * train_steps_per_chunk
+
+                is_final = (chunk_idx == num_chunks - 1)
+                saved = ckpt_mgr.save(
+                    step,
+                    args=ocp.args.StandardSave(train_state),
+                    force=is_final,
+                )
+                if saved:
+                    print(f"  Checkpoint saved at step {step} -> '{ckpt_dir}'")
+
+                if config.get("USE_WANDB", False):
+                    elapsed = time.time() - t0
+                    log_data = {
+                        "offline/step": step,
+                        "offline/steps_per_second": step / max(elapsed, 1e-6),
+                    }
+                    metrics_host = jax.device_get(chunk_metrics)
+                    for key, val in metrics_host.items():
+                        log_data[f"offline/{key}"] = float(val)
+                    wandb.log(log_data, step=step)
+
+                if (chunk_idx + 1) % log_every == 0 or is_final:
+                    elapsed = time.time() - t0
+                    total_steps = num_chunks * train_steps_per_chunk
+                    metrics_str = "  ".join(
+                        f"{k}={float(v):.4f}" for k, v in chunk_metrics.items()
+                    )
+                    print(f"  [{step:>6}/{total_steps}]  {metrics_str}  elapsed={elapsed:.0f}s")
+
+        return {"train_state": train_state, "final_loss": chunk_metrics["loss"]}
+
+    return train
 
 def _make_collect_chunk_fn(ppo_agent, env_w, env_params, collect_steps: int, config):
     is_rnn = ppo_agent.model_type == "ppo_rnn"
@@ -92,7 +140,7 @@ def _make_collect_chunk_fn(ppo_agent, env_w, env_params, collect_steps: int, con
         def _step(carry, _):
             rng, env_state, obs, done, hidden = carry
             rng, k1, k2 = jax.random.split(rng, 3)
-            
+
             if is_rnn:
                 pi, _, new_hidden = ppo_agent.apply(ppo_agent.params, obs, hidden=hidden, done=done)
             else:
@@ -109,7 +157,7 @@ def _make_collect_chunk_fn(ppo_agent, env_w, env_params, collect_steps: int, con
         (rng, env_state, obs, done, hidden), (all_obs, all_acts, all_dones) = jax.lax.scan(
             _step, (rng, env_state, obs, done, hidden), None, collect_steps
         )
-        
+
         return rng, env_state, obs, done, hidden, all_obs, all_acts, all_dones
 
     return _collect_chunk
@@ -238,7 +286,7 @@ def make_train_offline_from_agent(
                     print(f"  Checkpoint saved at step {step} -> '{ckpt_dir}'")
                 # -------------------------
 
-                if config.get("USE_WANDB", False):
+                if config["USE_WANDB"]:
                     elapsed = time.time() - t0
                     log_data = {
                         "offline/step": step,
@@ -262,7 +310,7 @@ def make_train_offline_from_agent(
     return train
 
 def run_offline(config: dict[str, Any]) -> None:
-    if config.get("USE_WANDB"):
+    if config["USE_WANDB"]:
         total_steps = config["NUM_TRAIN_STEPS"] * config["BATCH_SIZE"]
         wandb.init(
             project=config["WANDB_PROJECT"],
@@ -279,8 +327,6 @@ def run_offline(config: dict[str, Any]) -> None:
         outs = [train_fn(jax.random.fold_in(rng, i)) for i in range(config["NUM_REPEATS"])]
         elapsed = time.time() - t0
         print(f"Offline training time: {elapsed:.1f}s")
-        if config["SAVE_POLICY"]:
-            _save_model(outs[0]["train_state"], config, "diffusion_offline")
     else:
         assert config.get("OFFLINE_DATA_PATH"), (
             "Either --ppo_checkpoint_path or --offline_data_path must be provided for --mode offline."
@@ -317,6 +363,3 @@ def run_offline(config: dict[str, Any]) -> None:
 
         if config.get("USE_WANDB"):
             wandb.log({"offline/final_loss": float(first_out["final_loss"])})
-
-        if config["SAVE_POLICY"]:
-            _save_model(first_out["train_state"], config, "diffusion_offline")
