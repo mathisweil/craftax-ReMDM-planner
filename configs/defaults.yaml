@@ -70,6 +70,6 @@ seed: null                # RNG seed (null → random)
 jit: true                 # Disable with --no-jit for easier debugging
 
 # ── Checkpointing (periodic) ────────────────────────────────────────────────
-ckpt_every_steps: 500     # Save a checkpoint every N training steps
+ckpt_every_steps: 5e5     # Save a checkpoint every N training steps
 ckpt_max_to_keep: 3       # Number of most recent checkpoints to retain
 ckpt_dir: "checkpoints"   # Base directory for periodic checkpoints
