@@ -1,13 +1,18 @@
 import time
+import os
 from typing import Any, Callable, Optional, Dict
 
 import jax
 import jax.numpy as jnp
 import orbax.checkpoint as ocp
 import wandb
+import optax
+from flax.training import train_state as flax_train_state
+from flax import serialization
 from craftax.craftax_env import make_craftax_env_from_name
 
 from src.models.remdm import sample_plan
+from src.models.reward_models import get_reward_model
 
 from .common import SCHEDULE_MAP, _make_grad_step
 from .utils import (
@@ -20,11 +25,13 @@ from .utils import (
     _make_apply_fns,
     _make_periodic_ckpt_manager,
     _resolve_ckpt_dir,
+    _load_ppo_checkpoint,
 )
 
 def make_train_online(
     config: Dict[str, Any],
     init_params: Optional[Any] = None,
+    ppo_agent: Optional[Any] = None,
 ) -> Callable[[jax.Array], Dict[str, Any]]:
     
     # --- CONFIG SETUP ---
@@ -38,7 +45,6 @@ def make_train_online(
     schedule_fn = SCHEDULE_MAP[config["DIFFUSION_SCHEDULE"]]
     
     # GRPO specific: Number of plans to sample per state to calculate relative advantage
-    # Usually 4-8 is a good group size for GRPO
     group_size = config.get("GRPO_GROUP_SIZE", 4) 
     
     num_actions = config["NUM_ACTIONS"]
@@ -54,8 +60,6 @@ def make_train_online(
     model = _build_model(config, num_actions)
     apply_inference, apply_train = _make_apply_fns(model)
     
-    # Note: grad_step for GRPO is essentially a weighted Cross-Entropy loss 
-    # where weights = advantages calculated from the group
     grad_step = _make_grad_step(apply_train, num_actions, schedule_fn, config.get("TRAIN_SIGMA", 0.0))
 
     def train(rng: jax.Array) -> Dict[str, Any]:
@@ -65,16 +69,10 @@ def make_train_online(
         params = init_params if init_params is not None else _init_model_params(model, init_rng, obs_dim, plan_horizon)
         train_state = _create_train_state(model, params, config["LR"], config["MAX_GRAD_NORM"])
         
-        # --- 2. INITIALIZE ENVIRONMENT (Must happen before runner_state is packed!) ---
+        # --- 2. INITIALIZE ENVIRONMENT ---
         obs, env_state = env_w.reset(env_rng, env_params)
 
         # --- 3. INITIALIZE REWARD MODEL & CO-TRAINING STATE ---
-        from flax.training import train_state as flax_train_state
-        from flax import serialization
-        import optax
-        from src.models.reward_models import get_reward_model
-        import os
-        
         reward_model = get_reward_model(config.get("REWARD_MODEL_TYPE", "mlp"))
         rm_params = reward_model.init(init_rng, jnp.zeros((1, obs_dim)))
         
@@ -82,7 +80,6 @@ def make_train_online(
         if reward_load_path and os.path.exists(reward_load_path):
             with open(reward_load_path, "rb") as f:
                 rm_params = serialization.from_bytes(rm_params, f.read())
-            # This print happens at JAX trace-time, which is perfectly safe
             print(f"Loaded Reward Model weights from {reward_load_path}")
             
         rm_tx = optax.adam(learning_rate=1e-4)
@@ -92,7 +89,6 @@ def make_train_online(
 
         # --- 4. THE COMPILED INNER LOOP ---
         def _update_step(runner_state, update_step_idx):
-            # Unpack the runner state (now including rm_state)
             train_state, env_state, obs, rng, rm_state = runner_state
             
             # Exponential PPO Injection Probability
@@ -100,9 +96,15 @@ def make_train_online(
             decay_rate = config.get("PPO_DECAY_RATE", 0.99)
             ppo_injection_prob = init_prob * jnp.power(decay_rate, update_step_idx)
 
+            # Initialize PPO hidden state for the rollout chunk
+            if ppo_agent is not None:
+                init_ppo_hstate = ppo_agent.init_hidden(num_envs)
+            else:
+                init_ppo_hstate = jnp.zeros(1)
+
             def _plan_and_execute(carry, _):
-                e_state, current_obs, current_rng = carry
-                current_rng, plan_rng, choice_rng, step_rng = jax.random.split(current_rng, 4)
+                e_state, current_obs, current_rng, ppo_hstate = carry
+                current_rng, plan_rng = jax.random.split(current_rng, 2)
                 
                 # Heterogeneous Temperatures for GRPO Group
                 group_temps = jnp.linspace(0.5, 1.5, group_size)
@@ -122,46 +124,66 @@ def make_train_online(
                 )
                 group_plans = jnp.transpose(group_plans, (1, 0, 2)) 
 
-                # Execute the first plan in the environment
+                # Target plan to execute
                 executed_plan = group_plans[:, 0, :]
 
                 def _exec_step(c, step_idx):
-                    st, _, r = c
-                    r, s_rng = jax.random.split(r)
-                    o_next, st, reward, done, info = env_w.step(
-                        s_rng, st, executed_plan[:, step_idx], env_params
-                    )
-                    return (st, o_next, r), (reward, done, info)
+                    st, cur_obs, r, hstate = c
+                    r, s_rng, ppo_rng, choice_rng = jax.random.split(r, 4)
+                    
+                    # 1. Get the planned Diffusion action
+                    diff_action = executed_plan[:, step_idx]
+                    
+                    # 2. Get the PPO Teacher action
+                    if ppo_agent is not None:
+                        ppo_dones = jnp.zeros(num_envs, dtype=bool)
+                        
+                        pi, _, new_hstate = ppo_agent.apply(
+                            ppo_agent.params, cur_obs, hidden=hstate, done=ppo_dones
+                        )
+                        
+                        ppo_action = jax.random.categorical(ppo_rng, pi.logits).squeeze(0)
+                        
+                        # 3. Roll the dice to inject!
+                        use_ppo = jax.random.bernoulli(choice_rng, ppo_injection_prob, shape=(num_envs,))
+                        final_action = jnp.where(use_ppo, ppo_action, diff_action)
+                    else:
+                        final_action = diff_action
+                        new_hstate = hstate
 
-                (e_state, obs_next, current_rng), (rewards, dones, infos) = jax.lax.scan(
-                    _exec_step, (e_state, current_obs, current_rng), jnp.arange(replan_every)
+                    # 4. Step the environment
+                    o_next, st, reward, done, info = env_w.step(
+                        s_rng, st, final_action, env_params
+                    )
+                    return (st, o_next, r, new_hstate), (reward, done, info)
+
+                (e_state, obs_next, current_rng, ppo_hstate), (rewards, dones, infos) = jax.lax.scan(
+                    _exec_step, 
+                    (e_state, current_obs, current_rng, ppo_hstate), 
+                    jnp.arange(replan_every)
                 )
                 
-                return (e_state, obs_next, current_rng), (current_obs, group_plans, rewards, dones, infos)
+                return (e_state, obs_next, current_rng, ppo_hstate), (current_obs, group_plans, rewards, dones, infos)
 
             # Collect Data
             num_plan_cycles = config["NUM_STEPS"] // replan_every
-            (env_state, obs, rng), traj = jax.lax.scan(
-                _plan_and_execute, (env_state, obs, rng), None, num_plan_cycles
+            (env_state, obs, rng, _), traj = jax.lax.scan(
+                _plan_and_execute, 
+                (env_state, obs, rng, init_ppo_hstate), 
+                None, 
+                num_plan_cycles
             )
             traj_obs, traj_group_plans, traj_rewards, traj_dones, all_infos = traj
             
-            
-            # intrinsic_rewards shape: [num_plan_cycles, num_envs]
+            # --- INTRINSIC REWARDS & ADVANTAGES ---
             intrinsic_rewards = reward_model.apply(rm_state.params, traj_obs)
             
-            # Sum base rewards across BOTH cycles (axis 0) and micro-steps (axis 1)
-            # Resulting shape: [num_envs]
+            # Sum base and intrinsic rewards correctly to fix the broadcasting crash
             base_env_rewards = jnp.sum(traj_rewards, axis=(0, 1)) 
-            
-            # Sum intrinsic rewards across cycles (axis 0)
-            # Resulting shape: [num_envs]
             total_intrinsic_rewards = jnp.sum(intrinsic_rewards, axis=0)
-            
-            # Total reward per environment for the rollout
             total_segment_rewards = base_env_rewards + total_intrinsic_rewards
             
-            # Calculate GRPO Advantage (Shape: [num_envs])
+            # GRPO Advantage Calculation
             mean_r = jnp.mean(total_segment_rewards)
             std_r = jnp.std(total_segment_rewards) + 1e-8
             advantages = (total_segment_rewards - mean_r) / std_r
@@ -173,7 +195,7 @@ def make_train_online(
             
             # Tile copies the [num_envs] array down to [num_plan_cycles, num_envs]
             adv_matrix = jnp.tile(advantages, (num_plan_cycles, 1)) 
-            flat_advantages = adv_matrix.flatten() # Safely flatten to match flat_obs
+            flat_advantages = adv_matrix.flatten() 
 
             # Update Diffusion Agent
             def _update_epoch(carry, _):
@@ -199,27 +221,20 @@ def make_train_online(
             # --- CO-TRAINING REWARD MODEL (UNIVERSAL SWITCHER) ---
             def _train_reward_fn(state):
                 def _loss_fn(params):
-                    # All models take the flat obs perfectly now!
                     preds = reward_model.apply(params, flat_obs)
-                    
-                    # Read the terminal argument to decide the math
                     model_type = config.get("REWARD_MODEL_TYPE", "mlp")
                     
                     if model_type == "mlp":
-                        # Discriminator Math: Force known states to -1.0
                         return jnp.mean((preds - (-1.0)) ** 2)
-                        
                     elif model_type in ["rnd", "vision_rnd"]:
-                        # RND Math: The output IS the prediction error, just minimize it!
                         return jnp.mean(preds)
-                        
                     else:
-                        # Fallback safe loss
                         return jnp.mean(preds)
                 
                 loss, grads = jax.value_and_grad(_loss_fn)(state.params)
                 return state.apply_gradients(grads=grads)
             
+            # Only update the reward model once every 100 GRPO updates to keep it stable
             rm_state = jax.lax.cond(
                 update_step_idx % 100 == 0,
                 _train_reward_fn,  
@@ -315,16 +330,30 @@ def run_online(config: Dict[str, Any]) -> None:
     config["NUM_ACTIONS"] = int(env.action_space(env.default_params).n)
     config["OBS_DIM"] = int(env.observation_space(env.default_params).shape[0])
 
+    # 1. Load Offline Diffusion Checkpoint
     init_params = None
     if config.get("OFFLINE_CHECKPOINT_PATH"):
         model = _build_model(config, config["NUM_ACTIONS"])
         init_params = _load_checkpoint(config, model, config["OBS_DIM"], config["OFFLINE_CHECKPOINT_PATH"])
     
-    # Standard setup and WandB init
+    # 2. Load PPO Teacher
+    ppo_agent = None
+    if config.get("PPO_CHECKPOINT_PATH"):
+        print(f"Loading PPO Teacher from {config['PPO_CHECKPOINT_PATH']}...")
+        ppo_agent = _load_ppo_checkpoint(
+            config["PPO_CHECKPOINT_PATH"],
+            config["NUM_ACTIONS"],
+            config["OBS_DIM"],
+            config.get("LAYER_SIZE", 512),
+            model_type=config.get("PPO_MODEL_TYPE", "ppo_rnn"),
+        )
+        print("PPO Teacher loaded successfully!")
+    
     if config.get("USE_WANDB"):
         wandb.init(project=config["WANDB_PROJECT"], config=config, name=f"GRPO-{config['ENV_NAME']}")
 
-    train_fn = make_train_online(config, init_params=init_params)
+    # Pass the PPO agent into the factory
+    train_fn = make_train_online(config, init_params=init_params, ppo_agent=ppo_agent)
     
     print("Starting Online GRPO Training...")
     out = train_fn(jax.random.PRNGKey(config["SEED"]))
