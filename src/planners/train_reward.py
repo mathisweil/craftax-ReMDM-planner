@@ -101,27 +101,29 @@ def run_train_reward(config: Dict[str, Any]) -> None:
 
     else:
         # 2. RND & Vision RND Math
-        # For RND, pre-training just means teaching the Predictor to mimic the Target 
-        # on the offline dataset to establish a baseline. We just minimize the output directly!
         @jax.jit
         def train_step(state, batch_neg, batch_pos):
             def loss_fn(params):
+                # ONLY calculate the loss on the NEGATIVE (boring) batch
                 r_neg = model.apply(params, batch_neg)
-                r_pos = model.apply(params, batch_pos)
-                
-                # The output IS the error. Just minimize it!
                 loss_neg = jnp.mean(r_neg)
-                loss_pos = jnp.mean(r_pos)
-                total_loss = loss_neg + loss_pos
-                return total_loss, (loss_neg, loss_pos, r_neg.mean(), r_pos.mean())
+                return loss_neg, r_neg
                 
+            # Gradients are strictly derived from the negative batch
             grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-            (loss, (l_n, l_p, mean_r_neg, mean_r_pos)), grads = grad_fn(state.params)
+            (loss_neg, r_neg), grads = grad_fn(state.params)
             state = state.apply_gradients(grads=grads)
             
+            # Pass the positive batch through JUST TO LOOK AT IT (No gradients!)
+            r_pos = model.apply(state.params, batch_pos)
+            loss_pos = jnp.mean(r_pos)
+            
             metrics = {
-                "reward_loss": loss, "loss_neg": l_n, "loss_pos": l_p,
-                "pred_reward_neg": mean_r_neg, "pred_reward_pos": mean_r_pos 
+                "reward_loss": loss_neg, # The actual training loss
+                "loss_neg": loss_neg, 
+                "loss_pos": loss_pos,    # This should be MUCH higher than loss_neg!
+                "pred_reward_neg": r_neg.mean(), 
+                "pred_reward_pos": r_pos.mean()  # This is the "Surprise" signal!
             }
             return state, metrics
 
