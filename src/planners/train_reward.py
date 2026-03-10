@@ -7,6 +7,7 @@ import numpy as np
 import optax
 import wandb
 from flax.training import train_state
+from flax import serialization
 
 from src.models.reward_models import get_reward_model
 
@@ -72,34 +73,57 @@ def run_train_reward(config: Dict[str, Any]) -> None:
     tx = optax.adam(learning_rate=config.get("REWARD_LR", 3e-4))
     state = train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
-    # MEIER & MUJIKA LOSS FUNCTION
-    @jax.jit
-    def train_step(state, batch_neg, batch_pos):
-        def loss_fn(params):
-            # Pass both batches through the network
-            r_neg = model.apply(params, batch_neg)
-            r_pos = model.apply(params, batch_pos)
+    # --- UNIVERSAL LOSS FUNCTION SWITCHER ---
+    model_type = config.get("REWARD_MODEL_TYPE", "mlp")
+    
+    if model_type == "mlp":
+        # 1. Standard Discriminator Math (Meier & Mujika)
+        @jax.jit
+        def train_step(state, batch_neg, batch_pos):
+            def loss_fn(params):
+                r_neg = model.apply(params, batch_neg)
+                r_pos = model.apply(params, batch_pos)
+                
+                loss_neg = jnp.mean((r_neg - (-1.0)) ** 2)
+                loss_pos = jnp.mean((r_pos - 1.0) ** 2)
+                total_loss = loss_neg + loss_pos
+                return total_loss, (loss_neg, loss_pos, r_neg.mean(), r_pos.mean())
+                
+            grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
+            (loss, (l_n, l_p, mean_r_neg, mean_r_pos)), grads = grad_fn(state.params)
+            state = state.apply_gradients(grads=grads)
             
-            # The exact loss from the paper: MSE pushing negative to -1, positive to +1
-            # (In the paper they use target values `a` and `-a`, here a=1.0)
-            loss_neg = jnp.mean((r_neg - (-1.0)) ** 2)
-            loss_pos = jnp.mean((r_pos - 1.0) ** 2)
+            metrics = {
+                "reward_loss": loss, "loss_neg": l_n, "loss_pos": l_p,
+                "pred_reward_neg": mean_r_neg, "pred_reward_pos": mean_r_pos 
+            }
+            return state, metrics
+
+    else:
+        # 2. RND & Vision RND Math
+        # For RND, pre-training just means teaching the Predictor to mimic the Target 
+        # on the offline dataset to establish a baseline. We just minimize the output directly!
+        @jax.jit
+        def train_step(state, batch_neg, batch_pos):
+            def loss_fn(params):
+                r_neg = model.apply(params, batch_neg)
+                r_pos = model.apply(params, batch_pos)
+                
+                # The output IS the error. Just minimize it!
+                loss_neg = jnp.mean(r_neg)
+                loss_pos = jnp.mean(r_pos)
+                total_loss = loss_neg + loss_pos
+                return total_loss, (loss_neg, loss_pos, r_neg.mean(), r_pos.mean())
+                
+            grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
+            (loss, (l_n, l_p, mean_r_neg, mean_r_pos)), grads = grad_fn(state.params)
+            state = state.apply_gradients(grads=grads)
             
-            total_loss = loss_neg + loss_pos
-            return total_loss, (loss_neg, loss_pos, r_neg.mean(), r_pos.mean())
-            
-        grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-        (loss, (l_n, l_p, mean_r_neg, mean_r_pos)), grads = grad_fn(state.params)
-        state = state.apply_gradients(grads=grads)
-        
-        metrics = {
-            "reward_loss": loss,
-            "loss_neg": l_n,
-            "loss_pos": l_p,
-            "pred_reward_neg": mean_r_neg, # Should approach -1.0
-            "pred_reward_pos": mean_r_pos  # Should approach +1.0
-        }
-        return state, metrics
+            metrics = {
+                "reward_loss": loss, "loss_neg": l_n, "loss_pos": l_p,
+                "pred_reward_neg": mean_r_neg, "pred_reward_pos": mean_r_pos 
+            }
+            return state, metrics
 
     # 5. TRAINING LOOP
     if config.get("USE_WANDB"):
