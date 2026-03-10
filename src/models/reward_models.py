@@ -45,14 +45,16 @@ class RNDReward(nn.Module):
         
         return reward
 
+import jax.numpy as jnp
+import flax.linen as nn
+from jax.nn.initializers import orthogonal, lecun_normal
+import jax
+
 class VisionRNDReward(nn.Module):
     """
-    RND using Convolutional layers. Automatically projects ANY flattened 1D 
-    environment output into a 3D grid, meaning it works for both Craftax 
-    and Craftax-Classic without changing any code!
+    RND with Orthogonal Initialization. Forces the Target network to be 
+    highly chaotic so the Predictor actually has to work to minimize the loss!
     """
-    # The internal grid size the CNN will use 
-    # (9x9 is perfect for Craftax's local view)
     internal_w: int = 9  
     internal_h: int = 9
     internal_c: int = 16 
@@ -61,36 +63,32 @@ class VisionRNDReward(nn.Module):
     def __call__(self, obs: jnp.ndarray) -> jnp.ndarray:
         
         def build_cnn(x, prefix):
-            # 1. THE PROJECTION TRICK
+            # THE FIX: Target network gets chaotic weights, Predictor gets stable weights
+            w_init = orthogonal(1.414) if prefix == 'target' else lecun_normal()
+            
             flat_size = self.internal_w * self.internal_h * self.internal_c
-            x = nn.Dense(flat_size, name=f'{prefix}_proj')(x)
+            x = nn.Dense(flat_size, kernel_init=w_init, name=f'{prefix}_proj')(x)
             x = nn.relu(x)
             
-            # 2. Reshape into 3D grid
             x = x.reshape(x.shape[:-1] + (self.internal_w, self.internal_h, self.internal_c))
             
-            # 3. Standard Convolutional Blocks
-            x = nn.Conv(features=64, kernel_size=(3, 3), strides=(1, 1), padding='SAME', name=f'{prefix}_conv1')(x)
+            x = nn.Conv(features=64, kernel_size=(3, 3), strides=(1, 1), padding='SAME', kernel_init=w_init, name=f'{prefix}_conv1')(x)
             x = nn.relu(x)
-            x = nn.Conv(features=128, kernel_size=(3, 3), strides=(2, 2), padding='VALID', name=f'{prefix}_conv2')(x)
+            x = nn.Conv(features=128, kernel_size=(3, 3), strides=(2, 2), padding='VALID', kernel_init=w_init, name=f'{prefix}_conv2')(x)
             x = nn.relu(x)
             
-            # --- 4. THE FIX: Flatten safely! ---
-            # x.shape is (..., W, H, C). We keep everything except the last 3 dims, 
-            # and squash those last 3 into a single feature vector (-1).
             x = x.reshape(x.shape[:-3] + (-1,)) 
-            
-            x = nn.Dense(128, name=f'{prefix}_dense')(x)
-            return nn.relu(x)
+            x = nn.Dense(128, kernel_init=w_init, name=f'{prefix}_dense')(x)
+            return x # Remember, no ReLU here!
 
-        # Process through both networks
         target_emb = jax.lax.stop_gradient(build_cnn(obs, 'target'))
         pred_emb = build_cnn(obs, 'pred')
             
-        # Intrinsic Reward: Prediction Error (MSE)
+        # Calculate MSE
         reward = jnp.mean((pred_emb - target_emb) ** 2, axis=-1)
         
-        return reward
+        # THE SCALE FIX: Multiply the intrinsic reward so the agent actually feels it!
+        return reward * 100.0
 
 # Add it to your factory!
 REWARD_MODELS = {
