@@ -1,6 +1,7 @@
 import flax.linen as nn
 import jax.numpy as jnp
 from typing import Sequence
+import jax
 
 class DeterministicNeuralReward(nn.Module):
     hidden_dims: Sequence[int] = (512, 256, 128)
@@ -13,15 +14,89 @@ class DeterministicNeuralReward(nn.Module):
         reward = nn.Dense(1)(x)
         return jnp.squeeze(reward, axis=-1)
 
-# You will define your other two models here later!
-# class CuriosityReward(nn.Module): ...
-# class RNDReward(nn.Module): ...
+class RNDReward(nn.Module):
+    """
+    Random Network Distillation.
+    Reward is the MSE between a trained Predictor and a frozen Target network.
+    """
+    hidden_dims: Sequence[int] = (256, 128, 64)
+    
+    @nn.compact
+    def __call__(self, obs: jnp.ndarray) -> jnp.ndarray:
+        # --- TARGET NETWORK (Frozen) ---
+        tx = obs
+        for dim in self.hidden_dims:
+            # Unique names prevent parameter sharing
+            tx = nn.Dense(dim, name=f'target_dense_{dim}')(tx)
+            tx = nn.relu(tx)
+        
+        # Completely freeze the target network from gradient updates
+        target_emb = jax.lax.stop_gradient(tx)
+        
+        # --- PREDICTOR NETWORK (Trained) ---
+        px = obs
+        for dim in self.hidden_dims:
+            px = nn.Dense(dim, name=f'pred_dense_{dim}')(px)
+            px = nn.relu(px)
+            
+        # The Intrinsic Reward IS the prediction error!
+        # Shape goes from [batch, 64] -> [batch]
+        reward = jnp.mean((px - target_emb) ** 2, axis=-1)
+        
+        return reward
 
-# --- THE FACTORY ---
+class VisionRNDReward(nn.Module):
+    """
+    RND using Convolutional layers. Automatically projects ANY flattened 1D 
+    environment output into a 3D grid, meaning it works for both Craftax 
+    and Craftax-Classic without changing any code!
+    """
+    # The internal grid size the CNN will use 
+    # (9x9 is perfect for Craftax's local view)
+    internal_w: int = 9  
+    internal_h: int = 9
+    internal_c: int = 16 
+    
+    @nn.compact
+    def __call__(self, obs: jnp.ndarray) -> jnp.ndarray:
+        
+        def build_cnn(x, prefix):
+            # 1. THE PROJECTION TRICK
+            flat_size = self.internal_w * self.internal_h * self.internal_c
+            x = nn.Dense(flat_size, name=f'{prefix}_proj')(x)
+            x = nn.relu(x)
+            
+            # 2. Reshape into 3D grid
+            x = x.reshape(x.shape[:-1] + (self.internal_w, self.internal_h, self.internal_c))
+            
+            # 3. Standard Convolutional Blocks
+            x = nn.Conv(features=64, kernel_size=(3, 3), strides=(1, 1), padding='SAME', name=f'{prefix}_conv1')(x)
+            x = nn.relu(x)
+            x = nn.Conv(features=128, kernel_size=(3, 3), strides=(2, 2), padding='VALID', name=f'{prefix}_conv2')(x)
+            x = nn.relu(x)
+            
+            # --- 4. THE FIX: Flatten safely! ---
+            # x.shape is (..., W, H, C). We keep everything except the last 3 dims, 
+            # and squash those last 3 into a single feature vector (-1).
+            x = x.reshape(x.shape[:-3] + (-1,)) 
+            
+            x = nn.Dense(128, name=f'{prefix}_dense')(x)
+            return nn.relu(x)
+
+        # Process through both networks
+        target_emb = jax.lax.stop_gradient(build_cnn(obs, 'target'))
+        pred_emb = build_cnn(obs, 'pred')
+            
+        # Intrinsic Reward: Prediction Error (MSE)
+        reward = jnp.mean((pred_emb - target_emb) ** 2, axis=-1)
+        
+        return reward
+
+# Add it to your factory!
 REWARD_MODELS = {
     "mlp": DeterministicNeuralReward,
-    # "curiosity": CuriosityReward,
-    # "rnd": RNDReward,
+    "rnd": RNDReward,
+    "vision_rnd": VisionRNDReward,
 }
 
 def get_reward_model(model_type: str) -> nn.Module:

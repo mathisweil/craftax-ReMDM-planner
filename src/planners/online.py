@@ -197,19 +197,32 @@ def make_train_online(
 
             (train_state, rng), epoch_infos = jax.lax.scan(_update_epoch, (train_state, rng), None, update_epochs)
 
-            # --- CO-TRAINING REWARD MODEL ---
+            # --- CO-TRAINING REWARD MODEL (UNIVERSAL SWITCHER) ---
             def _train_reward_fn(state):
                 def _loss_fn(params):
+                    # All models take the flat obs perfectly now!
                     preds = reward_model.apply(params, flat_obs)
-                    # Push recent states to -1.0 (they are now considered "known" baseline)
-                    loss = jnp.mean((preds - (-1.0)) ** 2) 
-                    return loss
+                    
+                    # Read the terminal argument to decide the math
+                    model_type = config.get("REWARD_MODEL_TYPE", "mlp")
+                    
+                    if model_type == "mlp":
+                        # Discriminator Math: Force known states to -1.0
+                        return jnp.mean((preds - (-1.0)) ** 2)
+                        
+                    elif model_type in ["rnd", "vision_rnd"]:
+                        # RND Math: The output IS the prediction error, just minimize it!
+                        return jnp.mean(preds)
+                        
+                    else:
+                        # Fallback safe loss
+                        return jnp.mean(preds)
                 
                 loss, grads = jax.value_and_grad(_loss_fn)(state.params)
                 return state.apply_gradients(grads=grads)
             
             rm_state = jax.lax.cond(
-                update_step_idx % 10 == 0,
+                update_step_idx % 100 == 0,
                 _train_reward_fn,  
                 lambda s: s,       
                 rm_state

@@ -212,7 +212,7 @@ if __name__ == "__main__":
         "--reward_model_path", type=str, default="checkpoints/reward_model",
         help="Path to save the trained neural reward model."
     )
-    parser.add_argument("--reward_model_type", type=str, default="mlp", choices=["mlp", "curiosity", "rnd"])
+    parser.add_argument("--reward_model_type", type=str, default="mlp", choices=["mlp", "vision_rnd", "rnd"])
     parser.add_argument("--reward_load_path", type=str, default=None, help="Path to load pre-trained reward weights (.msgpack)")
     parser.add_argument("--reward_save_path", type=str, default="checkpoints/reward_model.msgpack", help="Where to save reward weights")
 
