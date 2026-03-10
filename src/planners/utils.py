@@ -250,7 +250,17 @@ def _build_ppo_network(
         ``partial_restore=True`` in the restore call handles the rest.
     """
     if model_type == "ppo_rnn":
-        from Craftax_Baselines.ppo_rnn import ActorCriticRNN, ScannedRNN
+        import sys
+        import os
+        
+        # Inject the baselines folder into the path
+        baselines_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "Craftax_Baselines"))
+        if baselines_path not in sys.path:
+            sys.path.insert(0, baselines_path)
+            
+        # Import directly without the Craftax_Baselines prefix!
+        from ppo_rnn import ActorCriticRNN, ScannedRNN
+        #from Craftax_Baselines.ppo_rnn import ActorCriticRNN, ScannedRNN
         network = ActorCriticRNN(num_actions, config={"LAYER_SIZE": layer_size})
         def _init_params():
             dummy_hidden = ScannedRNN.initialize_carry(1, layer_size)
