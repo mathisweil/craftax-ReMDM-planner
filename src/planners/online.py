@@ -255,7 +255,7 @@ def make_train_online(
                 ppo=metrics["ppo_prob"]
             )
 
-            if config["USE_WANDB"] and config["DEBUG"]:
+            if config.get("USE_WANDB") and config.get("DEBUG", True):
                 def _wandb_callback(mets, step):
                     import numpy as np
                     try:
@@ -318,8 +318,9 @@ def run_online(config: Dict[str, Any]) -> None:
     if config.get("OFFLINE_CHECKPOINT_PATH"):
         model = _build_model(config, config["NUM_ACTIONS"])
         init_params = _load_checkpoint(config, model, config["OBS_DIM"], config["OFFLINE_CHECKPOINT_PATH"])
-
-    if config["USE_WANDB"]:
+    
+    # Standard setup and WandB init
+    if config.get("USE_WANDB"):
         wandb.init(project=config["WANDB_PROJECT"], config=config, name=f"GRPO-{config['ENV_NAME']}")
 
     train_fn = make_train_online(config, init_params=init_params)
