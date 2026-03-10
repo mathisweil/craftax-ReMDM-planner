@@ -11,12 +11,12 @@ plan_horizon: 32          # Length of the action plan H
 diffusion_steps: 15       # Number of denoising steps T at inference
 diffusion_schedule: "cosine"   # Noise schedule: cosine | linear
 remask_strategy: "rescale"     # Remasking strategy: rescale | cap | conf | loop
-train_sigma: 0.0
+train_sigma: 0.0          # ReMDM NELBO: per-token remasking probability during training (0 = vanilla MDLM)
 eta: 0.5                  # Remasking strength
 t_on: 0.7                 # Loop strategy: upper time bound for remasking window
 t_off: 0.3                # Loop strategy: lower time bound for remasking window
-top_p: 4
-use_loop: true
+top_p: 4                  # Nucleus sampling: keep top-k logits (higher = more random)
+use_loop: true            # Enable three-phase loop remasking during reverse diffusion
 
 # ── Transformer architecture ─────────────────────────────────────────────────
 d_model: 256              # Transformer hidden dimension
@@ -35,7 +35,7 @@ batch_size: 256           # Minibatch size for offline training
 # ── Offline training ─────────────────────────────────────────────────────────
 offline_data_path: "trajectories.npz"   # Path to .npz file produced by --mode collect
 num_train_steps: 1e9   # Number of gradient steps for offline training
-collect_temperature: 2.0
+collect_temperature: 2.0  # Softmax temperature applied to PPO logits during data collection
 
 # ── Online training (GRPO Fine-tuning) ───────────────────────────────────────
 num_envs: 32               # Number of parallel environments
@@ -77,6 +77,14 @@ save_policy: true        # Save the model checkpoint at the end of training
 num_repeats: 1            # Number of independent training runs (vmapped)
 seed: null                # RNG seed (null → random)
 jit: true                 # Disable with --no-jit for easier debugging
+
+# ── Reward model training (--mode train_reward) ──────────────────────────────
+reward_model_type: "mlp"                              # Architecture: mlp | rnd | vision_rnd
+reward_epochs: 10                                     # Training epochs over offline data
+reward_lr: 1.0e-4                                     # Adam learning rate for reward model
+reward_model_path: "checkpoints/reward_model"         # Directory for periodic reward checkpoints
+reward_load_path: null                                # Pre-trained reward weights to warm-start (.msgpack)
+reward_save_path: "checkpoints/reward_model.msgpack"  # Final saved reward weights
 
 # ── Checkpointing (periodic) ────────────────────────────────────────────────
 ckpt_every_steps: 5e5     # Save a checkpoint every N training steps
