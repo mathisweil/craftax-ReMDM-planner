@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import pathlib
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Optional
 
 import jax
 import jax.numpy as jnp
@@ -12,6 +12,10 @@ import wandb
 from craftax.craftax_env import make_craftax_env_from_name
 from flax.training.train_state import TrainState
 import orbax.checkpoint as ocp
+from orbax.checkpoint.checkpoint_managers import (
+    preservation_policy as preservation_policy_lib,
+    save_decision_policy as save_decision_policy_lib,
+)
 
 from src.models.denoiser import DenoisingTransformer
 from src.models.remdm import (
@@ -28,7 +32,7 @@ from Craftax_Baselines.wrappers import (
 )
 from src.envs.wrappers import SequenceHistoryWrapper
 
-SCHEDULE_MAP: Dict[str, ScheduleFn] = {
+SCHEDULE_MAP: dict[str, ScheduleFn] = {
     "cosine": cosine_schedule,
     "linear": linear_schedule,
 }
@@ -39,7 +43,7 @@ SCHEDULE_MAP: Dict[str, ScheduleFn] = {
 # =============================================================================
 
 
-def _build_model(config: Dict[str, Any], num_actions: int) -> DenoisingTransformer:
+def _build_model(config: dict[str, Any], num_actions: int) -> DenoisingTransformer:
     """Instantiate a ``DenoisingTransformer`` from the config dict."""
     return DenoisingTransformer(
         num_actions=num_actions,
@@ -86,11 +90,22 @@ def _create_train_state(
 # =============================================================================
 
 
-def _make_ckpt_manager(path: str, max_to_keep: int = 1) -> ocp.CheckpointManager:
-    """Construct a CheckpointManager with standard options."""
+def _make_ckpt_manager(
+    path: str,
+    max_to_keep: int = 1,
+    save_interval: int = 1,
+) -> ocp.CheckpointManager:
+    """Construct a CheckpointManager with current (non-deprecated) options."""
     return ocp.CheckpointManager(
         path,
-        options=ocp.CheckpointManagerOptions(max_to_keep=max_to_keep),
+        options=ocp.CheckpointManagerOptions(
+            save_decision_policy=save_decision_policy_lib.FixedIntervalPolicy(
+                save_interval
+            ),
+            preservation_policy=preservation_policy_lib.LatestN(max_to_keep),
+            enable_async_checkpointing=True,
+            enable_background_delete=True,
+        ),
     )
 
 
@@ -112,7 +127,7 @@ def _restore_train_state(checkpoint_path: str, abstract_ts: TrainState) -> Train
 
 
 def _load_checkpoint(
-        config: Dict[str, Any],
+        config: dict[str, Any],
         model: Any,  # DenoisingTransformer
         obs_dim: int,
         checkpoint_path: str,
@@ -164,7 +179,7 @@ class PPOAgent:
         obs: jax.Array,
         hidden: Optional[jax.Array] = None,
         done: Optional[jax.Array] = None,
-    ) -> Tuple[Any, jax.Array, Optional[jax.Array]]:
+    ) -> tuple[Any, jax.Array, Optional[jax.Array]]:
         """Apply the policy network.
 
         Returns:
@@ -227,7 +242,7 @@ def _build_ppo_network(
         num_actions: int,
         obs_dim: int,
         layer_size: int,
-) -> Tuple[Any, Any]:
+) -> tuple[Any, Any]:
     """Instantiate the correct network and return abstract params only.
 
     Returns:
@@ -235,7 +250,17 @@ def _build_ppo_network(
         ``partial_restore=True`` in the restore call handles the rest.
     """
     if model_type == "ppo_rnn":
-        from Craftax_Baselines.ppo_rnn import ActorCriticRNN, ScannedRNN
+        import sys
+        import os
+        
+        # Inject the baselines folder into the path
+        baselines_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "Craftax_Baselines"))
+        if baselines_path not in sys.path:
+            sys.path.insert(0, baselines_path)
+            
+        # Import directly without the Craftax_Baselines prefix!
+        from ppo_rnn import ActorCriticRNN, ScannedRNN
+        #from Craftax_Baselines.ppo_rnn import ActorCriticRNN, ScannedRNN
         network = ActorCriticRNN(num_actions, config={"LAYER_SIZE": layer_size})
         def _init_params():
             dummy_hidden = ScannedRNN.initialize_carry(1, layer_size)
@@ -293,23 +318,28 @@ def _load_ppo_checkpoint(
     )
 
 
-def _save_model(
-        train_state: TrainState, config: Dict[str, Any], dir_name: str
-) -> None:
-    """Save a TrainState checkpoint using Orbax."""
-    path = (
-        str(pathlib.Path(wandb.run.dir) / dir_name)
-        if config.get("USE_WANDB") and wandb.run is not None
-        else dir_name
+def _resolve_ckpt_dir(config: dict[str, Any], subdir: str = "checkpoints") -> pathlib.Path:
+    base = (
+        pathlib.Path(wandb.run.dir)
+        if config["USE_WANDB"] and wandb.run is not None
+        else pathlib.Path(config["CKPT_DIR"])
     )
+    path = base / config["ENV_NAME"] / subdir
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
-    step = config.get("NUM_TRAIN_STEPS", config.get("NUM_UPDATES", 0))
 
-    with _make_ckpt_manager(path) as ckpt_mgr:
-        ckpt_mgr.save(step, args=ocp.args.StandardSave(train_state))
-        ckpt_mgr.wait_until_finished()
 
-    print(f"Saved model checkpoint to '{path}'")
+def _make_periodic_ckpt_manager(config: dict[str, Any], subdir: str = "checkpoints") -> ocp.CheckpointManager:
+    return ocp.CheckpointManager(
+        _resolve_ckpt_dir(config, subdir),
+        options=ocp.CheckpointManagerOptions(
+            save_decision_policy=save_decision_policy_lib.FixedIntervalPolicy(config["CKPT_EVERY_STEPS"]),
+            preservation_policy=preservation_policy_lib.LatestN(config["CKPT_MAX_TO_KEEP"]),
+            enable_async_checkpointing=True,
+            enable_background_delete=True,
+        ),
+    )
 
 
 # =============================================================================
@@ -318,12 +348,12 @@ def _save_model(
 
 
 def _make_env_stack(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     num_envs: int,
     *,
     use_optimistic_resets: bool = False,
     use_sequence_history: bool = False,
-) -> Tuple[Any, Any]:
+) -> tuple[Any, Any]:
     """Build the wrapper stack for Craftax environments.
 
     Standard stack::
@@ -351,7 +381,7 @@ def _make_env_stack(
     env_params = env.default_params
 
     if use_sequence_history:
-        obs_shape: Tuple[int, ...] = env.observation_space(env_params).shape
+        obs_shape: tuple[int, ...] = env.observation_space(env_params).shape
         history_len: int = config["PLAN_HORIZON"]
         env = SequenceHistoryWrapper(env, history_len=history_len, obs_shape=obs_shape)
 
@@ -410,7 +440,7 @@ def _sample_windows_from_chunk(
     plan_horizon: int,
     batch_size: int,
     np_rng: np.random.Generator,
-) -> Optional[Tuple[jnp.ndarray, jnp.ndarray]]:
+) -> Optional[tuple[jnp.ndarray, jnp.ndarray]]:
     """Sample ``batch_size`` valid windows from a collected chunk.
 
     Args:
@@ -448,7 +478,7 @@ def _sample_windows_from_chunk(
 
 def _make_apply_fns(
     model: DenoisingTransformer,
-) -> Tuple[
+) -> tuple[
     Callable[..., jnp.ndarray],
     Callable[..., jnp.ndarray],
 ]:

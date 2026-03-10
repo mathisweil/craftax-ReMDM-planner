@@ -11,7 +11,7 @@ MASK    : special token with id = num_actions.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Optional
 
 import chex
 import jax
@@ -103,8 +103,8 @@ def compute_loss(
     obs: jnp.ndarray,
     num_actions: int,
     schedule_fn: ScheduleFn,
-    sigma_t: float = 0.0,
-) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
+    sigma_t: float = 0.0, advantages=None
+) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
     """Compute the MDLM / ReMDM training loss.
 
     When ``sigma_t = 0`` this is the standard MDLM SUBS objective (Eq. 3 of
@@ -172,12 +172,32 @@ def compute_loss(
     masked_ce = ce * is_masked
     num_masked = jnp.maximum(is_masked.sum(axis=-1), 1.0)   # [B]
     per_sample_loss = weight * (masked_ce.sum(axis=-1) / num_masked)
+
+    # --- GRPO ADVANTAGE WEIGHTING ---
+    if advantages is not None:
+        # Stop gradients on advantages to ensure they act strictly as constant weights
+        # rather than part of the computation graph
+        adv_weights = jax.lax.stop_gradient(advantages)
+        per_sample_loss = per_sample_loss * adv_weights
+        
     loss = jnp.mean(per_sample_loss)
 
-    info: Dict[str, jnp.ndarray] = {
+    # --- ADD ACCURACY MATH HERE ---
+    # 1. Get the network's top guess for every position
+    predicted_actions = jnp.argmax(logits, axis=-1)         # [B, H]
+    
+    # 2. Check where the guess matches the PPO expert (x_0)
+    correct_guesses = (predicted_actions == x_0)            # [B, H]
+    
+    # 3. Calculate accuracy ONLY on the tokens that were actually masked
+    masked_accuracy = jnp.sum(correct_guesses * is_masked) / jnp.maximum(jnp.sum(is_masked), 1.0)
+    # ------------------------------
+
+    info: dict[str, jnp.ndarray] = {
         "loss": loss,
         "mean_t": jnp.mean(t),
         "frac_masked": jnp.mean(is_masked),
+        "accuracy": masked_accuracy,  
     }
     return loss, info
 
@@ -312,7 +332,7 @@ STRATEGY_RESCALE = "rescale"
 STRATEGY_CAP = "cap"
 STRATEGY_CONF = "conf"
 
-STRATEGY_MAP: Dict[str, str] = {
+STRATEGY_MAP: dict[str, str] = {
     "rescale": STRATEGY_RESCALE,
     "cap": STRATEGY_CAP,
     "conf": STRATEGY_CONF,
