@@ -195,6 +195,11 @@ if __name__ == "__main__":
         help="Hidden layer width of the ActorCritic PPO network.",
     )
 
+    # Periodic checkpointing
+    parser.add_argument("--ckpt_every_steps", type=int)
+    parser.add_argument("--ckpt_max_to_keep", type=int)
+    parser.add_argument("--ckpt_dir", type=str)
+
     # W&B / logging
     parser.add_argument("--use_wandb", action=argparse.BooleanOptionalAction)
     parser.add_argument("--debug", action=argparse.BooleanOptionalAction)

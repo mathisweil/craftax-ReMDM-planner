@@ -12,6 +12,10 @@ import wandb
 from craftax.craftax_env import make_craftax_env_from_name
 from flax.training.train_state import TrainState
 import orbax.checkpoint as ocp
+from orbax.checkpoint.checkpoint_managers import (
+    preservation_policy as preservation_policy_lib,
+    save_decision_policy as save_decision_policy_lib,
+)
 
 from src.models.denoiser import DenoisingTransformer
 from src.models.remdm import (
@@ -86,11 +90,22 @@ def _create_train_state(
 # =============================================================================
 
 
-def _make_ckpt_manager(path: str, max_to_keep: int = 1) -> ocp.CheckpointManager:
-    """Construct a CheckpointManager with standard options."""
+def _make_ckpt_manager(
+    path: str,
+    max_to_keep: int = 1,
+    save_interval: int = 1,
+) -> ocp.CheckpointManager:
+    """Construct a CheckpointManager with current (non-deprecated) options."""
     return ocp.CheckpointManager(
         path,
-        options=ocp.CheckpointManagerOptions(max_to_keep=max_to_keep),
+        options=ocp.CheckpointManagerOptions(
+            save_decision_policy=save_decision_policy_lib.FixedIntervalPolicy(
+                save_interval
+            ),
+            preservation_policy=preservation_policy_lib.LatestN(max_to_keep),
+            enable_async_checkpointing=True,
+            enable_background_delete=True,
+        ),
     )
 
 

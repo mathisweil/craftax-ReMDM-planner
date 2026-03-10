@@ -1,9 +1,16 @@
+import os
+import pathlib
 import time
 from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import orbax.checkpoint as ocp
+from orbax.checkpoint.checkpoint_managers import (
+    preservation_policy as preservation_policy_lib,
+    save_decision_policy as save_decision_policy_lib,
+)
 import wandb
 from craftax.craftax_env import make_craftax_env_from_name
 
@@ -182,66 +189,94 @@ def make_train_offline_from_agent(
         t0 = time.time()
         log_every = max(num_chunks // 20, 1)
 
+        ckpt_interval = config.get("CKPT_EVERY_STEPS", 500)
+        keep_n = config.get("CKPT_MAX_TO_KEEP", 3)
+        ckpt_base = config.get("CKPT_DIR", "checkpoints")
+        if config.get("USE_WANDB") and wandb.run is not None:
+            ckpt_dir = pathlib.Path(wandb.run.dir) / ckpt_base
+        else:
+            ckpt_dir = pathlib.Path(ckpt_base) / config["ENV_NAME"]
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+
         padded_env = np.zeros(max_valid_indices, dtype=np.int32)
         padded_time = np.zeros(max_valid_indices, dtype=np.int32)
-        for chunk_idx in range(num_chunks):
-            rng, collect_rng = jax.random.split(rng)
-            _, env_state, obs, done, hidden, chunk_obs, chunk_acts, chunk_dones = (
-                _collect_chunk(collect_rng, env_state, obs, done, hidden)
-            )
 
-            chunk_obs_np = np.asarray(chunk_obs).transpose(1, 0, 2)
-            chunk_acts_np = np.asarray(chunk_acts).T
-            chunk_dones_np = np.asarray(chunk_dones).T
+        with ocp.CheckpointManager(
+            ckpt_dir,
+            options=ocp.CheckpointManagerOptions(
+                save_decision_policy=save_decision_policy_lib.FixedIntervalPolicy(
+                    ckpt_interval
+                ),
+                preservation_policy=preservation_policy_lib.LatestN(keep_n),
+                enable_async_checkpointing=True,
+                enable_background_delete=True,
+            ),
+        ) as ckpt_mgr:
 
-            valid = _valid_window_mask(chunk_dones_np, plan_horizon)
-            env_idxs, time_idxs = np.where(valid)
-            if len(env_idxs) == 0:
-                continue
+            for chunk_idx in range(num_chunks):
+                rng, collect_rng = jax.random.split(rng)
+                _, env_state, obs, done, hidden, chunk_obs, chunk_acts, chunk_dones = (
+                    _collect_chunk(collect_rng, env_state, obs, done, hidden)
+                )
 
-            num_valid = len(env_idxs)
-            padded_env[:num_valid] = env_idxs
-            padded_time[:num_valid] = time_idxs
-            padded_env[num_valid:] = 0
-            padded_time[num_valid:] = 0
+                chunk_obs_np = np.asarray(chunk_obs).transpose(1, 0, 2)
+                chunk_acts_np = np.asarray(chunk_acts).T
+                chunk_dones_np = np.asarray(chunk_dones).T
 
-            # --- THIS IS THE PART THAT GOT DELETED ACCIDENTALLY ---
-            data = {
-                "obs": jnp.array(chunk_obs_np, dtype=jnp.float32),
-                "act": jnp.array(chunk_acts_np, dtype=jnp.int32),
-                "env_idx": jnp.array(padded_env),
-                "time_idx": jnp.array(padded_time),
-            }
-            # ------------------------------------------------------
+                valid = _valid_window_mask(chunk_dones_np, plan_horizon)
+                env_idxs, time_idxs = np.where(valid)
+                if len(env_idxs) == 0:
+                    continue
 
-            rng, train_rng = jax.random.split(rng)
-            
-            # 1. Capture the dictionary (chunk_metrics) instead of last_loss
-            train_state, _, chunk_metrics = _train_chunk(
-                train_state, train_rng, data, jnp.int32(num_valid)
-            )
+                num_valid = len(env_idxs)
+                padded_env[:num_valid] = env_idxs
+                padded_time[:num_valid] = time_idxs
+                padded_env[num_valid:] = 0
+                padded_time[num_valid:] = 0
 
-            step = (chunk_idx + 1) * train_steps_per_chunk
-            
-            # 2. Dynamically loop through the dictionary to log everything!
-            if config.get("USE_WANDB", False):
-                elapsed = time.time() - t0
-                log_data = {
-                    "offline/step": step,
-                    "offline/steps_per_second": step / max(elapsed, 1e-6),
+                data = {
+                    "obs": jnp.array(chunk_obs_np, dtype=jnp.float32),
+                    "act": jnp.array(chunk_acts_np, dtype=jnp.int32),
+                    "env_idx": jnp.array(padded_env),
+                    "time_idx": jnp.array(padded_time),
                 }
 
-                metrics_host = jax.device_get(chunk_metrics)
-                for key, val in metrics_host.items():
-                    log_data[f"offline/{key}"] = float(val)
-                    
-                wandb.log(log_data, step=step)
+                rng, train_rng = jax.random.split(rng)
 
-            if (chunk_idx + 1) % log_every == 0 or chunk_idx == num_chunks - 1:
-                elapsed = time.time() - t0
-                total_steps = num_chunks * train_steps_per_chunk
-                metrics_str = "  ".join(f"{k}={float(v):.4f}" for k, v in chunk_metrics.items())
-                print(f"  [{step:>6}/{total_steps}]  {metrics_str}  elapsed={elapsed:.0f}s")
+                train_state, _, chunk_metrics = _train_chunk(
+                    train_state, train_rng, data, jnp.int32(num_valid)
+                )
+
+                step = (chunk_idx + 1) * train_steps_per_chunk
+
+                is_final = (chunk_idx == num_chunks - 1)
+                saved = ckpt_mgr.save(
+                    step,
+                    args=ocp.args.StandardSave(train_state),
+                    force=is_final,
+                )
+                if saved:
+                    print(f"  Checkpoint saved at step {step} -> '{ckpt_dir}'")
+                # -------------------------
+
+                if config.get("USE_WANDB", False):
+                    elapsed = time.time() - t0
+                    log_data = {
+                        "offline/step": step,
+                        "offline/steps_per_second": step / max(elapsed, 1e-6),
+                    }
+                    metrics_host = jax.device_get(chunk_metrics)
+                    for key, val in metrics_host.items():
+                        log_data[f"offline/{key}"] = float(val)
+                    wandb.log(log_data, step=step)
+
+                if (chunk_idx + 1) % log_every == 0 or chunk_idx == num_chunks - 1:
+                    elapsed = time.time() - t0
+                    total_steps = num_chunks * train_steps_per_chunk
+                    metrics_str = "  ".join(
+                        f"{k}={float(v):.4f}" for k, v in chunk_metrics.items()
+                    )
+                    print(f"  [{step:>6}/{total_steps}]  {metrics_str}  elapsed={elapsed:.0f}s")
 
         return {"train_state": train_state}
 

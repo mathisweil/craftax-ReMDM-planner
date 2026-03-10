@@ -32,7 +32,7 @@ batch_size: 256           # Minibatch size for offline training
 
 # ── Offline training ─────────────────────────────────────────────────────────
 offline_data_path: "trajectories.npz"   # Path to .npz file produced by --mode collect
-num_train_steps: 50000   # Number of gradient steps for offline training
+num_train_steps: 1e9   # Number of gradient steps for offline training
 collect_temperature: 2.0
 
 # ── Online training ──────────────────────────────────────────────────────────
@@ -68,3 +68,8 @@ save_policy: true        # Save the model checkpoint at the end of training
 num_repeats: 1            # Number of independent training runs (vmapped)
 seed: null                # RNG seed (null → random)
 jit: true                 # Disable with --no-jit for easier debugging
+
+# ── Checkpointing (periodic) ────────────────────────────────────────────────
+ckpt_every_steps: 500     # Save a checkpoint every N training steps
+ckpt_max_to_keep: 3       # Number of most recent checkpoints to retain
+ckpt_dir: "checkpoints"   # Base directory for periodic checkpoints
