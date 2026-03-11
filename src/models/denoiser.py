@@ -96,22 +96,16 @@ class DenoisingTransformer(nn.Module):
         timestep: jnp.ndarray,
         deterministic: bool = True,
     ) -> jnp.ndarray:
-        """Forward pass.
-
-        Args:
-            obs:            [batch, obs_dim] float32.
-            noisy_actions:  [batch, plan_horizon] int32, values in [0, num_actions].
-            timestep:       [batch] float32, t in [0, 1].
-            deterministic:  If ``False``, enables dropout during training.
-
-        Returns:
-            logits: [batch, plan_horizon, num_actions] float32.
-        """
+        
         batch_size = obs.shape[0]
         vocab_size = self.num_actions + 1  # +1 for MASK token
 
+        # --- UPGRADE 1: Normalize the raw Craftax Observation! ---
+        # This stops inventory counts from blowing up the network variance.
+        obs_norm = nn.LayerNorm()(obs)
+        
         # --- Observation encoder (MLP) ---
-        obs_emb = obs
+        obs_emb = obs_norm
         for _ in range(self.obs_encoder_layers):
             obs_emb = nn.Dense(
                 self.obs_encoder_width,
@@ -119,6 +113,7 @@ class DenoisingTransformer(nn.Module):
                 bias_init=constant(0.0),
             )(obs_emb)
             obs_emb = nn.relu(obs_emb)
+            
         obs_emb = nn.Dense(
             self.d_model, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
         )(obs_emb)  # [batch, d_model]
@@ -142,13 +137,18 @@ class DenoisingTransformer(nn.Module):
         # --- Positional encoding for action sequence positions ---
         positions = jnp.arange(self.plan_horizon)
         pos_emb = SinusoidalPosEmbed(self.d_model)(positions)
-        # pos_emb: [plan_horizon, d_model]
         action_emb = action_emb + pos_emb[None, :, :]
 
-        # --- Assemble: [cond_token, action_1, ..., action_H] ---
-        cond_token = (obs_emb + t_emb)[:, None, :]  # [batch, 1, d_model]
-        seq = jnp.concatenate([cond_token, action_emb], axis=1)
-        # seq: [batch, 1 + plan_horizon, d_model]
+        # --- UPGRADE 2: Separate the Prefix Tokens! ---
+        # Instead of adding them, we give the transformer TWO separate tokens.
+        # Token 0: The Environment Map
+        # Token 1: The Diffusion Clock
+        # Tokens 2 to H+1: The Action Sequence
+        obs_token = obs_emb[:, None, :] # [batch, 1, d_model]
+        time_token = t_emb[:, None, :]  # [batch, 1, d_model]
+        
+        seq = jnp.concatenate([obs_token, time_token, action_emb], axis=1)
+        # seq is now shape: [batch, 2 + plan_horizon, d_model]
 
         # --- Transformer blocks (bidirectional) ---
         for _ in range(self.n_layers):
@@ -163,8 +163,11 @@ class DenoisingTransformer(nn.Module):
         seq = nn.LayerNorm()(seq)
 
         # --- Output head: logits for action positions only ---
-        action_features = seq[:, 1:, :]  # [batch, plan_horizon, d_model]
+        # Because we have TWO prefix tokens now, the actions start at index 2!
+        action_features = seq[:, 2:, :]  # [batch, plan_horizon, d_model]
+        
         logits = nn.Dense(
             self.num_actions, kernel_init=orthogonal(0.01), bias_init=constant(0.0)
         )(action_features)
+        
         return logits
