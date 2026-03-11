@@ -150,6 +150,9 @@ def _make_collect_chunk_fn(ppo_agent, env_w, env_params, collect_steps: int, con
             temperature = config.get("COLLECT_TEMPERATURE", 2.0)
             noisy_logits = pi.logits / temperature
             action = jax.random.categorical(k1, noisy_logits)
+            
+            if is_rnn:
+                action = action.squeeze(0)
 
             obs_next, env_state, _, done_next, _ = env_w.step(k2, env_state, action, env_params)
             return (rng, env_state, obs_next, done_next, new_hidden), (obs, action, done)
@@ -235,6 +238,9 @@ def make_train_offline_from_agent(
 
         ckpt_dir = _resolve_ckpt_dir(config)
 
+        if "CKPT_EVERY_STEPS" in config:
+            config["CKPT_EVERY_STEPS"] = int(float(config["CKPT_EVERY_STEPS"]))
+
         padded_env = np.zeros(max_valid_indices, dtype=np.int32)
         padded_time = np.zeros(max_valid_indices, dtype=np.int32)
 
@@ -310,13 +316,13 @@ def make_train_offline_from_agent(
     return train
 
 def run_offline(config: dict[str, Any]) -> None:
-    if config["USE_WANDB"]:
+    if config.get("USE_WANDB"):
         total_steps = config["NUM_TRAIN_STEPS"] * config["BATCH_SIZE"]
         wandb.init(
-            project=config["WANDB_PROJECT"],
-            entity=config["WANDB_ENTITY"],
+            project=config.get("WANDB_PROJECT", "craftax-remdm"),
+            entity=config.get("WANDB_ENTITY"),
             config=config,
-            name=config["ENV_NAME"] + "-remdm-offline-" + str(int(total_steps // 1e6)) + "M",
+            name=config.get("ENV_NAME", "Craftax") + "-remdm-offline-" + str(int(total_steps // 1e6)) + "M",
         )
 
     if config.get("PPO_CHECKPOINT_PATH"):
