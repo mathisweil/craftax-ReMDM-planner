@@ -109,7 +109,7 @@ def make_train_online(
                 e_state, current_obs, current_rng, ppo_hstate = carry
                 current_rng, plan_rng, sim_rng = jax.random.split(current_rng, 3)
                 
-                # 1. Sample the group of plans (Shape: [group_size, num_envs, plan_horizon])
+                # 1. Sample 8 raw Diffusion drafts
                 group_temps = jnp.linspace(0.5, 1.5, group_size)
                 def _sample_single_plan(r, temp):
                     return sample_plan(
@@ -119,66 +119,74 @@ def make_train_online(
                         config.get("T_ON", 0.7), config.get("T_OFF", 0.3), 
                         temp, config.get("TOP_P", None),
                     )
+                group_plans = jax.vmap(_sample_single_plan)(jax.random.split(plan_rng, group_size), group_temps)
                 
-                group_plans = jax.vmap(_sample_single_plan)(
-                    jax.random.split(plan_rng, group_size), group_temps
-                )
+                # 2. THE MULTIVERSE: Simulate all 8 plans simultaneously
+                # Universe 0 gets the PPO Teacher. Universes 1-7 are purely the Student.
+                is_teacher_mask = (jnp.arange(group_size) == 0)
+                
+                # 2. THE MULTIVERSE: Simulate all 8 plans simultaneously
+                is_teacher_mask = (jnp.arange(group_size) == 0)
+                
+                def _sim_plan(plan, is_teacher):
+                    rng_flip, r_sim = jax.random.split(sim_rng)
+                    use_ppo_sequence = jnp.logical_and(
+                        jax.random.bernoulli(rng_flip, ppo_injection_prob, shape=(num_envs,)), 
+                        is_teacher
+                    )
 
-                # 2. THE MULTIVERSE: Simulate all plans to get True GRPO rewards
-                def _sim_plan(plan):
-                    def _sim_step(st_r, step_idx):
-                        st, r = st_r
-                        r, s_rng = jax.random.split(r)
-                        o_next, st, rew, done, info = env_w.step(s_rng, st, plan[:, step_idx], env_params)
-                        return (st, r), (o_next, rew)
-                    _, (obs_traj, rew_traj) = jax.lax.scan(_sim_step, (e_state, sim_rng), jnp.arange(replan_every))
-                    return obs_traj, rew_traj
+                    def _sim_step(c, step_idx):
+                        st, cur_obs, r, hstate = c
+                        r, s_rng, ppo_rng = jax.random.split(r, 3)
+                        
+                        diff_action = plan[:, step_idx]
+                        
+                        if ppo_agent is not None:
+                            ppo_dones = jnp.zeros(num_envs, dtype=bool)
+                            pi, _, new_hstate = ppo_agent.apply(ppo_agent.params, cur_obs, hidden=hstate, done=ppo_dones)
+                            ppo_action = jax.random.categorical(ppo_rng, pi.logits).squeeze(0)
+                            
+                            # Use the sequence-level decision! No more fighting over the wheel.
+                            final_action = jnp.where(use_ppo_sequence, ppo_action, diff_action)
+                        else:
+                            final_action = diff_action
+                            new_hstate = hstate
+                            
+                        o_next, st, reward, done, info = env_w.step(s_rng, st, final_action, env_params)
+                        return (st, o_next, r, new_hstate), (o_next, reward, final_action, info)
+                        
+                    final_carry, (obs_traj, rew_traj, act_traj, infos) = jax.lax.scan(
+                        _sim_step, (e_state, current_obs, r_sim, ppo_hstate), jnp.arange(replan_every)
+                    )
+                    return final_carry, obs_traj, rew_traj, act_traj, infos
                     
-                all_obs_traj, all_rew_traj = jax.vmap(_sim_plan)(group_plans)
+                # Run all 8 universes!
+                final_carries, all_obs_traj, all_rew_traj, all_act_traj, all_infos = jax.vmap(_sim_plan)(group_plans, is_teacher_mask)
                 
-                # Calculate Intrinsic Reward efficiently during simulation
+                # Align the action shape to [group_size, num_envs, plan_horizon]
+                all_act_traj = jnp.transpose(all_act_traj, (0, 2, 1))
+                
+                # 3. COLLAPSE THE MULTIVERSE: The real universe is Universe 0
+                # We extract the final state from index 0 of the batched JAX structures to advance the game!
+                e_state_next = jax.tree.map(lambda x: x[0], final_carries[0])
+                obs_next = final_carries[1][0]
+                current_rng = final_carries[2][0]
+                ppo_hstate_next = final_carries[3][0]
+                real_infos = jax.tree.map(lambda x: x[0], all_infos)
+                
+                # Calculate Intrinsic Rewards
                 flat_sim_obs = all_obs_traj.reshape(-1, obs_dim)
                 intr_rews = reward_model.apply(rm_state.params, flat_sim_obs).reshape(group_size, replan_every, num_envs)
                 
-                # Combine Group Rewards
+                # Combine Group Rewards for the Dashboard vs Training
                 intrinsic_coef = config.get("INTRINSIC_COEF", 0.05)
-                
-                # Extract the raw, unscaled sums for logging
                 group_base_rewards = jnp.sum(all_rew_traj, axis=1)
                 group_intr_rewards = jnp.sum(intr_rews, axis=1)
-                
-                # The scaled version for actual training
                 group_train_rewards = group_base_rewards + (intrinsic_coef * group_intr_rewards)
 
-                # 3. REAL EXECUTION: Advance the real universe using Plan 0 (with PPO injection)
-                executed_plan = group_plans[0] # Take the first plan to actually play the game
-
-                def _exec_step(c, step_idx):
-                    st, cur_obs, r, hstate = c
-                    r, s_rng, ppo_rng, choice_rng = jax.random.split(r, 4)
-                    
-                    diff_action = executed_plan[:, step_idx]
-                    
-                    if ppo_agent is not None:
-                        ppo_dones = jnp.zeros(num_envs, dtype=bool)
-                        pi, _, new_hstate = ppo_agent.apply(ppo_agent.params, cur_obs, hidden=hstate, done=ppo_dones)
-                        ppo_action = jax.random.categorical(ppo_rng, pi.logits).squeeze(0)
-                        
-                        use_ppo = jax.random.bernoulli(choice_rng, ppo_injection_prob, shape=(num_envs,))
-                        final_action = jnp.where(use_ppo, ppo_action, diff_action)
-                    else:
-                        final_action = diff_action
-                        new_hstate = hstate
-
-                    o_next, st, reward, done, info = env_w.step(s_rng, st, final_action, env_params)
-                    return (st, o_next, r, new_hstate), (reward, done, info)
-
-                (e_state, obs_next, current_rng, ppo_hstate), (_, _, infos) = jax.lax.scan(
-                    _exec_step, (e_state, current_obs, current_rng, ppo_hstate), jnp.arange(replan_every)
-                )
-                
-                return (e_state, obs_next, current_rng, ppo_hstate), (
-                    current_obs, group_plans, group_train_rewards, group_base_rewards, group_intr_rewards, infos
+                # Return the ACTUAL actions taken (all_act_traj) instead of the group_plans!
+                return (e_state_next, obs_next, current_rng, ppo_hstate_next), (
+                    current_obs, all_act_traj, group_train_rewards, group_base_rewards, group_intr_rewards, real_infos
                 )
 
             # --- DATA COLLECTION AND TRUE GRPO ADVANTAGE ---
