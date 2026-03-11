@@ -16,6 +16,7 @@ from typing import Any, Callable, Optional
 import chex
 import jax
 import jax.numpy as jnp
+import optax
 
 # ---------------------------------------------------------------------------
 # Type aliases
@@ -165,9 +166,14 @@ def compute_loss(
 
     # --- cross-entropy on masked positions ----------------------------------
     is_masked = (z_t == mask_token_id).astype(jnp.float32)  # [B, H]
-    targets_one_hot = jax.nn.one_hot(x_0, num_actions)      # [B, H, num_actions]
+    is_masked = (z_t == mask_token_id).astype(jnp.float32)  # [B, H]
+    
+    # THE FIX: Smooth the labels so the network can never reach 100% confidence (loss = 0)
+    raw_one_hot = jax.nn.one_hot(x_0, num_actions)
+    targets_one_hot = optax.smooth_labels(raw_one_hot, 0.05) # 5% uncertainty
+    
     log_probs = jax.nn.log_softmax(logits, axis=-1)
-    ce = -jnp.sum(targets_one_hot * log_probs, axis=-1)     # [B, H]
+    ce = -jnp.sum(targets_one_hot * log_probs, axis=-1)
 
     masked_ce = ce * is_masked
     num_masked = jnp.maximum(is_masked.sum(axis=-1), 1.0)   # [B]
