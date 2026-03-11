@@ -39,12 +39,13 @@ collect_temperature: 2.0  # Softmax temperature applied to PPO logits during dat
 
 # ── Online training (GRPO Fine-tuning) ───────────────────────────────────────
 num_envs: 32               # Number of parallel environments
-num_steps: 1200             # Env steps per update (must be divisible by replan_every)
+num_steps: 128             # Env steps per update (must be divisible by replan_every)
 num_updates: 1000          # Total training iterations
 replan_every: 4            # Steps to execute from a plan before replanning
 update_epochs: 1           # Gradient passes per collected batch
 num_minibatches: 4         # Minibatches per epoch
 offline_checkpoint_path: null
+intrinsic_coef: 0.005
 
 # GRPO & Teacher Injection Settings
 grpo_group_size: 4         # Number of plans to sample per state for relative advantage
