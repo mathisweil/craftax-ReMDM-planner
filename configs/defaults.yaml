@@ -44,7 +44,7 @@ replan_every: 4            # Steps to execute from a plan before replanning
 update_epochs: 1           # Gradient passes per collected batch
 num_minibatches: 4         # Minibatches per epoch
 offline_checkpoint_path: null
-intrinsic_coef: 0.005
+intrinsic_coef: 0.05
 
 # GRPO & Teacher Injection Settings
 grpo_group_size: 4         # Number of plans to sample per state for relative advantage
