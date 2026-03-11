@@ -1,13 +1,13 @@
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Optional, Dict
 
 import jax
 import jax.numpy as jnp
+import orbax.checkpoint as ocp
 import wandb
 from craftax.craftax_env import make_craftax_env_from_name
 
 from src.models.remdm import sample_plan
-from src.logz.batch_logging import create_log_dict, batch_log
 
 from .common import SCHEDULE_MAP, _make_grad_step
 from .utils import (
@@ -15,212 +15,355 @@ from .utils import (
     _init_model_params,
     _create_train_state,
     _load_checkpoint,
-    _save_model,
     _make_env_stack,
     _make_apply_fns,
+    _make_periodic_ckpt_manager,
+    _resolve_ckpt_dir,
 )
 
 def make_train_online(
     config: Dict[str, Any],
     init_params: Optional[Any] = None,
 ) -> Callable[[jax.Array], Dict[str, Any]]:
-    assert config["NUM_STEPS"] % config["REPLAN_EVERY"] == 0, "NUM_STEPS must be divisible by REPLAN_EVERY"
-
-    num_envs: int = config["NUM_ENVS"]
-    plan_horizon: int = config["PLAN_HORIZON"]
-    replan_every: int = config["REPLAN_EVERY"]
-    num_updates: int = config["NUM_UPDATES"]
-    update_epochs: int = config["UPDATE_EPOCHS"]
-    num_minibatches: int = config["NUM_MINIBATCHES"]
-    diffusion_steps: int = config["DIFFUSION_STEPS"]
+    
+    # --- CONFIG SETUP ---
+    num_envs = config["NUM_ENVS"]
+    plan_horizon = config["PLAN_HORIZON"]
+    replan_every = config["REPLAN_EVERY"]
+    num_updates = config["NUM_UPDATES"]
+    update_epochs = config["UPDATE_EPOCHS"]
+    num_minibatches = config["NUM_MINIBATCHES"]
+    diffusion_steps = config["DIFFUSION_STEPS"]
     schedule_fn = SCHEDULE_MAP[config["DIFFUSION_SCHEDULE"]]
-    remask_strategy: str = config["REMASK_STRATEGY"]
-    eta: float = config["ETA"]
-    t_on: float = config.get("T_ON", 0.7)
-    t_off: float = config.get("T_OFF", 0.3)
-    use_loop: bool = config.get("USE_LOOP", False)
-    temperature: float = config.get("TEMPERATURE", 1.0)
-    top_p: Optional[float] = config.get("TOP_P", None)
-    num_plan_cycles: int = config["NUM_STEPS"] // replan_every
-    use_optimistic_resets: bool = config.get("USE_OPTIMISTIC_RESETS", False)
+    
+    # GRPO specific: Number of plans to sample per state to calculate relative advantage
+    # Usually 4-8 is a good group size for GRPO
+    group_size = config.get("GRPO_GROUP_SIZE", 4) 
+    
+    num_actions = config["NUM_ACTIONS"]
+    obs_dim = config["OBS_DIM"]
 
-    num_actions: int = config["NUM_ACTIONS"]
-    obs_dim: int = config["OBS_DIM"]
-
+    # --- ENVIRONMENT & MODEL SETUP ---
     env_w, env_params = _make_env_stack(
         config, num_envs,
-        use_optimistic_resets=use_optimistic_resets,
+        use_optimistic_resets=config.get("USE_OPTIMISTIC_RESETS", False),
         use_sequence_history=True,
     )
+    
     model = _build_model(config, num_actions)
     apply_inference, apply_train = _make_apply_fns(model)
+    
+    # Note: grad_step for GRPO is essentially a weighted Cross-Entropy loss 
+    # where weights = advantages calculated from the group
     grad_step = _make_grad_step(apply_train, num_actions, schedule_fn, config.get("TRAIN_SIGMA", 0.0))
-
-    total_samples = num_plan_cycles * num_envs
-    assert total_samples % num_minibatches == 0, (
-        f"num_plan_cycles * num_envs ({total_samples}) must be divisible by NUM_MINIBATCHES ({num_minibatches})"
-    )
-    minibatch_size = total_samples // num_minibatches
 
     def train(rng: jax.Array) -> Dict[str, Any]:
         rng, init_rng, env_rng = jax.random.split(rng, 3)
+        
+        # --- 1. INITIALIZE DIFFUSION MODEL ---
         params = init_params if init_params is not None else _init_model_params(model, init_rng, obs_dim, plan_horizon)
         train_state = _create_train_state(model, params, config["LR"], config["MAX_GRAD_NORM"])
+        
+        # --- 2. INITIALIZE ENVIRONMENT (Must happen before runner_state is packed!) ---
         obs, env_state = env_w.reset(env_rng, env_params)
 
-        def _update_step(runner_state, update_step):
-            train_state, env_state, obs, rng = runner_state
+        # --- 3. INITIALIZE REWARD MODEL & CO-TRAINING STATE ---
+        from flax.training import train_state as flax_train_state
+        from flax import serialization
+        import optax
+        from src.models.reward_models import get_reward_model
+        import os
+        
+        reward_model = get_reward_model(config.get("REWARD_MODEL_TYPE", "mlp"))
+        rm_params = reward_model.init(init_rng, jnp.zeros((1, obs_dim)))
+        
+        reward_load_path = config.get("REWARD_LOAD_PATH")
+        if reward_load_path and os.path.exists(reward_load_path):
+            with open(reward_load_path, "rb") as f:
+                rm_params = serialization.from_bytes(rm_params, f.read())
+            # This print happens at JAX trace-time, which is perfectly safe
+            print(f"Loaded Reward Model weights from {reward_load_path}")
+            
+        rm_tx = optax.adam(learning_rate=1e-4)
+        rm_state = flax_train_state.TrainState.create(
+            apply_fn=reward_model.apply, params=rm_params, tx=rm_tx
+        )
+
+        # --- 4. THE COMPILED INNER LOOP ---
+        def _update_step(runner_state, update_step_idx):
+            # Unpack the runner state (now including rm_state)
+            train_state, env_state, obs, rng, rm_state = runner_state
+            
+            # Exponential PPO Injection Probability
+            init_prob = config.get("PPO_INIT_PROB", 0.1)
+            decay_rate = config.get("PPO_DECAY_RATE", 0.99)
+            ppo_injection_prob = init_prob * jnp.power(decay_rate, update_step_idx)
 
             def _plan_and_execute(carry, _):
-                env_state, obs, rng = carry
-                rng, plan_rng = jax.random.split(rng)
-                plan = sample_plan(
-                    apply_inference, train_state.params, plan_rng, obs,
-                    num_actions, plan_horizon, diffusion_steps, schedule_fn,
-                    remask_strategy, eta, use_loop, t_on, t_off, temperature, top_p,
-                )
-
-                def _exec_step(carry, step_idx):
-                    env_state, _, rng = carry
-                    rng, step_rng = jax.random.split(rng)
-                    obs_next, env_state, reward, done, info = env_w.step(
-                        step_rng, env_state, plan[:, step_idx], env_params
+                e_state, current_obs, current_rng, ppo_hstate = carry
+                current_rng, plan_rng, sim_rng = jax.random.split(current_rng, 3)
+                
+                # 1. Sample the group of plans (Shape: [group_size, num_envs, plan_horizon])
+                group_temps = jnp.linspace(0.5, 1.5, group_size)
+                def _sample_single_plan(r, temp):
+                    return sample_plan(
+                        apply_inference, train_state.params, r, current_obs,
+                        num_actions, plan_horizon, diffusion_steps, schedule_fn,
+                        config["REMASK_STRATEGY"], config["ETA"], config.get("USE_LOOP", False),
+                        config.get("T_ON", 0.7), config.get("T_OFF", 0.3), 
+                        temp, config.get("TOP_P", None),
                     )
-                    return (env_state, obs_next, rng), (reward, done, info)
-
-                (env_state, obs_next, rng), (rewards, dones, infos) = jax.lax.scan(
-                    _exec_step, (env_state, obs, rng), jnp.arange(replan_every),
+                
+                group_plans = jax.vmap(_sample_single_plan)(
+                    jax.random.split(plan_rng, group_size), group_temps
                 )
-                return (env_state, obs_next, rng), (obs, plan, rewards, dones, infos)
 
-            (env_state, obs, rng), traj = jax.lax.scan(
-                _plan_and_execute, (env_state, obs, rng), None, num_plan_cycles,
+                # 2. THE MULTIVERSE: Simulate all plans to get True GRPO rewards
+                def _sim_plan(plan):
+                    def _sim_step(st_r, step_idx):
+                        st, r = st_r
+                        r, s_rng = jax.random.split(r)
+                        o_next, st, rew, done, info = env_w.step(s_rng, st, plan[:, step_idx], env_params)
+                        return (st, r), (o_next, rew)
+                    _, (obs_traj, rew_traj) = jax.lax.scan(_sim_step, (e_state, sim_rng), jnp.arange(replan_every))
+                    return obs_traj, rew_traj
+                    
+                all_obs_traj, all_rew_traj = jax.vmap(_sim_plan)(group_plans)
+                
+                # Calculate Intrinsic Reward efficiently during simulation
+                flat_sim_obs = all_obs_traj.reshape(-1, obs_dim)
+                intr_rews = reward_model.apply(rm_state.params, flat_sim_obs).reshape(group_size, replan_every, num_envs)
+                
+                # Combine Group Rewards
+                intrinsic_coef = config.get("INTRINSIC_COEF", 0.05)
+                
+                # Extract the raw, unscaled sums for logging
+                group_base_rewards = jnp.sum(all_rew_traj, axis=1)
+                group_intr_rewards = jnp.sum(intr_rews, axis=1)
+                
+                # The scaled version for actual training
+                group_train_rewards = group_base_rewards + (intrinsic_coef * group_intr_rewards)
+
+                # 3. REAL EXECUTION: Advance the real universe using Plan 0 (with PPO injection)
+                executed_plan = group_plans[0] # Take the first plan to actually play the game
+
+                def _exec_step(c, step_idx):
+                    st, cur_obs, r, hstate = c
+                    r, s_rng, ppo_rng, choice_rng = jax.random.split(r, 4)
+                    
+                    diff_action = executed_plan[:, step_idx]
+                    
+                    if ppo_agent is not None:
+                        ppo_dones = jnp.zeros(num_envs, dtype=bool)
+                        pi, _, new_hstate = ppo_agent.apply(ppo_agent.params, cur_obs, hidden=hstate, done=ppo_dones)
+                        ppo_action = jax.random.categorical(ppo_rng, pi.logits).squeeze(0)
+                        
+                        use_ppo = jax.random.bernoulli(choice_rng, ppo_injection_prob, shape=(num_envs,))
+                        final_action = jnp.where(use_ppo, ppo_action, diff_action)
+                    else:
+                        final_action = diff_action
+                        new_hstate = hstate
+
+                    o_next, st, reward, done, info = env_w.step(s_rng, st, final_action, env_params)
+                    return (st, o_next, r, new_hstate), (reward, done, info)
+
+                (e_state, obs_next, current_rng, ppo_hstate), (_, _, infos) = jax.lax.scan(
+                    _exec_step, (e_state, current_obs, current_rng, ppo_hstate), jnp.arange(replan_every)
+                )
+                
+                return (e_state, obs_next, current_rng, ppo_hstate), (
+                    current_obs, group_plans, group_train_rewards, group_base_rewards, group_intr_rewards, infos
+                )
+
+            # --- DATA COLLECTION AND TRUE GRPO ADVANTAGE ---
+            num_plan_cycles = config["NUM_STEPS"] // replan_every
+            (env_state, obs, rng, _), traj = jax.lax.scan(
+                _plan_and_execute, (env_state, obs, rng, init_ppo_hstate), None, num_plan_cycles
             )
-            traj_obs, traj_plans, traj_rewards, traj_dones, all_infos = traj
+            # Unpack the two new variables!
+            traj_obs, traj_group_plans, traj_train_rewards, traj_base_rewards, traj_intr_rewards, all_infos = traj
+            
+            # --- 1. TRAINING ADVANTAGES (Scaled) ---
+            train_mean_r = jnp.mean(traj_train_rewards, axis=1, keepdims=True)
+            train_std_r = jnp.std(traj_train_rewards, axis=1, keepdims=True) + 1e-8
+            train_advantages = (traj_train_rewards - train_mean_r) / train_std_r 
+            
+            temperature = config.get("AWR_TEMPERATURE", 2.0)
+            positive_adv_weights = jnp.clip(jnp.exp(train_advantages / temperature), 0.0, 20.0)
+            
+            # --- 2. LOGGING ADVANTAGES (Unscaled real values) ---
+            real_segment_rewards = traj_base_rewards + traj_intr_rewards
+            real_mean_r = jnp.mean(real_segment_rewards, axis=1, keepdims=True)
+            real_std_r = jnp.std(real_segment_rewards, axis=1, keepdims=True) + 1e-8
+            real_raw_advantages = (real_segment_rewards - real_mean_r) / real_std_r
+            
+            # --- PREPARE DATA FOR DIFFUSION ---
+            # Train on ALL 8 plans by copying the observation for each plan!
+            tiled_obs = jnp.tile(traj_obs[:, jnp.newaxis, :, :], (1, group_size, 1, 1)) 
+            
+            flat_obs = tiled_obs.reshape(-1, obs_dim)
+            flat_plans = traj_group_plans.reshape(-1, plan_horizon)
+            flat_advantages = positive_adv_weights.reshape(-1)
+            
+            total_samples = flat_obs.shape[0]
 
-            flat_obs = traj_obs.reshape(total_samples, obs_dim)
-            flat_plans = traj_plans.reshape(total_samples, plan_horizon)
-
+            # Update Diffusion Agent
             def _update_epoch(carry, _):
-                train_state, rng = carry
-                rng, perm_rng = jax.random.split(rng)
-                perm = jax.random.permutation(perm_rng, total_samples)
-                obs_mbs = flat_obs[perm].reshape(num_minibatches, minibatch_size, obs_dim)
-                plan_mbs = flat_plans[perm].reshape(num_minibatches, minibatch_size, plan_horizon)
+                ts, r = carry
+                r, p_rng = jax.random.split(r)
+                perm = jax.random.permutation(p_rng, total_samples)
+                
+                obs_mbs = flat_obs[perm].reshape(num_minibatches, -1, obs_dim)
+                plan_mbs = flat_plans[perm].reshape(num_minibatches, -1, plan_horizon)
+                adv_mbs = flat_advantages[perm].reshape(num_minibatches, -1)
 
-                def _update_minibatch(ts_rng, idx_and_mb):
-                    ts, rng = ts_rng
-                    mb_idx, obs_mb, plan_mb = idx_and_mb
-                    loss_rng = jax.random.fold_in(rng, mb_idx)
-                    ts, info = grad_step(ts, plan_mb, obs_mb, loss_rng)
-                    return (ts, rng), info
+                def _update_minibatch(ts_r, data):
+                    ts, r = ts_r
+                    idx, o_mb, p_mb, a_mb = data
+                    l_rng = jax.random.fold_in(r, idx)
+                    ts, info = grad_step(ts, p_mb, o_mb, l_rng, advantages=a_mb)
+                    return (ts, r), info
 
-                (train_state, rng), infos = jax.lax.scan(
-                    _update_minibatch,
-                    (train_state, rng),
-                    (jnp.arange(num_minibatches), obs_mbs, plan_mbs),
-                )
-                return (train_state, rng), infos
+                return jax.lax.scan(_update_minibatch, (ts, r), (jnp.arange(num_minibatches), obs_mbs, plan_mbs, adv_mbs))
 
-            (train_state, rng), epoch_infos = jax.lax.scan(
-                _update_epoch, (train_state, rng), None, update_epochs
+            (train_state, rng), epoch_infos = jax.lax.scan(_update_epoch, (train_state, rng), None, update_epochs)
+
+            # --- CO-TRAINING REWARD MODEL (UNIVERSAL SWITCHER) ---
+            def _train_reward_fn(state):
+                def _loss_fn(params):
+                    # All models take the flat obs perfectly now!
+                    preds = reward_model.apply(params, flat_obs)
+                    
+                    # Read the terminal argument to decide the math
+                    model_type = config.get("REWARD_MODEL_TYPE", "mlp")
+                    
+                    if model_type == "mlp":
+                        # Discriminator Math: Force known states to -1.0
+                        return jnp.mean((preds - (-1.0)) ** 2)
+                        
+                    elif model_type in ["rnd", "vision_rnd"]:
+                        # RND Math: The output IS the prediction error, just minimize it!
+                        return jnp.mean(preds)
+                        
+                    else:
+                        # Fallback safe loss
+                        return jnp.mean(preds)
+                
+                loss, grads = jax.value_and_grad(_loss_fn)(state.params)
+                return state.apply_gradients(grads=grads)
+            
+            rm_state = jax.lax.cond(
+                update_step_idx % 100 == 0,
+                _train_reward_fn,  
+                lambda s: s,       
+                rm_state
             )
 
-            ep_returns = all_infos["returned_episode_returns"]
-            ep_lengths = all_infos.get("returned_episode_lengths", jnp.zeros_like(ep_returns))
+            # --- LOGGING ---
             ep_mask = all_infos["returned_episode"]
-            n_completed = ep_mask.sum()
-            safe_n = jnp.maximum(n_completed, 1)
+            n_done = jnp.maximum(ep_mask.sum(), 1)
 
-            metric = {
-                "diffusion_loss": epoch_infos["loss"].mean(),
-                "mean_t": epoch_infos["mean_t"].mean(),
-                "frac_masked": epoch_infos["frac_masked"].mean(),
+            metrics = {
+                "loss": epoch_infos["loss"].mean(),
+                "ppo_prob": ppo_injection_prob,
+                "advantage_mean": real_raw_advantages.mean(),
+                "advantage_std": real_raw_advantages.std(),
+                "reward_std": real_std_r.mean(), 
+                "adv_abs_mean": jnp.mean(jnp.abs(train_advantages)), # What the network actually felt
+                "reward_mean": real_segment_rewards.mean(),
+                "env_reward_mean": traj_base_rewards.mean(),
+                "intrinsic_reward_mean": traj_intr_rewards.mean(),
                 "grad_norm": epoch_infos["grad_norm"].mean(),
-                "action_entropy": epoch_infos["action_entropy"].mean(),
-                "action_unique_frac": epoch_infos["action_unique_frac"].mean(),
-                "episode_return": jnp.where(n_completed > 0, (ep_returns * ep_mask).sum() / safe_n, jnp.nan),
-                "episode_length": jnp.where(n_completed > 0, (ep_lengths * ep_mask).sum() / safe_n, jnp.nan),
-                "num_completed_eps": n_completed,
-                "mean_step_reward": traj_rewards.mean(),
-                "reward_std": traj_rewards.std(),
-                "plan_diversity": jax.vmap(
-                    lambda p: jnp.sum(jnp.bincount(p, length=num_actions) > 0).astype(jnp.float32) / plan_horizon
-                )(flat_plans).mean(),
+                "death_toll": ep_mask.sum(),
             }
-
+            
+            ep_mask = all_infos["returned_episode"]
+            n_done = jnp.maximum(ep_mask.sum(), 1)
             for k, v in all_infos.items():
                 if "achievement" in k.lower():
-                    metric[k] = jnp.where(
-                        n_completed > 0,
-                        (v * ep_mask).sum() / safe_n,
-                        jnp.nan,
-                    )
+                    metrics[f"Achievements/{k.split('_')[-1]}"] = (v * ep_mask).sum() / n_done
 
-            if config.get("DEBUG") and config.get("USE_WANDB"):
-                def _wandb_callback(metric, update_step):
-                    to_log = create_log_dict(metric, config)
-                    batch_log(update_step, to_log, config)
+            jax.debug.print(
+                "Update: {step} | Loss: {loss:.3f} | Score: {score:.2f} | Intr: {intr:.2f} | PPO%: {ppo:.3f} | Deaths: {deaths}",
+                step=update_step_idx,
+                loss=metrics["loss"],
+                score=metrics["env_reward_mean"],
+                intr=metrics["intrinsic_reward_mean"],
+                ppo=metrics["ppo_prob"],
+                deaths=metrics["death_toll"]
+            )
 
-                jax.debug.callback(_wandb_callback, metric, update_step)
+            if config.get("USE_WANDB") and config.get("DEBUG", True):
+                def _wandb_callback(mets, step):
+                    import numpy as np
+                    try:
+                        log_dict = {}
+                        for k, v in mets.items():
+                            val = np.array(v).item() 
+                            clean_name = k.replace("returned_episode_achievements_", "").replace("_", " ").title()
+                            if "Achievement" in k or "returned_episode" in k:
+                                log_dict[f"Achievements/{clean_name}"] = val
+                            else:
+                                log_dict[f"online/{k}"] = val
+                                
+                        log_dict["online/step"] = int(step)
+                        wandb.log(log_dict, step=int(step))
+                    except Exception as e:
+                        print(f"\n[WANDB ERROR at step {int(step)}]: {e}\n")
 
-            return (train_state, env_state, obs, rng), metric
+                jax.debug.callback(_wandb_callback, metrics, update_step_idx)
+            
+            return (train_state, env_state, obs, rng, rm_state), metrics
 
-        runner_state = (train_state, env_state, obs, rng)
-        runner_state, metrics = jax.lax.scan(
-            _update_step, runner_state, jnp.arange(num_updates)
-        )
-        return {"runner_state": runner_state, "metrics": metrics}
+        runner_state = (train_state, env_state, obs, rng, rm_state)
+
+        _jit_update_step = jax.jit(_update_step)
+        all_metrics = []
+        t0 = time.time()
+        log_every = max(num_updates // 20, 1)
+
+        with _make_periodic_ckpt_manager(config, subdir="checkpoints_online") as ckpt_mgr:
+            for step_idx in range(num_updates):
+                runner_state, metrics = _jit_update_step(runner_state, jnp.int32(step_idx))
+                all_metrics.append(metrics)
+
+                is_final = (step_idx == num_updates - 1)
+                saved = ckpt_mgr.save(
+                    step_idx + 1,
+                    args=ocp.args.StandardSave(runner_state[0]),  # train_state
+                    force=is_final,
+                )
+                if saved:
+                    ckpt_dir = _resolve_ckpt_dir(config, subdir="checkpoints_online")
+                    print(f"  Checkpoint saved at step {step_idx + 1} -> '{ckpt_dir}'")
+
+                if (step_idx + 1) % log_every == 0 or is_final:
+                    elapsed = time.time() - t0
+                    loss_val = float(jax.device_get(metrics["loss"]))
+                    print(f"  [{step_idx + 1:>6}/{num_updates}]  loss={loss_val:.4f}  elapsed={elapsed:.0f}s")
+
+        stacked_metrics = jax.tree.map(lambda *xs: jnp.stack(xs), *all_metrics)
+        return {"runner_state": runner_state, "metrics": stacked_metrics}
 
     return train
 
 def run_online(config: Dict[str, Any]) -> None:
     env = make_craftax_env_from_name(config["ENV_NAME"], True)
-    config["NUM_ACTIONS"] = env.action_space(env.default_params).n
-    config["OBS_DIM"] = env.observation_space(env.default_params).shape[0]
+    config["NUM_ACTIONS"] = int(env.action_space(env.default_params).n)
+    config["OBS_DIM"] = int(env.observation_space(env.default_params).shape[0])
 
-    total_steps = config["NUM_UPDATES"] * config["NUM_STEPS"] * config["NUM_ENVS"]
-
-    if config.get("USE_WANDB"):
-        wandb.init(
-            project=config["WANDB_PROJECT"],
-            entity=config["WANDB_ENTITY"],
-            config=config,
-            name=config["ENV_NAME"] + "-remdm-online-" + str(int(total_steps // 1e6)) + "M",
-        )
-
-    init_params: Optional[Any] = None
+    init_params = None
     if config.get("OFFLINE_CHECKPOINT_PATH"):
         model = _build_model(config, config["NUM_ACTIONS"])
         init_params = _load_checkpoint(config, model, config["OBS_DIM"], config["OFFLINE_CHECKPOINT_PATH"])
-
-    rng = jax.random.PRNGKey(config["SEED"])
-    train_fn = make_train_online(config, init_params=init_params)
-    num_repeats = config["NUM_REPEATS"]
-
-    t0 = time.time()
-    if num_repeats > 1:
-        rngs = jnp.stack([jax.random.fold_in(rng, i) for i in range(num_repeats)])
-        first_out = jax.jit(jax.vmap(train_fn))(rngs)
-        first_out = jax.tree.map(lambda x: x[0], first_out)
-    else:
-        first_out = jax.jit(train_fn)(rng)
-    elapsed = time.time() - t0
-
-    sps = total_steps / max(elapsed, 1e-6)
-    print(f"Online training time: {elapsed:.1f}s | SPS: {sps:.0f}")
-
-    if config.get("USE_WANDB") and not config.get("DEBUG"):
-        metrics = first_out["metrics"]
-        num_updates = config["NUM_UPDATES"]
-        log_interval = max(num_updates // 100, 1)
-        for i in range(0, num_updates, log_interval):
-            payload = {f"online/{k}": float(v[i]) for k, v in metrics.items()}
-            payload["online/step"] = int(i)
-            wandb.log(payload, step=int(i))
-
+    
+    # Standard setup and WandB init
     if config.get("USE_WANDB"):
-        wandb.log({"online/total_sps": sps, "online/total_time_s": elapsed})
+        wandb.init(project=config["WANDB_PROJECT"], config=config, name=f"GRPO-{config['ENV_NAME']}")
 
-    if config["SAVE_POLICY"]:
-        _save_model(first_out["runner_state"][0], config, "diffusion_online")
+    train_fn = make_train_online(config, init_params=init_params)
+    
+    print("Starting Online GRPO Training...")
+    out = train_fn(jax.random.PRNGKey(config["SEED"]))
+    
+    print("Training Complete.")
