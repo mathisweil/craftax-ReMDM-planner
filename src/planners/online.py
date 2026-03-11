@@ -19,11 +19,13 @@ from .utils import (
     _make_apply_fns,
     _make_periodic_ckpt_manager,
     _resolve_ckpt_dir,
+    _load_ppo_checkpoint,
 )
 
 def make_train_online(
     config: Dict[str, Any],
     init_params: Optional[Any] = None,
+    ppo_agent: Optional[Any] = None,
 ) -> Callable[[jax.Array], Dict[str, Any]]:
     
     # --- CONFIG SETUP ---
@@ -91,13 +93,17 @@ def make_train_online(
 
         # --- 4. THE COMPILED INNER LOOP ---
         def _update_step(runner_state, update_step_idx):
-            # Unpack the runner state (now including rm_state)
             train_state, env_state, obs, rng, rm_state = runner_state
             
             # Exponential PPO Injection Probability
             init_prob = config.get("PPO_INIT_PROB", 0.1)
             decay_rate = config.get("PPO_DECAY_RATE", 0.99)
             ppo_injection_prob = init_prob * jnp.power(decay_rate, update_step_idx)
+
+            if ppo_agent is not None:
+                init_ppo_hstate = ppo_agent.init_hidden(config["NUM_ENVS"])
+            else:
+                init_ppo_hstate = jnp.zeros(1)
 
             def _plan_and_execute(carry, _):
                 e_state, current_obs, current_rng, ppo_hstate = carry
@@ -352,6 +358,18 @@ def run_online(config: Dict[str, Any]) -> None:
     config["NUM_ACTIONS"] = int(env.action_space(env.default_params).n)
     config["OBS_DIM"] = int(env.observation_space(env.default_params).shape[0])
 
+    ppo_agent = None
+    if config.get("PPO_CHECKPOINT_PATH"):
+        print(f"Loading PPO Teacher from {config['PPO_CHECKPOINT_PATH']}...")
+        ppo_agent = _load_ppo_checkpoint(
+            config["PPO_CHECKPOINT_PATH"],
+            config["NUM_ACTIONS"],
+            config["OBS_DIM"],
+            config.get("LAYER_SIZE", 512),
+            model_type=config.get("PPO_MODEL_TYPE", "ppo_rnn"),
+        )
+        print("PPO Teacher loaded successfully!")
+
     init_params = None
     if config.get("OFFLINE_CHECKPOINT_PATH"):
         model = _build_model(config, config["NUM_ACTIONS"])
@@ -361,7 +379,7 @@ def run_online(config: Dict[str, Any]) -> None:
     if config.get("USE_WANDB"):
         wandb.init(project=config["WANDB_PROJECT"], config=config, name=f"GRPO-{config['ENV_NAME']}")
 
-    train_fn = make_train_online(config, init_params=init_params)
+    train_fn = make_train_online(config, init_params=init_params, ppo_agent=ppo_agent)
     
     print("Starting Online GRPO Training...")
     out = train_fn(jax.random.PRNGKey(config["SEED"]))
