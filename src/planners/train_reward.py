@@ -1,4 +1,3 @@
-import time
 from typing import Any, Dict
 import os
 import jax
@@ -10,8 +9,6 @@ from flax.training import train_state
 from flax import serialization
 
 from src.models.reward_models import get_reward_model
-
-from .utils import _save_model
 
 def run_train_reward(config: Dict[str, Any]) -> None:
     data_path = config["OFFLINE_DATA_PATH"]
