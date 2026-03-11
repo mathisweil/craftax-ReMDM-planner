@@ -333,6 +333,7 @@ def _resolve_ckpt_dir(config: dict[str, Any], subdir: str = "checkpoints") -> pa
 def _make_periodic_ckpt_manager(config: dict[str, Any], subdir: str = "checkpoints") -> ocp.CheckpointManager:
     return ocp.CheckpointManager(
         _resolve_ckpt_dir(config, subdir),
+        ocp.StandardCheckpointer(),
         options=ocp.CheckpointManagerOptions(
             save_decision_policy=save_decision_policy_lib.FixedIntervalPolicy(config["CKPT_EVERY_STEPS"]),
             preservation_policy=preservation_policy_lib.LatestN(config["CKPT_MAX_TO_KEEP"]),
