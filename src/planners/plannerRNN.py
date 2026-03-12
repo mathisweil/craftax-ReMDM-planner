@@ -23,7 +23,7 @@ from Craftax_Baselines.wrappers import (
     BatchEnvWrapper,
     AutoResetEnvWrapper,
 )
-from logz.batch_logging import create_log_dict, batch_log
+from Craftax_Baselines.logz.batch_logging import create_log_dict, batch_log
 
 from craftax.craftax_env import make_craftax_env_from_name
 
