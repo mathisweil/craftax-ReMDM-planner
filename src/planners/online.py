@@ -117,7 +117,7 @@ def make_train_online(
                         num_actions, plan_horizon, diffusion_steps, schedule_fn,
                         config["REMASK_STRATEGY"], config["ETA"], config.get("USE_LOOP", False),
                         config.get("T_ON", 0.7), config.get("T_OFF", 0.3), 
-                        temp, config.get("TOP_P", None),
+                        temp, config.get("TOP_P", 0.95),
                     )
                 group_plans = jax.vmap(_sample_single_plan)(jax.random.split(plan_rng, group_size), group_temps)
                 
@@ -178,10 +178,18 @@ def make_train_online(
                 flat_sim_obs = all_obs_traj.reshape(-1, obs_dim)
                 intr_rews = reward_model.apply(rm_state.params, flat_sim_obs).reshape(group_size, replan_every, num_envs)
                 
-                # Combine Group Rewards for the Dashboard vs Training
+                # --- THE RND KILL-SWITCH (FORWARD PASS) ---
                 intrinsic_coef = config.get("INTRINSIC_COEF", 0.05)
+                
+                if intrinsic_coef > 0.0:
+                    flat_sim_obs = all_obs_traj.reshape(-1, obs_dim)
+                    intr_rews = reward_model.apply(rm_state.params, flat_sim_obs).reshape(group_size, replan_every, num_envs)
+                    group_intr_rewards = jnp.sum(intr_rews, axis=1)
+                else:
+                    # Skip the neural network entirely and just return zeros!
+                    group_intr_rewards = jnp.zeros((group_size, num_envs))
+                
                 group_base_rewards = jnp.sum(all_rew_traj, axis=1)
-                group_intr_rewards = jnp.sum(intr_rews, axis=1)
                 group_train_rewards = group_base_rewards + (intrinsic_coef * group_intr_rewards)
 
                 # Return the ACTUAL actions taken (all_act_traj) instead of the group_plans!
