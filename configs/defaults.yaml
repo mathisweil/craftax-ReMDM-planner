@@ -56,7 +56,7 @@ use_optimistic_resets: false
 optimistic_reset_ratio: 16
 
 # ── Inference / evaluation ───────────────────────────────────────────────────
-eval_steps: 1000          # Number of environment steps to run during evaluation
+eval_steps: 10000          # Number of environment steps to run during evaluation
 
 # ── Data collection & agent-based offline training ────────────────────────────
 # Used by both --mode collect (save to disk) and --mode offline (live from agent).

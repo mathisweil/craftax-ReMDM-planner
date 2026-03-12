@@ -308,20 +308,26 @@ def make_train_online(
             )
 
             if config.get("USE_WANDB") and config.get("DEBUG", True):
+                # Calculate exactly how many frames pass in the real environment per update
+                frames_per_update = num_envs * config["NUM_STEPS"]
+                
                 def _wandb_callback(mets, step):
                     import numpy as np
                     try:
-                        log_dict = {}
+                        global_step = int(step) * frames_per_update
+                        log_dict = {"global_step": global_step}
+                        
                         for k, v in mets.items():
                             val = np.array(v).item() 
-                            clean_name = k.replace("returned_episode_achievements_", "").replace("_", " ").title()
                             if "Achievement" in k or "returned_episode" in k:
-                                log_dict[f"Achievements/{clean_name}"] = val
+                                clean_name = k.replace("returned_episode_achievements_", "").replace("_", " ").title()
+                                # Multiply by 100 to match the 0-100% Y-axis in the Craftax paper
+                                log_dict[f"Achievements/{clean_name}"] = val * 100.0
                             else:
                                 log_dict[f"online/{k}"] = val
                                 
-                        log_dict["online/step"] = int(step)
-                        wandb.log(log_dict, step=int(step))
+                        # We don't pass `step=` here anymore, WandB will use global_step automatically
+                        wandb.log(log_dict) 
                     except Exception as e:
                         print(f"\n[WANDB ERROR at step {int(step)}]: {e}\n")
 
@@ -385,7 +391,12 @@ def run_online(config: Dict[str, Any]) -> None:
     
     # Standard setup and WandB init
     if config.get("USE_WANDB"):
-        wandb.init(project=config["WANDB_PROJECT"], config=config, name=f"GRPO-{config['ENV_NAME']}")
+        wandb.init(project=config.get("WANDB_PROJECT", "craftax-remdm"), config=config, name=f"GRPO-{config['ENV_NAME']}")
+        
+        # Tell WandB to use our custom global_step for all X-Axes!
+        wandb.define_metric("global_step")
+        wandb.define_metric("online/*", step_metric="global_step")
+        wandb.define_metric("Achievements/*", step_metric="global_step")
 
     train_fn = make_train_online(config, init_params=init_params, ppo_agent=ppo_agent)
     
