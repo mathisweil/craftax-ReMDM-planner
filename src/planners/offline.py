@@ -1,5 +1,5 @@
 import time
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -20,6 +20,8 @@ from .utils import (
     _make_periodic_ckpt_manager,
     _resolve_ckpt_dir,
 )
+
+
 
 def make_train_offline(
     config: dict[str, Any],
