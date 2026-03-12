@@ -214,26 +214,19 @@ def _load_ppo_params(checkpoint_path, ppo_network, num_envs, obs_shape, layer_si
     init_hstate = ScannedRNN.initialize_carry(num_envs, layer_size)
     abstract_params = ppo_network.init(jax.random.PRNGKey(0), init_hstate, init_x)
 
-    dummy_tx = optax.chain(
-        optax.clip_by_global_norm(1.0),
-        optax.adam(1e-4)
-    )
-
-    abstract_state = TrainState.create(
-        apply_fn=ppo_network.apply,
-        params=abstract_params,
-        tx=dummy_tx,
-    )
-
     with ocp.CheckpointManager(checkpoint_path) as mgr:
         latest_step = mgr.latest_step()
+        # Request only "params", ignoring opt_state and step data
         restored = mgr.restore(
             latest_step,
-            args=ocp.args.PyTreeRestore(item=abstract_state, partial_restore=True)
+            args=ocp.args.PyTreeRestore(
+                item={"params": abstract_params},
+                partial_restore=True
+            )
         )
 
     print(f"Loaded PPO checkpoint from '{checkpoint_path}' (step {latest_step})")
-    return restored.params
+    return restored["params"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
