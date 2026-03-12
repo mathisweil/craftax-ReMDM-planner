@@ -55,6 +55,11 @@ if __name__ == "__main__":
     )
     # ── PPO checkpoint for data collection ──
     parser.add_argument("--ppo_checkpoint", type=str, required=True)
+    parser.add_argument("--gae_lambda", type=float, default=0.8)
+    parser.add_argument("--clip_eps", type=float, default=0.2)
+    parser.add_argument("--ent_coef", type=float, default=0.01)
+    parser.add_argument("--vf_coef", type=float, default=0.5)
+    parser.add_argument("--activation", type=str, default="tanh")
 
     args, rest_args = parser.parse_known_args(sys.argv[1:])
     if rest_args:

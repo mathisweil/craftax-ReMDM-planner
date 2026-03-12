@@ -222,7 +222,7 @@ def _load_ppo_params(checkpoint_path, ppo_network, num_envs, obs_shape, layer_si
     abstract_state = TrainState.create(
         apply_fn=ppo_network.apply,
         params=abstract_params,
-        tx=optax.adam(1e-4),
+        tx=dummy_tx,
     )
 
     with ocp.CheckpointManager(checkpoint_path) as mgr:
