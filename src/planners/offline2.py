@@ -228,7 +228,8 @@ def _load_ppo_params(checkpoint_path, ppo_network, num_envs, obs_shape, layer_si
     with ocp.CheckpointManager(checkpoint_path) as mgr:
         latest_step = mgr.latest_step()
         restored = mgr.restore(
-            latest_step, args=ocp.args.StandardRestore(abstract_state)
+            latest_step,
+            args=ocp.args.PyTreeRestore(item=abstract_state, partial_restore=True)
         )
 
     print(f"Loaded PPO checkpoint from '{checkpoint_path}' (step {latest_step})")
