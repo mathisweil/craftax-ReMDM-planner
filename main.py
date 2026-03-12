@@ -120,7 +120,7 @@ if __name__ == "__main__":
     parser.add_argument("--eta", type=float, default=None)
     parser.add_argument("--t_on", type=float, default=None)
     parser.add_argument("--t_off", type=float, default=None)
-    parser.add_argument("--top_p", type=int, default=None)
+    parser.add_argument("--top_p", type=float, default=None)
     parser.add_argument("--use_loop", action=argparse.BooleanOptionalAction, default=None)
     # Architecture
     parser.add_argument("--d_model", type=int, default=None)

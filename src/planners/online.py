@@ -6,6 +6,8 @@ import jax.numpy as jnp
 import orbax.checkpoint as ocp
 import wandb
 from craftax.craftax_env import make_craftax_env_from_name
+from craftax.craftax.constants import Achievement as FullCraftaxAchievements
+from craftax.craftax_classic.constants import Achievement as ClassicAchievements
 
 from src.models.remdm import sample_plan
 
@@ -251,35 +253,30 @@ def make_train_online(
             (train_state, rng), epoch_infos = jax.lax.scan(_update_epoch, (train_state, rng), None, update_epochs)
 
             # --- CO-TRAINING REWARD MODEL (UNIVERSAL SWITCHER) ---
-            def _train_reward_fn(state):
-                def _loss_fn(params):
-                    # All models take the flat obs perfectly now!
-                    preds = reward_model.apply(params, flat_obs)
-                    
-                    # Read the terminal argument to decide the math
-                    model_type = config.get("REWARD_MODEL_TYPE", "mlp")
-                    
-                    if model_type == "mlp":
-                        # Discriminator Math: Force known states to -1.0
-                        return jnp.mean((preds - (-1.0)) ** 2)
-                        
-                    elif model_type in ["rnd", "vision_rnd"]:
-                        # RND Math: The output IS the prediction error, just minimize it!
-                        return jnp.mean(preds)
-                        
-                    else:
-                        # Fallback safe loss
-                        return jnp.mean(preds)
-                
-                loss, grads = jax.value_and_grad(_loss_fn)(state.params)
-                return state.apply_gradients(grads=grads)
+            intrinsic_coef = config.get("INTRINSIC_COEF", 0.05)
             
-            rm_state = jax.lax.cond(
-                update_step_idx % 100 == 0,
-                _train_reward_fn,  
-                lambda s: s,       
-                rm_state
-            )
+            if intrinsic_coef > 0.0:
+                def _train_reward_fn(state):
+                    def _loss_fn(params):
+                        preds = reward_model.apply(params, flat_obs)
+                        model_type = config.get("REWARD_MODEL_TYPE", "mlp")
+                        
+                        if model_type == "mlp":
+                            return jnp.mean((preds - (-1.0)) ** 2)
+                        elif model_type in ["rnd", "vision_rnd"]:
+                            return jnp.mean(preds)
+                        else:
+                            return jnp.mean(preds)
+                
+                    loss, grads = jax.value_and_grad(_loss_fn)(state.params)
+                    return state.apply_gradients(grads=grads)
+            
+                rm_state = jax.lax.cond(
+                    update_step_idx % 100 == 0,
+                    _train_reward_fn,  
+                    lambda s: s,       
+                    rm_state
+                )
 
             # --- LOGGING ---
             ep_mask = all_infos["returned_episode"]
@@ -291,7 +288,7 @@ def make_train_online(
                 "advantage_mean": real_raw_advantages.mean(),
                 "advantage_std": real_raw_advantages.std(),
                 "reward_std": real_std_r.mean(), 
-                "adv_abs_mean": jnp.mean(jnp.abs(train_advantages)), # What the network actually felt
+                "adv_abs_mean": jnp.mean(jnp.abs(train_advantages)),
                 "reward_mean": real_segment_rewards.mean(),
                 "env_reward_mean": traj_base_rewards.mean(),
                 "intrinsic_reward_mean": traj_intr_rewards.mean(),
@@ -299,11 +296,28 @@ def make_train_online(
                 "death_toll": ep_mask.sum(),
             }
             
-            ep_mask = all_infos["returned_episode"]
-            n_done = jnp.maximum(ep_mask.sum(), 1)
+            # --- THE BULLETPROOF ACHIEVEMENT MAPPER ---
+            is_classic = "Classic" in config["ENV_NAME"]
+            achievement_cls = ClassicAchievements if is_classic else FullCraftaxAchievements
+            
             for k, v in all_infos.items():
-                if "achievement" in k.lower():
-                    metrics[f"Achievements/{k.split('_')[-1]}"] = (v * ep_mask).sum() / n_done
+                k_lower = k.lower()
+                # Safely catch ANY key related to an episode achievement
+                if "achievement" in k_lower and "returned_episode" in k_lower:
+                    
+                    # 1. Safe fallback name (e.g. 'Wood')
+                    clean_name = k.split('_')[-1].title() 
+                    
+                    # 2. Check the Enums for the perfect formal name
+                    for enum_item in achievement_cls:
+                        # e.g., if enum is "COLLECT_WOOD", check if "collect_wood" is in the key
+                        if enum_item.name.lower() in k_lower:
+                            clean_name = enum_item.name.replace("_", " ").title()
+                            break 
+                            
+                    # 3. Calculate percentage and log to WandB
+                    pct = (v * ep_mask).sum() / n_done
+                    metrics[f"Achievements/{clean_name}"] = pct
 
             jax.debug.print(
                 "Update: {step} | Loss: {loss:.3f} | Score: {score:.2f} | Intr: {intr:.2f} | PPO%: {ppo:.3f} | Deaths: {deaths}",
@@ -327,14 +341,12 @@ def make_train_online(
                         
                         for k, v in mets.items():
                             val = np.array(v).item() 
-                            if "Achievement" in k or "returned_episode" in k:
-                                clean_name = k.replace("returned_episode_achievements_", "").replace("_", " ").title()
-                                # Multiply by 100 to match the 0-100% Y-axis in the Craftax paper
-                                log_dict[f"Achievements/{clean_name}"] = val * 100.0
+                            if k.startswith("Achievements/"):
+                                # Multiply by 100 so the Y-axis is perfectly 0-100%
+                                log_dict[k] = val * 100.0
                             else:
                                 log_dict[f"online/{k}"] = val
                                 
-                        # We don't pass `step=` here anymore, WandB will use global_step automatically
                         wandb.log(log_dict) 
                     except Exception as e:
                         print(f"\n[WANDB ERROR at step {int(step)}]: {e}\n")
