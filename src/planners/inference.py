@@ -148,30 +148,52 @@ def run_inference(config: dict[str, Any]) -> None:
     _, (rewards, dones, achievements) = jax.lax.scan(mpc_step, carry, jnp.arange(eval_steps))
     elapsed = time.time() - t0
 
-    # --- 1. TIMESERIES MATH ---
-    ach_np = np.array(achievements)  # Shape: [10000, 32, num_achievements]
+    import numpy as np
+
+    # Convert to numpy for easy slicing
+    rewards_np = np.array(rewards)          # Shape: [10000, 32]
+    dones_np = np.array(dones)              # Shape: [10000, 32]
+    achievements_np = np.array(achievements)# Shape: [10000, 32, num_achievements]
+
+    # Arrays to hold the STRICT single-episode data
+    first_episode_rewards = np.zeros(num_envs)
+    first_episode_achievements = np.zeros((num_envs, achievements_np.shape[2]))
+    first_episode_lengths = np.zeros(num_envs, dtype=int)
+
+    # --- THE FIRST LIFE FILTER ---
+    for i in range(num_envs):
+        # Find every timestep where this specific agent died
+        done_indices = np.where(dones_np[:, i])[0]
+        
+        if len(done_indices) > 0:
+            end_idx = done_indices[0] # Cut the timeline at their FIRST death
+        else:
+            end_idx = eval_steps - 1  # The absolute legend survived all 10k steps
+
+        # Sum rewards only up to the first death
+        first_episode_rewards[i] = np.sum(rewards_np[:end_idx + 1, i])
+        
+        # Take the max achievements unlocked strictly within this single life
+        first_episode_achievements[i] = np.max(achievements_np[:end_idx + 1, i], axis=0)
+        
+        # Record how long they lived
+        first_episode_lengths[i] = end_idx + 1
+
+    # Calculate the TRUE percentage of agents that unlocked each achievement in 1 life
+    final_pct = np.mean(first_episode_achievements, axis=0) * 100.0
     
-    # Cumulative Maximum: Remember if an agent unlocked it before dying
-    cum_ach_np = np.maximum.accumulate(ach_np, axis=0)
-    
-    # Calculate the % of agents that have unlocked each achievement at EVERY timestep
-    timeseries_pct = np.mean(cum_ach_np, axis=1) * 100.0  # Shape: [10000, num_achievements]
-    final_pct = timeseries_pct[-1]
-    
-    total_reward_per_agent = jnp.sum(rewards, axis=0)
-    
-    # --- 2. REPORT CARD ---
+    # --- REPORT CARD ---
     print("\n" + "="*50)
-    print(f"EVALUATION COMPLETE IN {elapsed:.1f} SECONDS")
+    print(f"STRICT SINGLE-EPISODE EVALUATION COMPLETE ({elapsed:.1f}s)")
     print("="*50)
-    print(f"Average Score across {num_envs} games: {float(jnp.mean(total_reward_per_agent)):.1f}")
-    print(f"Highest Score in a single game: {float(jnp.max(total_reward_per_agent)):.1f}")
-    print(f"\nACHIEVEMENT REPORT CARD (Out of {num_envs} Agents):")
+    print(f"Average Score across {num_envs} games: {float(np.mean(first_episode_rewards)):.1f}")
+    print(f"Highest Score in a single game: {float(np.max(first_episode_rewards)):.1f}")
+    print("\nACHIEVEMENT REPORT CARD (Single Life Only):")
 
     achievement_cls = ClassicAchievements if "Classic" in env_name else FullCraftaxAchievements
     achievement_names = [(a.name.replace("_", " ").title(), a.name.lower()) for a in achievement_cls]
 
-    # Find the deepest achievement unlocked by ANY agent so we don't log a bunch of flat 0% lines
+    # Find the deepest achievement unlocked by ANY agent
     valid_indices = [i for i, pct in enumerate(final_pct) if pct > 0]
     highest_idx = max(valid_indices) if valid_indices else 5
 
@@ -182,41 +204,34 @@ def run_inference(config: dict[str, Any]) -> None:
         print(f"  {icon} {name}: {count} / {num_envs} agents")
     print("="*50)
 
-    # --- 3. WANDB LOGGING (Native Interactive Charts) ---
+    # --- WANDB LOGGING (Summary & Table Only) ---
     if config.get("USE_WANDB", True):
         wandb.init(
             project=config.get("WANDB_PROJECT", "craftax-remdm"),
-            name=f"ReportCard-T{temperature}-P{top_p}-{eval_steps}",
+            name=f"Eval-Strict-T{temperature}-P{top_p}",
             config=config,
             job_type="evaluation"
         )
         
-        # Log the final summary metrics 
-        # (WandB will automatically build a bar chart out of these in the summary tab!)
-        summary_log = {"eval/average_score": float(jnp.mean(total_reward_per_agent))}
+        # Log Summary (Bar Chart Data)
+        summary_log = {"eval_strict/average_score": float(np.mean(first_episode_rewards))}
         for i in range(highest_idx + 1):
             _, key = achievement_names[i]
-            summary_log[f"eval/final_achievements/{key}"] = final_pct[i]
+            summary_log[f"eval_strict/achievements/{key}"] = final_pct[i]
             
-        # Log summary at the very end of the step counter
-        wandb.log(summary_log, step=eval_steps)
+        wandb.log(summary_log)
         
-        print("Uploading timeseries data to WandB...")
-        # Subsample every 10 steps to keep the API fast and the charts smooth
-        for t in range(0, eval_steps, 10):
-            step_log = {}
-            for i in range(highest_idx + 1):
-                _, key = achievement_names[i]
-                step_log[f"eval/timeseries/{key}"] = timeseries_pct[t, i]
-            
-            wandb.log(step_log, step=t)
+        # Log Individual Game Table
+        table = wandb.Table(columns=["Game ID", "Total Score", "Max Achievements", "Lifespan (Steps)"])
+        unlocked_counts = np.sum(first_episode_achievements, axis=-1)
         
-        # Build the Game ID table
-        table = wandb.Table(columns=["Game ID", "Total Score", "Max Achievements Unlocked"])
-        scores = total_reward_per_agent.tolist()
-        unlocked_counts = jnp.sum(cum_ach_np[-1], axis=-1).tolist() 
-        for env_id, (score, unlocked) in enumerate(zip(scores, unlocked_counts)):
-            table.add_data(f"Agent {env_id + 1}", float(score), int(unlocked))
+        for env_id in range(num_envs):
+            table.add_data(
+                f"Agent {env_id + 1}", 
+                float(first_episode_rewards[env_id]), 
+                int(unlocked_counts[env_id]),
+                int(first_episode_lengths[env_id])
+            )
             
-        wandb.log({"Individual Game Results": table})
+        wandb.log({"Strict Individual Results": table})
         wandb.finish()
