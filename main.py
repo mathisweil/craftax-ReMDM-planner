@@ -120,7 +120,7 @@ if __name__ == "__main__":
     parser.add_argument("--eta", type=float, default=None)
     parser.add_argument("--t_on", type=float, default=None)
     parser.add_argument("--t_off", type=float, default=None)
-    parser.add_argument("--top_p", type=int, default=None)
+    parser.add_argument("--top_p", type=float, default=None)
     parser.add_argument("--use_loop", action=argparse.BooleanOptionalAction, default=None)
     # Architecture
     parser.add_argument("--d_model", type=int, default=None)
@@ -153,6 +153,8 @@ if __name__ == "__main__":
     parser.add_argument("--ppo_model_type", type=str, choices=["ppo", "ppo_rnn", "ppo_rnd"], default=None)
     parser.add_argument("--train_sigma", type=float, default=None)
     parser.add_argument("--collect_temperature", type=float, default=None)
+    # Inference
+    parser.add_argument("--eval_steps", type=float, default=10000)
     # Reward model
     parser.add_argument("--reward_model_type", type=str, choices=["mlp", "rnd", "vision_rnd"], default=None)
     parser.add_argument("--reward_epochs", type=int, default=None)

@@ -15,7 +15,7 @@ train_sigma: 0.0          # ReMDM NELBO: per-token remasking probability during 
 eta: 0.5                  # Remasking strength
 t_on: 0.7                 # Loop strategy: upper time bound for remasking window
 t_off: 0.3                # Loop strategy: lower time bound for remasking window
-top_p: 4                  # Nucleus sampling: keep top-k logits (higher = more random)
+top_p: 0.95               # Nucleus sampling: keep top-k logits (higher = more random)
 use_loop: true            # Enable three-phase loop remasking during reverse diffusion
 
 # ── Transformer architecture ─────────────────────────────────────────────────
@@ -38,11 +38,13 @@ collect_temperature: 2.0  # Softmax temperature applied to PPO logits during dat
 
 # ── Online training (GRPO Fine-tuning) ───────────────────────────────────────
 num_envs: 32               # Number of parallel environments
-num_steps: 1200             # Env steps per update (must be divisible by replan_every)
+num_steps: 128             # Env steps per update (must be divisible by replan_every)
 num_updates: 1000          # Total training iterations
 replan_every: 4            # Steps to execute from a plan before replanning
 update_epochs: 1           # Gradient passes per collected batch
 num_minibatches: 4         # Minibatches per epoch
+offline_checkpoint_path: null
+intrinsic_coef: 0.0
 
 # GRPO & Teacher Injection Settings
 grpo_group_size: 4         # Number of plans to sample per state for relative advantage
@@ -54,7 +56,7 @@ use_optimistic_resets: false
 optimistic_reset_ratio: 16
 
 # ── Inference / evaluation ───────────────────────────────────────────────────
-eval_steps: 1000          # Number of environment steps to run during evaluation
+eval_steps: 10000          # Number of environment steps to run during evaluation
 
 # ── Data collection & agent-based offline training ────────────────────────────
 # Used by both --mode collect (save to disk) and --mode offline (live from agent).

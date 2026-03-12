@@ -1,6 +1,6 @@
 import time
 from typing import Any
-
+import numpy as np
 import jax
 import jax.numpy as jnp
 import wandb
@@ -11,7 +11,7 @@ from src.planners.utils import _build_model, _load_checkpoint, _make_apply_fns
 
 def sample_plan_inpainting(
     apply_fn, params, rng, obs, history, hist_len,
-    num_actions, plan_horizon, diffusion_steps, temperature, top_k
+    num_actions, plan_horizon, diffusion_steps, temperature, top_p
 ):
     """Custom Diffusion Loop implementing the Historical Inpainting Paradox."""
     batch_size = obs.shape[0]
@@ -28,10 +28,20 @@ def sample_plan_inpainting(
         logits = apply_fn(params, obs, seq, t_tensor, model_rng)
         scaled_logits = logits / jnp.maximum(temperature, 1e-8)
 
-        if top_k is not None:
-            top_k_vals, _ = jax.lax.top_k(scaled_logits, top_k)
-            kth_vals = top_k_vals[..., -1:]
-            filtered_logits = jnp.where(scaled_logits >= kth_vals, scaled_logits, -jnp.inf)
+        if top_p is not None:
+            probs = jax.nn.softmax(scaled_logits, axis=-1)
+            sorted_indices = jnp.argsort(-probs, axis=-1)
+            sorted_probs = jnp.take_along_axis(probs, sorted_indices, axis=-1)
+            
+            # Exclusive cumsum to keep the first token that pushes us over the threshold
+            cutoff = jnp.cumsum(sorted_probs, axis=-1) - sorted_probs 
+            mask = cutoff >= top_p # True means throw away
+            
+            # Map the mask back to the original vocabulary positions
+            inv_indices = jnp.argsort(sorted_indices, axis=-1)
+            original_mask = jnp.take_along_axis(mask, inv_indices, axis=-1)
+            
+            filtered_logits = jnp.where(original_mask, -jnp.inf, scaled_logits)
         else:
             filtered_logits = scaled_logits
 
@@ -82,10 +92,8 @@ def run_inference(config: dict[str, Any]) -> None:
     plan_horizon: int = config["PLAN_HORIZON"]
     diffusion_steps: int = config.get("DIFFUSION_STEPS_EVAL", 10)
     temperature: float = config.get("TEMPERATURE", 0.5)
-    top_k: int = config.get("TOP_K", 4)
-    
-    # 10,000 steps is exactly ONE maximum length Craftax game.
-    eval_steps = 10000 
+    top_p: float = config.get("TOP_P", 0.95)
+    eval_steps: int = int(float(config.get("EVAL_STEPS", 10000)))
 
     model = _build_model(config, num_actions)
     apply_inference, _ = _make_apply_fns(model)
@@ -108,7 +116,7 @@ def run_inference(config: dict[str, Any]) -> None:
             apply_fn=apply_inference, params=model_params, rng=plan_rng,
             obs=obs, history=history, hist_len=hist_len,
             num_actions=num_actions, plan_horizon=plan_horizon,
-            diffusion_steps=diffusion_steps, temperature=temperature, top_k=top_k
+            diffusion_steps=diffusion_steps, temperature=temperature, top_p=top_p
         )
 
         action = jnp.take_along_axis(plan, hist_len[:, None], axis=-1).squeeze(-1)
@@ -122,7 +130,6 @@ def run_inference(config: dict[str, Any]) -> None:
         hist_len = jnp.where(done, 0, hist_len)
         history = jnp.where(done[:, None], num_actions, history)
 
-        # We return the RAW achievements array directly from the state!
         return (obs_next, state_next, rng, history, hist_len), (reward, done, state_next.achievements)
 
     print(f"\nDropping {num_envs} agents into {env_name} for 1 full life (10,000 steps)...")
@@ -141,55 +148,90 @@ def run_inference(config: dict[str, Any]) -> None:
     _, (rewards, dones, achievements) = jax.lax.scan(mpc_step, carry, jnp.arange(eval_steps))
     elapsed = time.time() - t0
 
-    # achievements shape: [10000 steps, 32 envs, num_achievements]
-    # Find the maximum achievement unlocked for each of the 32 agents across the 10,000 steps
-    max_achievements_per_agent = jnp.max(achievements, axis=0) # Shape: [32, num_achievements]
-    
-    # Count how many total agents (out of 32) got each achievement
-    total_agents_with_achievement = jnp.sum(max_achievements_per_agent, axis=0)
-    
-    # Calculate the total reward each agent got
-    total_reward_per_agent = jnp.sum(rewards, axis=0)
+    import numpy as np
 
+    # Convert to numpy for easy slicing
+    rewards_np = np.array(rewards)          # Shape: [10000, 32]
+    dones_np = np.array(dones)              # Shape: [10000, 32]
+    achievements_np = np.array(achievements)# Shape: [10000, 32, num_achievements]
+
+    # Arrays to hold the STRICT single-episode data
+    first_episode_rewards = np.zeros(num_envs)
+    first_episode_achievements = np.zeros((num_envs, achievements_np.shape[2]))
+    first_episode_lengths = np.zeros(num_envs, dtype=int)
+
+    # --- THE FIRST LIFE FILTER ---
+    for i in range(num_envs):
+        # Find every timestep where this specific agent died
+        done_indices = np.where(dones_np[:, i])[0]
+        
+        if len(done_indices) > 0:
+            end_idx = done_indices[0] # Cut the timeline at their FIRST death
+        else:
+            end_idx = eval_steps - 1  # The absolute legend survived all 10k steps
+
+        # Sum rewards only up to the first death
+        first_episode_rewards[i] = np.sum(rewards_np[:end_idx + 1, i])
+        
+        # Take the max achievements unlocked strictly within this single life
+        first_episode_achievements[i] = np.max(achievements_np[:end_idx + 1, i], axis=0)
+        
+        # Record how long they lived
+        first_episode_lengths[i] = end_idx + 1
+
+    # Calculate the TRUE percentage of agents that unlocked each achievement in 1 life
+    final_pct = np.mean(first_episode_achievements, axis=0) * 100.0
+    
+    # --- REPORT CARD ---
     print("\n" + "="*50)
-    print(f"EVALUATION COMPLETE IN {elapsed:.1f} SECONDS")
-    print("\n" + "="*50)
-    print(f"EVALUATION COMPLETE IN {elapsed:.1f} SECONDS")
+    print(f"STRICT SINGLE-EPISODE EVALUATION COMPLETE ({elapsed:.1f}s)")
     print("="*50)
-    print(f"Average Score across 32 games: {float(jnp.mean(total_reward_per_agent)):.1f}")
-    print(f"Highest Score in a single game: {float(jnp.max(total_reward_per_agent)):.1f}")
-    print("\nACHIEVEMENT REPORT CARD (Out of 32 Agents):")
+    print(f"Average Score across {num_envs} games: {float(np.mean(first_episode_rewards)):.1f}")
+    print(f"Highest Score in a single game: {float(np.max(first_episode_rewards)):.1f}")
+    print("\nACHIEVEMENT REPORT CARD (Single Life Only):")
 
     achievement_cls = ClassicAchievements if "Classic" in env_name else FullCraftaxAchievements
     achievement_names = [(a.name.replace("_", " ").title(), a.name.lower()) for a in achievement_cls]
 
-    # REMOVED the "if count > 0" check. Now it prints the entire tech tree!
-    for i, count in enumerate(total_agents_with_achievement):
-        name, key = achievement_names[i] if i < len(achievement_names) else (f"Achievement {i}", f"ach_{i}")
+    # Find the deepest achievement unlocked by ANY agent
+    valid_indices = [i for i, pct in enumerate(final_pct) if pct > 0]
+    highest_idx = max(valid_indices) if valid_indices else 5
+
+    for i in range(highest_idx + 1):
+        name, _ = achievement_names[i]
+        count = int(final_pct[i] / 100.0 * num_envs)
         icon = "✅" if count > 0 else "❌"
-        print(f"  {icon} {name}: {int(count)} / {num_envs} agents")
+        print(f"  {icon} {name}: {count} / {num_envs} agents")
     print("="*50)
 
-    # --- WANDB LOGGING ---
+    # --- WANDB LOGGING (Summary & Table Only) ---
     if config.get("USE_WANDB", True):
         wandb.init(
             project=config.get("WANDB_PROJECT", "craftax-remdm"),
-            name=f"ReportCard-T{temperature}-K{top_k}",
+            name=f"Eval-Strict-T{temperature}-P{top_p}",
             config=config,
             job_type="evaluation"
         )
         
-        summary_log = {"eval/average_score": float(jnp.mean(total_reward_per_agent))}
-        for i, count in enumerate(total_agents_with_achievement):
-            _, key = achievement_names[i] if i < len(achievement_names) else (None, f"ach_{i}")
-            summary_log[f"eval/achievements/{key}"] = float(count) / num_envs * 100
+        # Log Summary (Bar Chart Data)
+        summary_log = {"eval_strict/average_score": float(np.mean(first_episode_rewards))}
+        for i in range(highest_idx + 1):
+            _, key = achievement_names[i]
+            summary_log[f"eval_strict/achievements/{key}"] = final_pct[i]
+            
         wandb.log(summary_log)
         
-        table = wandb.Table(columns=["Game ID", "Total Score", "Max Achievements Unlocked"])
-        scores = total_reward_per_agent.tolist()
-        unlocked_counts = jnp.sum(max_achievements_per_agent, axis=-1).tolist()
-        for env_id, (score, unlocked) in enumerate(zip(scores, unlocked_counts)):
-            table.add_data(f"Agent {env_id + 1}", float(score), int(unlocked))
+        # Log Individual Game Table
+        table = wandb.Table(columns=["Game ID", "Total Score", "Max Achievements", "Lifespan (Steps)"])
+        unlocked_counts = np.sum(first_episode_achievements, axis=-1)
+        
+        for env_id in range(num_envs):
+            table.add_data(
+                f"Agent {env_id + 1}", 
+                float(first_episode_rewards[env_id]), 
+                int(unlocked_counts[env_id]),
+                int(first_episode_lengths[env_id])
+            )
             
-        wandb.log({"Individual Game Results": table})
+        wandb.log({"Strict Individual Results": table})
         wandb.finish()
