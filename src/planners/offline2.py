@@ -216,7 +216,6 @@ def _load_ppo_params(checkpoint_path, ppo_network, num_envs, obs_shape, layer_si
 
     with ocp.CheckpointManager(checkpoint_path) as mgr:
         latest_step = mgr.latest_step()
-        # Request only "params", ignoring opt_state and step data
         restored = mgr.restore(
             latest_step,
             args=ocp.args.PyTreeRestore(
@@ -419,27 +418,35 @@ def make_train(config, ppo_checkpoint_path):
 
                     def _loss_fn(params, traj_batch, rng):
                         T, B = traj_batch.obs.shape[:2]
+                        K = 16  # number of windows per environment
                         max_start = T - plan_horizon
 
                         rng, start_rng, diff_rng, mask_rng = jax.random.split(rng, 4)
 
-                        # ── SAMPLE PLAN WINDOWS ──
-                        # One random start time per env in the minibatch
                         start_times = jax.random.randint(
-                            start_rng, (B,), 0, max_start + 1
+                            start_rng,
+                            (B, K),
+                            0,
+                            max_start + 1,
                         )
+
+                        # flatten environment × window dimension
+                        start_times = start_times.reshape(-1)
+                        env_ids = jnp.repeat(jnp.arange(B), K)
 
                         # Extract obs at the start of each window
                         obs_batch = traj_batch.obs[
-                            start_times, jnp.arange(B)
-                        ]  # (B, *obs_shape)
+                            start_times,
+                            env_ids,
+                        ]
 
                         # Extract plan = action[start : start+H] per env
                         offsets = jnp.arange(plan_horizon)  # (H,)
-                        act_idx = start_times[:, None] + offsets[None, :]  # (B, H)
+                        act_idx = start_times[:, None] + offsets[None, :]
                         plan_batch = traj_batch.action[
-                            act_idx, jnp.arange(B)[:, None]
-                        ]  # (B, H)
+                            act_idx,
+                            env_ids[:, None],
+                        ]
 
                         # ── VALIDITY MASK (no episode boundary in window) ──
                         # traj_batch.done[t, e] = True means a reset happened
@@ -449,7 +456,8 @@ def make_train(config, ppo_checkpoint_path):
                             done_offsets = jnp.arange(1, plan_horizon)
                             done_idx = start_times[:, None] + done_offsets[None, :]
                             done_in_window = traj_batch.done[
-                                done_idx, jnp.arange(B)[:, None]
+                                done_idx,
+                                env_ids[:, None],
                             ]
                             valid = ~jnp.any(done_in_window, axis=-1)  # (B,)
                         else:
