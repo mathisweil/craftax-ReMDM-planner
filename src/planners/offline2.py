@@ -213,10 +213,16 @@ def _load_ppo_params(checkpoint_path, ppo_network, num_envs, obs_shape, layer_si
     )
     init_hstate = ScannedRNN.initialize_carry(num_envs, layer_size)
     abstract_params = ppo_network.init(jax.random.PRNGKey(0), init_hstate, init_x)
+
+    dummy_tx = optax.chain(
+        optax.clip_by_global_norm(1.0),
+        optax.adam(1e-4)
+    )
+
     abstract_state = TrainState.create(
         apply_fn=ppo_network.apply,
         params=abstract_params,
-        tx=optax.adam(1e-4),  # dummy optimizer – only params are needed
+        tx=optax.adam(1e-4),
     )
 
     with ocp.CheckpointManager(checkpoint_path) as mgr:
