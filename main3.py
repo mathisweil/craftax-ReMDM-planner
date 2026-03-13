@@ -1,3 +1,5 @@
+from src.planners.make_train import run_offline_diffusion
+
 if __name__ == "__main__":
     import argparse
     import sys
