@@ -18,11 +18,13 @@ from craftax.craftax_classic.constants import Achievement as ClassicAchievements
 from flax import serialization
 from flax.training.train_state import TrainState
 
-from src.diffusion import sample_plan, SCHEDULE_MAP
+from src.diffusion.sampling import sample_plan
+from src.diffusion.schedules import SCHEDULE_MAP
+
 from src.models.reward_models import get_reward_model
 from .data import PPOAgent, load_ppo_agent, make_env
 from .state import build_model, init_params, load_checkpoint, create_train_state, make_apply_fns
-from .train import make_grad_step
+from .train import _make_grad_step
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +52,7 @@ def make_train_online(
     env, env_params = make_env(config, num_envs)
     model = build_model(config, num_actions)
     apply_eval, apply_train = make_apply_fns(model)
-    grad_step = make_grad_step(
+    grad_step = _make_grad_step(
         apply_train, num_actions, schedule_fn, schedule_deriv_fn,
         config.get("TRAIN_SIGMA", 0.0), config.get("LABEL_SMOOTHING", 0.0),
     )
