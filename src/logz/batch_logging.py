@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import wandb
 
+
 batch_logs: dict = {}
 log_times: list = []
 
@@ -36,7 +37,7 @@ def create_log_dict(metric, config):
     """Build a flat logging dict from a JAX metric pytree.
 
     Matches the Craftax_Baselines ``create_log_dict`` interface and adds
-    ReMDM-specific diffusion metrics.
+    ReMDM-specific diffusion metrics, as well as dynamic validation keys.
     """
     to_log = {
         "episode_return": metric.get("episode_return", float("nan")),
@@ -45,21 +46,32 @@ def create_log_dict(metric, config):
 
     # Diffusion-specific metrics.
     for k in (
-        "diffusion_loss", "mean_t", "frac_masked", "grad_norm",
-        "action_entropy", "action_unique_frac",
-        "mean_step_reward", "reward_std", "plan_diversity",
-        "num_completed_eps",
+            "diffusion_loss", "mean_t", "frac_masked", "grad_norm",
+            "action_entropy", "action_unique_frac",
+            "mean_step_reward", "reward_std", "plan_diversity",
+            "num_completed_eps",
     ):
         if k in metric:
             to_log[k] = metric[k]
 
-    # Craftax achievements (any key containing "achievement").
+    # Craftax achievements and validation metrics
     sum_achievements = 0.0
+    sum_val_achievements = 0.0
+    has_val = False
+
     for k, v in metric.items():
-        if "achievement" in k.lower() and k != "achievements":
+        if k.startswith("val/"):
+            has_val = True
+            to_log[k] = v
+            if "achievement" in k.lower() and k != "val/achievements":
+                sum_val_achievements += v / 100.0
+        elif "achievement" in k.lower() and k != "achievements":
             to_log[k] = v
             sum_achievements += v / 100.0
+
     to_log["achievements"] = sum_achievements
+    if has_val:
+        to_log["val/achievements"] = sum_val_achievements
 
     return to_log
 
@@ -80,12 +92,14 @@ def batch_log(update_step, log, config):
         for key in batch_logs[update_step][0]:
             agg = []
             for i in range(config["NUM_REPEATS"]):
-                val = batch_logs[update_step][i][key]
+                # Use .get() to prevent KeyErrors if repeats are out of sync
+                val = batch_logs[update_step][i].get(key, float("nan"))
                 if not jnp.isnan(val):
                     agg.append(val)
 
             if len(agg) > 0:
-                if key in MEAN_KEYS or "achievement" in key.lower():
+                # Average MEAN_KEYS, achievements, and all validation keys
+                if key in MEAN_KEYS or "achievement" in key.lower() or key.startswith("val/"):
                     agg_logs[key] = np.mean(agg)
                 else:
                     agg_logs[key] = np.array(agg)
@@ -98,9 +112,12 @@ def batch_log(update_step, log, config):
             elif len(log_times) > 1:
                 dt = log_times[-1] - log_times[-2]
                 steps_between = (
-                    config["NUM_STEPS"] * config["NUM_ENVS"] * config["NUM_REPEATS"]
+                        config["NUM_STEPS"] * config["NUM_ENVS"] * config["NUM_REPEATS"]
                 )
                 sps = steps_between / dt
                 agg_logs["sps"] = sps
 
         wandb.log(agg_logs)
+
+        # Clear the buffer to prevent memory leaks during long training runs
+        del batch_logs[update_step]
