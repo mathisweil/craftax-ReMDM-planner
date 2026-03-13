@@ -102,11 +102,18 @@ class DenoisingTransformer(nn.Module):
 
         # --- UPGRADE 1: Normalize the raw Craftax Observation! ---
         # This stops inventory counts from blowing up the network variance.
-        obs_norm = nn.LayerNorm()(obs)
-        
+
         # --- Observation encoder (MLP) ---
-        obs_emb = obs_norm
-        for _ in range(self.obs_encoder_layers):
+        # Project first, then normalize
+        obs_emb = nn.Dense(
+            self.obs_encoder_width,
+            kernel_init=orthogonal(np.sqrt(2)),
+            bias_init=constant(0.0),
+        )(obs)
+        obs_emb = nn.LayerNorm()(obs_emb)
+        obs_emb = nn.relu(obs_emb)
+
+        for _ in range(self.obs_encoder_layers - 1):
             obs_emb = nn.Dense(
                 self.obs_encoder_width,
                 kernel_init=orthogonal(np.sqrt(2)),
@@ -134,11 +141,6 @@ class DenoisingTransformer(nn.Module):
             noisy_actions
         )  # [batch, plan_horizon, d_model]
 
-        # --- Positional encoding for action sequence positions ---
-        positions = jnp.arange(self.plan_horizon)
-        pos_emb = SinusoidalPosEmbed(self.d_model)(positions)
-        action_emb = action_emb + pos_emb[None, :, :]
-
         # --- UPGRADE 2: Separate the Prefix Tokens! ---
         # Instead of adding them, we give the transformer TWO separate tokens.
         # Token 0: The Environment Map
@@ -146,9 +148,16 @@ class DenoisingTransformer(nn.Module):
         # Tokens 2 to H+1: The Action Sequence
         obs_token = obs_emb[:, None, :] # [batch, 1, d_model]
         time_token = t_emb[:, None, :]  # [batch, 1, d_model]
-        
+
         seq = jnp.concatenate([obs_token, time_token, action_emb], axis=1)
-        # seq is now shape: [batch, 2 + plan_horizon, d_model]
+        # seq shape: [batch, 2 + plan_horizon, d_model]
+
+        # Apply positional encoding to the entire sequence
+        seq_len = 2 + self.plan_horizon
+        positions = jnp.arange(seq_len)
+        pos_emb = SinusoidalPosEmbed(self.d_model)(positions)
+
+        seq = seq + pos_emb[None, :, :]
 
         # --- Transformer blocks (bidirectional) ---
         for _ in range(self.n_layers):
