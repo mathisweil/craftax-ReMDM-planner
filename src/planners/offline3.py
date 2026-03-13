@@ -28,6 +28,9 @@ from Craftax_Baselines.logz.batch_logging import create_log_dict, batch_log
 
 from craftax.craftax_env import make_craftax_env_from_name
 
+from src.models import DenoisingTransformer
+
+
 # Offline Discrete Diffusion Planner trained on PPO-collected trajectories.
 # Follows the exact make_train.py / train / _update_step / _env_step / _update_epoch
 # / _update_minbatch scaffold from ppo_rnn.py, replacing only the parts that
@@ -205,27 +208,71 @@ SCHEDULE_MAP = {
 # PPO checkpoint loader
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _load_ppo_params(checkpoint_path, ppo_network, num_envs, obs_shape, layer_size):
-    """Restore PPO parameters from an orbax checkpoint."""
-    init_x = (
-        jnp.zeros((1, num_envs, *obs_shape)),
-        jnp.zeros((1, num_envs)),
-    )
-    init_hstate = ScannedRNN.initialize_carry(num_envs, layer_size)
-    abstract_params = ppo_network.init(jax.random.PRNGKey(0), init_hstate, init_x)
+def _load_ppo_params(checkpoint_path, ppo_network, model_type, num_envs, obs_shape, layer_size=512):
+    """Restore PPO parameters from an Orbax checkpoint across multiple architectures."""
+    rng = jax.random.PRNGKey(0)
+    model_type = model_type.lower()
+
+    if model_type == "ppo_rnn":
+        init_x = (
+            jnp.zeros((1, num_envs, *obs_shape)),
+            jnp.zeros((1, num_envs)),
+        )
+        init_hstate = jnp.zeros((num_envs, layer_size))
+        abstract_params = ppo_network.init(rng, init_hstate, init_x)
+    else:
+        init_x = jnp.zeros((1, *obs_shape))
+        abstract_params = ppo_network.init(rng, init_x)
 
     with ocp.CheckpointManager(checkpoint_path) as mgr:
         latest_step = mgr.latest_step()
+        if latest_step is None:
+            raise FileNotFoundError(f"No checkpoint found at {checkpoint_path}")
+
         restored = mgr.restore(
             latest_step,
             args=ocp.args.PyTreeRestore(
-                item={"params": abstract_params},
-                partial_restore=True
+                item={"params": abstract_params}
             )
         )
 
-    print(f"Loaded PPO checkpoint from '{checkpoint_path}' (step {latest_step})")
+    print(f"Loaded {model_type.upper()} checkpoint from '{checkpoint_path}' (step {latest_step})")
     return restored["params"]
+
+
+class PPOAgentAdapter:
+    def __init__(self, network, params, model_type: str, layer_size: int = 512):
+        self.network = network
+        self.params = params
+        self.model_type = model_type.lower()
+        self.layer_size = layer_size
+
+    def init_hidden(self, batch_size: int):
+        """Returns the initial hidden state for RNNs, or None for feedforward networks."""
+        if self.model_type == "ppo_rnn":
+            return jnp.zeros((batch_size, self.layer_size))
+        return None
+
+    def get_action_and_hidden(self, obs, done, hidden, rng, temperature=1.0):
+        """Uniform forward pass across all architectures."""
+
+        if self.model_type == "ppo_rnn":
+            ac_in = (obs[np.newaxis, :], done[np.newaxis, :])
+            new_hidden, pi, _ = self.network.apply(self.params, hidden, ac_in)
+        elif self.model_type == "ppo_rnd":
+            pi, _value_e, _value_i = self.network.apply(self.params, obs)
+            new_hidden = hidden
+        else:
+            pi, _value = self.network.apply(self.params, obs)
+            new_hidden = hidden
+
+        noisy_logits = pi.logits / temperature
+        action = jax.random.categorical(rng, noisy_logits)
+
+        if self.model_type == "ppo_rnn":
+            action = action.squeeze(0)
+
+        return action, new_hidden
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -284,7 +331,7 @@ def make_train(config, ppo_checkpoint_path):
         f"NUM_STEPS ({config['NUM_STEPS']}) must be >= PLAN_HORIZON ({plan_horizon})"
     )
 
-    # ── LOAD FROZEN PPO AGENT (replaces PPO's "own network") ──
+    # ── LOAD FROZEN PPO AGENT ──
     ppo_config = {"LAYER_SIZE": config["LAYER_SIZE"]}
     ppo_network = ActorCriticRNN(num_actions, config=ppo_config)
     ppo_params = _load_ppo_params(
@@ -305,10 +352,16 @@ def make_train(config, ppo_checkpoint_path):
         # ────────────────────────────────────────────────────────────
         # INIT NETWORK  (replaces PPO's ActorCriticRNN init)
         # ────────────────────────────────────────────────────────────
-        diffusion_net = DiffusionDenoiser(
-            action_dim=num_actions,
+        diffusion_net = DenoisingTransformer(
+            num_actions=num_actions,
             plan_horizon=plan_horizon,
-            config=config,
+            d_model=config.get("D_MODEL", 256),
+            n_heads=config.get("N_HEADS", 4),
+            n_layers=config.get("N_LAYERS", 4),
+            d_ff=config.get("D_FF", 512),
+            obs_encoder_layers=config.get("OBS_ENCODER_LAYERS", 2),
+            obs_encoder_width=config.get("OBS_ENCODER_WIDTH", 512),
+            dropout_rate=config.get("DROPOUT_RATE", 0.1),
         )
         rng, _rng = jax.random.split(rng)
         init_obs = jnp.zeros((1, *obs_shape))

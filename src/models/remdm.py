@@ -97,45 +97,17 @@ _MAX_LOSS_WEIGHT: float = 1000.0
 
 
 def compute_loss(
-    model_apply: ModelApplyFn,
-    params: Any,
-    rng: chex.PRNGKey,
-    x_0: jnp.ndarray,
-    obs: jnp.ndarray,
-    num_actions: int,
-    schedule_fn: ScheduleFn,
-    sigma_t: float = 0.0, advantages=None
+        model_apply: ModelApplyFn,
+        params: Any,
+        rng: chex.PRNGKey,
+        x_0: jnp.ndarray,
+        obs: jnp.ndarray,
+        valid_batch: jnp.ndarray,  # <-- ADDED
+        num_actions: int,
+        schedule_fn: ScheduleFn,
+        sigma_t: float = 0.0,
+        advantages=None
 ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
-    """Compute the MDLM / ReMDM training loss.
-
-    When ``sigma_t = 0`` this is the standard MDLM SUBS objective (Eq. 3 of
-    Wang et al. 2025, following Sahoo et al. 2024).  When ``sigma_t > 0`` it
-    is the ReMDM NELBO (Eq. 9) with a constant remasking rate, producing a
-    rescaled version of the MDLM loss.
-
-    Steps:
-        1. Sample t ~ Uniform[eps, 1.0] per batch element.
-        2. Compute alpha_t, mask tokens to get z_t.
-        3. Predict logits from model.
-        4. Weighted cross-entropy on masked positions only.
-
-    The weight is  ((1 - sigma_t) * alpha_t - alpha_s) / (1 - alpha_t),
-    approximated via finite differences for the derivative.
-
-    Args:
-        model_apply:    fn(params, obs, z_t, t, rng) -> logits [B, H, num_actions].
-        params:         Model parameters (pytree).
-        rng:            PRNG key.
-        x_0:            [batch, H] int32, clean action sequences.
-        obs:            [batch, obs_dim] float32, observations / conditioning.
-        num_actions:    int, number of real actions (MASK id = num_actions).
-        schedule_fn:    cosine_schedule or linear_schedule.
-        sigma_t:        float, constant remasking rate for ReMDM NELBO.
-                        0.0 recovers the MDLM objective.
-
-    Returns:
-        (scalar_loss, info_dict)
-    """
     batch_size = x_0.shape[0]
     mask_token_id = num_actions
     eps = 1e-5
@@ -148,13 +120,8 @@ def compute_loss(
     alpha_t = schedule_fn(t)
 
     # --- loss weight --------------------------------------------------------
-    # MDLM:  w = (alpha_t - alpha_s) / (1 - alpha_t)  ≈ -alpha'(t)/(1-alpha_t)
-    # ReMDM: w = ((1-sigma)*alpha_t - alpha_s) / (1 - alpha_t)        [Eq. 9]
     alpha_t_plus = schedule_fn(jnp.minimum(t + dt, 1.0))
-    neg_alpha_dot = (alpha_t - alpha_t_plus) / dt           # ≈ -alpha'(t)
-    # ReMDM NELBO (Eq. 9): weight = ((1 - sigma_t) * alpha_t - alpha_s) / (1 - alpha_t)
-    # In continuous time this simplifies to (1 - sigma_t) * (-alpha'(t)) / (1 - alpha_t).
-    # When sigma_t = 0, this recovers the standard MDLM weight.
+    neg_alpha_dot = (alpha_t - alpha_t_plus) / dt
     weight = (1.0 - sigma_t) * neg_alpha_dot / jnp.maximum(1.0 - alpha_t, eps)
     weight = jnp.minimum(weight, _MAX_LOSS_WEIGHT)
 
@@ -166,45 +133,60 @@ def compute_loss(
 
     # --- cross-entropy on masked positions ----------------------------------
     is_masked = (z_t == mask_token_id).astype(jnp.float32)  # [B, H]
-    is_masked = (z_t == mask_token_id).astype(jnp.float32)  # [B, H]
-    
-    # THE FIX: Smooth the labels so the network can never reach 100% confidence (loss = 0)
+    valid_mask = valid_batch[:, None].astype(jnp.float32)  # [B, H]
+
+    # Only penalize tokens that are both masked AND part of a valid trajectory
+    valid_and_masked = is_masked * valid_mask  # [B, H]
+
     raw_one_hot = jax.nn.one_hot(x_0, num_actions)
-    targets_one_hot = optax.smooth_labels(raw_one_hot, 0.05) # 5% uncertainty
-    
+    targets_one_hot = optax.smooth_labels(raw_one_hot, 0.05)
+
     log_probs = jax.nn.log_softmax(logits, axis=-1)
     ce = -jnp.sum(targets_one_hot * log_probs, axis=-1)
 
-    masked_ce = ce * is_masked
-    num_masked = jnp.maximum(is_masked.sum(axis=-1), 1.0)   # [B]
-    per_sample_loss = weight * (masked_ce.sum(axis=-1) / num_masked)
+    masked_ce = ce * valid_and_masked
+    num_valid_masked = jnp.maximum(valid_and_masked.sum(axis=-1), 1.0)  # [B]
+
+    unweighted_loss = masked_ce.sum(axis=-1) / num_valid_masked
+    per_sample_loss = weight * unweighted_loss
 
     # --- GRPO ADVANTAGE WEIGHTING ---
     if advantages is not None:
-        # Stop gradients on advantages to ensure they act strictly as constant weights
-        # rather than part of the computation graph
         adv_weights = jax.lax.stop_gradient(advantages)
         per_sample_loss = per_sample_loss * adv_weights
-        
+
     loss = jnp.mean(per_sample_loss)
 
-    # --- ADD ACCURACY MATH HERE ---
-    # 1. Get the network's top guess for every position
-    predicted_actions = jnp.argmax(logits, axis=-1)         # [B, H]
-    
-    # 2. Check where the guess matches the PPO expert (x_0)
-    correct_guesses = (predicted_actions == x_0)            # [B, H]
-    
-    # 3. Calculate accuracy ONLY on the tokens that were actually masked
-    masked_accuracy = jnp.sum(correct_guesses * is_masked) / jnp.maximum(jnp.sum(is_masked), 1.0)
-    # ------------------------------
+    # --- ACCURACY MATH ---
+    predicted_actions = jnp.argmax(logits, axis=-1)
+    correct_guesses = (predicted_actions == x_0)
+
+    # Calculate accuracy ONLY on the valid, masked tokens
+    masked_accuracy = jnp.sum(correct_guesses * valid_and_masked) / jnp.maximum(jnp.sum(valid_and_masked), 1.0)
+
+    t_low = (t < 0.33)[:, None]  # Broadcast to [B, 1] to align with [B, H]
+    t_mid = ((t >= 0.33) & (t <= 0.66))[:, None]
+    t_high = (t > 0.66)[:, None]
+
+    acc_low = jnp.sum(correct_guesses * valid_and_masked * t_low) / jnp.maximum(jnp.sum(valid_and_masked * t_low), 1.0)
+    acc_mid = jnp.sum(correct_guesses * valid_and_masked * t_mid) / jnp.maximum(jnp.sum(valid_and_masked * t_mid), 1.0)
+    acc_high = jnp.sum(correct_guesses * valid_and_masked * t_high) / jnp.maximum(jnp.sum(valid_and_masked * t_high),
+                                                                                  1.0)
 
     info: dict[str, jnp.ndarray] = {
         "loss": loss,
+        "unweighted_loss": jnp.mean(unweighted_loss),
         "mean_t": jnp.mean(t),
         "frac_masked": jnp.mean(is_masked),
-        "accuracy": masked_accuracy,  
+        "accuracy": masked_accuracy,
+        "acc_t_low": acc_low,
+        "acc_t_mid": acc_mid,
+        "acc_t_high": acc_high,
     }
+
+    if advantages is not None:
+        info["adv_mean"] = jnp.mean(advantages)
+        info["adv_std"] = jnp.std(advantages)
     return loss, info
 
 
