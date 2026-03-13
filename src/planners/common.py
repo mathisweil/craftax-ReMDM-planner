@@ -23,13 +23,13 @@ def _global_grad_norm(grads) -> jnp.ndarray:
 
 def _action_stats(act_batch: jnp.ndarray, num_actions: int, valid_batch: jnp.ndarray) -> dict[str, jnp.ndarray]:
     """Compute action distribution entropy and mode fraction, ignoring padded transitions."""
+    expanded_valid = jnp.broadcast_to(valid_batch[:, None], act_batch.shape)
+
     flat_acts = act_batch.reshape(-1)
-    flat_valid = valid_batch.reshape(-1)
-
-    # Push invalid actions out of bounds so bincount ignores them
+    flat_valid = expanded_valid.reshape(-1)
     valid_acts = jnp.where(flat_valid, flat_acts, num_actions + 1)
-    counts = jnp.bincount(valid_acts, length=num_actions).astype(jnp.float32)
 
+    counts = jnp.bincount(valid_acts, length=num_actions).astype(jnp.float32)
     probs = counts / jnp.maximum(counts.sum(), 1.0)
     log_probs = jnp.log(jnp.where(probs > 0, probs, 1.0))
     entropy = -jnp.sum(probs * log_probs)
