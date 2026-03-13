@@ -268,7 +268,7 @@ def make_train(config: dict[str, Any]):
 # ---------------------------------------------------------------------------
 
 def run_offline_diffusion(config):
-    config = {k.upper(): v for k, v in config.__dict__.items()}
+    config = {k.upper(): v for k, v in config.items()}
 
     if config["USE_WANDB"]:
         wandb.init(
