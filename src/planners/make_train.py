@@ -107,7 +107,12 @@ class Transition(NamedTuple):
 def make_train(config: dict[str, Any]):
     config["NUM_UPDATES"] = config["TOTAL_TIMESTEPS"] // config["NUM_STEPS"] // config["NUM_ENVS"]
     valid_steps_per_rollout = config["NUM_STEPS"] - config["PLAN_HORIZON"] + 1
-    config["MINIBATCH_SIZE"] = (config["NUM_ENVS"] * valid_steps_per_rollout) // config["NUM_MINIBATCHES"]
+    num_samples = config["NUM_ENVS"] * valid_steps_per_rollout
+    assert num_samples % config["NUM_MINIBATCHES"] == 0, (
+        f"NUM_ENVS * valid_steps ({num_samples}) must be divisible by "
+        f"NUM_MINIBATCHES ({config['NUM_MINIBATCHES']})"
+    )
+    config["MINIBATCH_SIZE"] = num_samples // config["NUM_MINIBATCHES"]
 
     # Create environment
     # Create environment
@@ -173,7 +178,6 @@ def make_train(config: dict[str, Any]):
 
         def _run_validation(train_state, rng):
             # Setup a small number of dedicated eval envs
-            num_val_envs = config.get("NUM_VAL_ENVS", 64)
             rng, val_rng, init_rng = jax.random.split(rng, 3)
 
             # Reset eval envs
