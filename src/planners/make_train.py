@@ -48,11 +48,15 @@ def _load_ppo_params(checkpoint_path, ppo_network, model_type, num_envs, obs_sha
         if latest_step is None:
             raise FileNotFoundError(f"No checkpoint found at {checkpoint_path}")
 
+        restore_structure = {
+            "params": abstract_params,
+            "opt_state": None,
+            "step": None
+        }
+
         restored = mgr.restore(
             latest_step,
-            args=ocp.args.PyTreeRestore(
-                item={"params": abstract_params}
-            )
+            args=ocp.args.PyTreeRestore(item=restore_structure)
         )
 
     print(f"Loaded {model_type.upper()} checkpoint from '{checkpoint_path}' (step {latest_step})")
