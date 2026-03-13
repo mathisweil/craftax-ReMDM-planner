@@ -20,8 +20,8 @@ if __name__ == "__main__":
 
     # Logging
     parser.add_argument("--use_wandb", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--wandb_project", type=str, required=True)
-    parser.add_argument("--wandb_entity", type=str, required=True)
+    parser.add_argument("--wandb_project", type=str)
+    parser.add_argument("--wandb_entity", type=str)
     parser.add_argument("--debug", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--save_policy", action="store_true")
 
