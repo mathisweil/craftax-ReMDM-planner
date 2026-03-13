@@ -43,6 +43,21 @@ SCHEDULE_MAP: dict[str, ScheduleFn] = {
 # =============================================================================
 
 
+def _build_model(config: dict[str, Any], num_actions: int) -> DenoisingTransformer:
+    """Instantiate a ``DenoisingTransformer`` from the config dict."""
+    return DenoisingTransformer(
+        num_actions=num_actions,
+        plan_horizon=config["PLAN_HORIZON"],
+        d_model=config["D_MODEL"],
+        n_heads=config["N_HEADS"],
+        n_layers=config["N_LAYERS"],
+        d_ff=config["D_FF"],
+        obs_encoder_layers=config["OBS_ENCODER_LAYERS"],
+        obs_encoder_width=config["OBS_ENCODER_WIDTH"],
+        dropout_rate=config["DROPOUT_RATE"],
+    )
+
+
 def _init_model_params(
     model: DenoisingTransformer,
     rng: jax.Array,
@@ -220,6 +235,52 @@ def _detect_ppo_model_type(checkpoint_path: str) -> str:
     if "rnd" in path_lower:
         return "ppo_rnd"
     return "ppo"
+
+
+def _build_ppo_network(
+        model_type: str,
+        num_actions: int,
+        obs_dim: int,
+        layer_size: int,
+) -> tuple[Any, Any]:
+    """Instantiate the correct network and return abstract params only.
+
+    Returns:
+        ``(network, abstract_params)`` — raw params pytree (no opt_state).
+        ``partial_restore=True`` in the restore call handles the rest.
+    """
+    if model_type == "ppo_rnn":
+        import sys
+        import os
+
+        # Inject the baselines folder into the path
+        baselines_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "Craftax_Baselines"))
+        if baselines_path not in sys.path:
+            sys.path.insert(0, baselines_path)
+
+        # Import directly without the Craftax_Baselines prefix!
+        from ppo_rnn import ActorCriticRNN, ScannedRNN
+        #from Craftax_Baselines.ppo_rnn import ActorCriticRNN, ScannedRNN
+        network = ActorCriticRNN(num_actions, config={"LAYER_SIZE": layer_size})
+        def _init_params():
+            dummy_hidden = ScannedRNN.initialize_carry(1, layer_size)
+            return network.init(
+                jax.random.PRNGKey(0), dummy_hidden,
+                (jnp.zeros((1, 1, obs_dim)), jnp.zeros((1, 1))),
+            )
+    elif model_type == "ppo_rnd":
+        from Craftax_Baselines.models.rnd import ActorCriticRND
+        network = ActorCriticRND(num_actions, layer_size)
+        def _init_params():
+            return network.init(jax.random.PRNGKey(0), jnp.zeros((1, obs_dim)))
+    else:
+        from Craftax_Baselines.models.actor_critic import ActorCritic
+        network = ActorCritic(num_actions, layer_size)
+        def _init_params():
+            return network.init(jax.random.PRNGKey(0), jnp.zeros((1, obs_dim)))
+
+    abstract_params = jax.eval_shape(_init_params)
+    return network, abstract_params
 
 
 def _load_ppo_checkpoint(

@@ -387,8 +387,8 @@ def run_offline_diffusion(config):
     rng = jax.random.PRNGKey(config["SEED"])
     rngs = jax.random.split(rng, config["NUM_REPEATS"])
 
-    train_jit = jax.jit(make_train(config))
-    train_vmap = jax.vmap(train_jit)
+    train_fn = make_train(config)
+    train_vmap = jax.jit(jax.vmap(train_fn))
 
     t0 = time.time()
     out = train_vmap(rngs)
