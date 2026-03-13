@@ -61,7 +61,7 @@ intrinsic_coef: 0.0
 # ── Data collection (--mode collect) ─────────────────────────────────────────
 collect_num_steps: 10000000
 collect_num_envs: 128
-ppo_model_type: "ppo_rnd"           # ppo | ppo_rnn | ppo_rnd
+ppo_model_type: "ppo_rnn"           # ppo | ppo_rnn | ppo_rnd
 layer_size: 512
 
 # ── Inference (--mode inference) ─────────────────────────────────────────────
