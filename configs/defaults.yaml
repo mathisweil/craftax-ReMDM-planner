@@ -1,84 +1,87 @@
 # =============================================================================
 # ReMDM default configuration
-# All values can be overridden via CLI args (e.g. --lr 1e-4).
+# Override any value via CLI: python main.py --mode offline --lr 1e-4
 # =============================================================================
 
 # ── Environment ──────────────────────────────────────────────────────────────
 env_name: "Craftax-Classic-Symbolic-v1"
-
-# ── Diffusion model ───────────────────────────────────────────────────────────
-plan_horizon: 32          # Length of the action plan H
-diffusion_steps: 15       # Number of denoising steps T at inference
-diffusion_schedule: "cosine"   # Noise schedule: cosine | linear
-remask_strategy: "rescale"     # Remasking strategy: rescale | cap | conf | loop
-train_sigma: 0.0          # ReMDM NELBO: per-token remasking probability during training (0 = vanilla MDLM)
-eta: 0.5                  # Remasking strength
-t_on: 0.7                 # Loop strategy: upper time bound for remasking window
-t_off: 0.3                # Loop strategy: lower time bound for remasking window
-top_p: 0.95               # Nucleus sampling: keep top-k logits (higher = more random)
-use_loop: true            # Enable three-phase loop remasking during reverse diffusion
-
-# ── Transformer architecture ─────────────────────────────────────────────────
-d_model: 256              # Transformer hidden dimension
-n_heads: 4                # Number of attention heads
-n_layers: 4               # Number of transformer blocks
-d_ff: 512                 # FFN inner dimension
-obs_encoder_layers: 2     # Number of MLP layers in the observation encoder
-obs_encoder_width: 512    # Width of observation encoder hidden layers
-dropout_rate: 0.1         # Dropout rate (disabled at inference via deterministic=True)
-
-# ── Optimisation ─────────────────────────────────────────────────────────────
-lr: 3.0e-4                # Adam learning rate
-max_grad_norm: 1.0        # Gradient clipping norm
-batch_size: 256           # Minibatch size for offline training
-
-# ── Offline training ─────────────────────────────────────────────────────────
-num_train_steps: 1e9   # Number of gradient steps for offline training
-collect_temperature: 2.0  # Softmax temperature applied to PPO logits during data collection
-
-# ── Online training (GRPO Fine-tuning) ───────────────────────────────────────
-num_envs: 32               # Number of parallel environments
-num_steps: 128             # Env steps per update (must be divisible by replan_every)
-num_updates: 1000          # Total training iterations
-replan_every: 4            # Steps to execute from a plan before replanning
-update_epochs: 1           # Gradient passes per collected batch
-num_minibatches: 4         # Minibatches per epoch
-offline_checkpoint_path: null
-intrinsic_coef: 0.0
-
-# GRPO & Teacher Injection Settings
-grpo_group_size: 4         # Number of plans to sample per state for relative advantage
-ppo_init_prob: 0.1         # Starting chance (10%) to use PPO expert guidance
-ppo_decay_rate: 0.99       # Exponential decay (lower = faster hand-off to Diffusion)
-
-# Environment resets
 use_optimistic_resets: false
 optimistic_reset_ratio: 16
 
-# ── Inference / evaluation ───────────────────────────────────────────────────
-eval_steps: 10000          # Number of environment steps to run during evaluation
+# ── Transformer architecture ─────────────────────────────────────────────────
+d_model: 256
+n_heads: 4
+n_layers: 4
+d_ff: 512
+obs_encoder_layers: 2
+obs_encoder_width: 512
+dropout_rate: 0.1
 
-# ── Data collection & agent-based offline training ────────────────────────────
-# Used by both --mode collect (save to disk) and --mode offline (live from agent).
-# Train a PPO agent first with ppo_rnn.py or ppo_rnd.py, then point here.
-ppo_model_type: ppo_rnd           # PPO architecture override: null (auto) | ppo | ppo_rnn | ppo_rnd
-collect_num_steps: 10000000     # Total env steps to collect (--mode collect)
-collect_num_envs: 128           # Parallel environments during collection
-layer_size: 512                # Hidden layer width of the ActorCritic network
+# ── Diffusion ────────────────────────────────────────────────────────────────
+plan_horizon: 32
+diffusion_schedule: "cosine"        # cosine | linear
+train_sigma: 0.0                    # remasking correction during training (0 = standard MDLM)
+label_smoothing: 0.0                # cross-entropy label smoothing (0 = exact ELBO)
 
-# ── Logging / W&B ────────────────────────────────────────────────────────────
+# ── Reverse sampling ─────────────────────────────────────────────────────────
+diffusion_steps: 15                 # denoising steps T at inference
+remask_strategy: "rescale"          # rescale | cap | conf
+eta: 0.5                            # remasking strength
+use_loop: true                      # three-phase loop (Algorithm 3)
+t_on: 0.7                           # loop: remasking starts
+t_off: 0.3                          # loop: remasking ends
+temperature: 0.5                    # softmax temperature for sampling
+top_p: 0.95                         # nucleus sampling threshold
+
+# ── Optimisation ─────────────────────────────────────────────────────────────
+lr: 3.0e-4
+max_grad_norm: 1.0
+batch_size: 256
+
+# ── Offline training (--mode offline) ────────────────────────────────────────
+total_timesteps: 1.0e+9
+num_envs: 1024
+num_steps: 64
+num_minibatches: 8
+update_epochs: 4
+num_repeats: 1
+collect_temperature: 2.0
+val_interval: 50
+val_diffusion_steps: 50
+
+# ── Online GRPO training (--mode online) ─────────────────────────────────────
+num_updates: 1000
+replan_every: 4
+grpo_group_size: 4
+awr_temperature: 2.0
+ppo_init_prob: 0.1
+ppo_decay_rate: 0.99
+intrinsic_coef: 0.0
+
+# ── Data collection (--mode collect) ─────────────────────────────────────────
+collect_num_steps: 10000000
+collect_num_envs: 128
+ppo_model_type: "ppo_rnd"           # ppo | ppo_rnn | ppo_rnd
+layer_size: 512
+
+# ── Inference (--mode inference) ─────────────────────────────────────────────
+eval_steps: 10000
+diffusion_steps_eval: 10
+
+# ── Reward model (--mode train_reward / online intrinsic) ────────────────────
+reward_model_type: "mlp"            # mlp | rnd | vision_rnd
+reward_epochs: 10
+reward_lr: 1.0e-4
+reward_save_path: "checkpoints/reward_model.msgpack"
+
+# ── Checkpointing ───────────────────────────────────────────────────────────
+checkpoint_dir: "checkpoints"
+checkpoint_interval: 500
+max_checkpoints: 3
+save_policy: true
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+seed: null                          # random if not set
 use_wandb: true
 wandb_project: "remdm-craftax"
-save_policy: true        # Save the model checkpoint at the end of training
-num_repeats: 1            # Number of independent training runs (vmapped)
-
-# ── Reward model training (--mode train_reward) ──────────────────────────────
-reward_model_type: "mlp"                              # Architecture: mlp | rnd | vision_rnd
-reward_epochs: 10                                     # Training epochs over offline data
-reward_lr: 1.0e-4                                     # Adam learning rate for reward model
-reward_model_path: "checkpoints/reward_model"         # Directory for periodic reward checkpoints
-
-# ── Checkpointing (periodic) ────────────────────────────────────────────────
-ckpt_every_steps: 5e5     # Save a checkpoint every N training steps
-ckpt_max_to_keep: 3       # Number of most recent checkpoints to retain
-ckpt_dir: "checkpoints"   # Base directory for periodic checkpoints
+debug: true
