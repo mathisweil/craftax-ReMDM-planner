@@ -160,7 +160,7 @@ def make_train(config: dict[str, Any]):
             obs_encoder_width=config["OBS_ENCODER_WIDTH"],
             dropout_rate=config["DROPOUT_RATE"],
         )
-        _, apply_train = _make_apply_fns(diffusion_net)
+        apply_eval, apply_train = _make_apply_fns(diffusion_net)
         schedule_fn = SCHEDULE_MAP[config["DIFFUSION_SCHEDULE"]]
         grad_step = _make_grad_step(apply_train, num_actions, schedule_fn, config.get("TRAIN_SIGMA", 0.0))
 
@@ -186,7 +186,7 @@ def make_train(config: dict[str, Any]):
                 # Use your existing sample_plan logic from remdm.py
                 # This generates a full sequence of actions [B, H]
                 plan = sample_plan(
-                    apply_train, train_state.params, plan_rng, val_obs,
+                    apply_eval, train_state.params, plan_rng, val_obs,
                     num_actions, config["PLAN_HORIZON"],
                     num_steps=config.get("VAL_DIFFUSION_STEPS", 50),
                     schedule_fn=schedule_fn,
