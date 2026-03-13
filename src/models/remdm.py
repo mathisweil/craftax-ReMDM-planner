@@ -254,8 +254,10 @@ def compute_sigma_conf(
 
     # Softmax of -psi across positions.  Masked positions have psi=+inf,
     # so -psi=-inf, and they get zero weight after softmax.
-    neg_psi = jnp.where(is_unmasked, -psi, -jnp.inf)        # [B, H]
-    eta_conf = jax.nn.softmax(neg_psi, axis=-1)              # [B, H]
+    any_unmasked = jnp.any(is_unmasked, axis=-1, keepdims=True)  # [B, 1]
+    neg_psi = jnp.where(is_unmasked, -psi, -jnp.inf)
+    safe_neg_psi = jnp.where(any_unmasked, neg_psi, 0.0)
+    eta_conf = jax.nn.softmax(safe_neg_psi, axis=-1)
 
     # Only apply to unmasked positions.
     return jnp.where(is_unmasked, eta_conf * base_sigma, 0.0)
@@ -450,8 +452,8 @@ def sample_plan(
         if top_p is not None:
             scaled = logits / jnp.maximum(temperature, 1e-8)
             return _nucleus_sample(rng_key, scaled, top_p=top_p)
-        elif temperature != 1.0:
-            scaled = logits / jnp.maximum(temperature, 1e-8)
+        elif temperature > 1e-8:  # <-- changed condition
+            scaled = logits / temperature
             B, H, V = scaled.shape
             flat = scaled.reshape(B * H, V)
             flat_rng = jax.random.split(rng_key, B * H)
