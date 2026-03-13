@@ -84,4 +84,5 @@ save_policy: true
 seed: null                          # random if not set
 use_wandb: true
 wandb_project: "remdm-craftax"
+wandb_entity:
 debug: true
