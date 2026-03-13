@@ -9,6 +9,7 @@ import numpy as np
 import orbax.checkpoint as ocp
 from craftax.craftax_env import make_craftax_env_from_name
 
+from src.models.remdm import sample_plan
 from .common import SCHEDULE_MAP, _make_grad_step
 from .utils import (
     _init_model_params,
@@ -170,6 +171,47 @@ def make_train(config: dict[str, Any]):
         obsv, env_state = env.reset(env_rng, env_params)
         init_hstate = ppo_agent.init_hidden(config["NUM_ENVS"])
 
+        def _run_validation(train_state, rng):
+            # Setup a small number of dedicated eval envs
+            num_val_envs = config.get("NUM_VAL_ENVS", 64)
+            rng, val_rng, init_rng = jax.random.split(rng, 3)
+
+            # Reset eval envs
+            val_obs, val_env_state = env.reset(val_rng, env_params)
+
+            def _val_step(carry, _):
+                val_env_state, val_obs, rng = carry
+                rng, plan_rng, step_rng = jax.random.split(rng, 3)
+
+                # Use your existing sample_plan logic from remdm.py
+                # This generates a full sequence of actions [B, H]
+                plan = sample_plan(
+                    apply_train, train_state.params, plan_rng, val_obs,
+                    num_actions, config["PLAN_HORIZON"],
+                    num_steps=config.get("VAL_DIFFUSION_STEPS", 50),
+                    schedule_fn=schedule_fn,
+                    remask_strategy="cap",  # Recommended for planning
+                    use_loop=True  # Enable mistake-correction
+                )
+
+                # Execute the FIRST action of the plan (Receding Horizon Control)
+                action = plan[:, 0]
+                val_obs, val_env_state, _, _, info = env.step(
+                    step_rng, val_env_state, action, env_params
+                )
+                return (val_env_state, val_obs, rng), info
+
+            # Run for a fixed number of steps (e.g., a full episode length)
+            _, val_infos = jax.lax.scan(_val_step, (val_env_state, val_obs, rng), None, 128)
+
+            # Calculate mean achievements across validation episodes
+            val_metrics = jax.tree.map(
+                lambda x: (x * val_infos["returned_episode"]).sum()
+                          / (val_infos["returned_episode"].sum() + 1e-8),
+                val_infos
+            )
+            return {f"val/{k}": v for k, v in val_metrics.items()}
+
         # TRAIN LOOP
         def _update_step(runner_state, unused):
             # COLLECT TRAJECTORIES
@@ -274,6 +316,21 @@ def make_train(config: dict[str, Any]):
                 traj_batch.info,
             )
             metric.update(env_metrics)
+
+            val_interval = config.get("VAL_INTERVAL", 50)
+            is_val_step = (update_step % val_interval == 0)
+
+            dummy_val_metrics = jax.tree.map(jnp.zeros_like, {f"val/{k}": v for k, v in env_metrics.items()})
+
+            # 2. Fix RNG hygiene by splitting before the conditional
+            rng, cond_val_rng = jax.random.split(rng)
+
+            val_metrics = jax.lax.cond(
+                is_val_step,
+                lambda: _run_validation(train_state, cond_val_rng),  # Pass isolated RNG
+                lambda: dummy_val_metrics
+            )
+            metric.update(val_metrics)
 
             if config["DEBUG"] and config["USE_WANDB"]:
                 def callback(metric, update_step):

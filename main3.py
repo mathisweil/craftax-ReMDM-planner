@@ -31,6 +31,7 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--max_grad_norm", type=float, default=1.0)
     parser.add_argument("--update_epochs", type=int, default=4)
+    parser.add_argument("--val_interval", type=int, default=50)
 
     # PPO Adapter / Data Collection
     parser.add_argument("--ppo_checkpoint_path", type=str, required=True)
