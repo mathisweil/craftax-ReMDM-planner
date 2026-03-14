@@ -1,4 +1,0 @@
-[submodule "Craftax_Baselines"]
-	path = Craftax_Baselines
-	url = https://github.com/mathisweil/Craftax_Baselines.git
-	branch = local_changes
