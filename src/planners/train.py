@@ -293,5 +293,5 @@ def run_offline_diffusion(config):
         train_state = jax.tree.map(lambda x: x[0], train_states)
         path = os.path.join(wandb.run.dir, "policies")
         with ocp.CheckpointManager(path, options=ocp.CheckpointManagerOptions(max_to_keep=1)) as mgr:
-            mgr.save(config["TOTAL_TIMESTEPS"], args=ocp.args.StandardSave(train_state))
+            mgr.save(int(config["TOTAL_TIMESTEPS"]), args=ocp.args.StandardSave(train_state))
         print(f"Saved policy to {path}")
