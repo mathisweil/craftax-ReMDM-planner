@@ -50,14 +50,28 @@ def load_checkpoint(
     path: str,
 ) -> Any:
     """Load diffusion model parameters from an Orbax checkpoint."""
-    abstract = init_params(model, rng, obs_dim, plan_horizon)
+    params = init_params(model, rng, obs_dim, plan_horizon)
+
+    # Build an abstract/dummy TrainState matching the saved structure
+    abstract_state = create_train_state(
+        model=model,
+        params=params,
+        lr=1e-4,  # dummy, only used to match structure
+        max_grad_norm=1.0,  # dummy, only used to match structure
+    )
+
     with ocp.CheckpointManager(path) as mgr:
         step = mgr.latest_step()
         if step is None:
             raise FileNotFoundError(f"No checkpoint at {path}")
-        restored = mgr.restore(step, args=ocp.args.PyTreeRestore(item=abstract))
+
+        restored_state = mgr.restore(
+            step,
+            args=ocp.args.StandardRestore(item=abstract_state),
+        )
+
     print(f"Loaded diffusion checkpoint from '{path}' (step {step})")
-    return restored
+    return restored_state.params
 
 
 def create_train_state(
