@@ -1,13 +1,4 @@
-"""Online GRPO training: sample plan groups, simulate, advantage-weight, update.
-
-Refactored to align with train.py structure:
-- jax.lax.scan replaces host Python loop (eliminates CPU-GPU sync per step)
-- Checkpointing moved post-scan (matches run_offline_diffusion)
-- Per-sample advantage weighting corrected
-- vmap sim_rng duplication fixed
-- Metric accumulation memory leak eliminated
-- step_idx carried in runner tuple
-"""
+"""Online GRPO training: sample plan groups, simulate, advantage-weight, update."""
 
 from __future__ import annotations
 
@@ -147,7 +138,12 @@ def make_train_online(config: dict[str, Any]):
         state = create_train_state(model, params, config["LR"], config["MAX_GRAD_NORM"])
 
         obs, env_state = env.reset(env_rng, env_params)
-        init_ppo_hstate = ppo.init_hidden(num_envs) if ppo is not None else None
+        # Must be a concrete array (not None) so scan/vmap carries have
+        # consistent pytree structure.
+        init_ppo_hstate = (
+            ppo.init_hidden(num_envs) if ppo is not None
+            else jnp.zeros((num_envs, 1))
+        )
 
         # --------------------------------------------------------------
         # _update_step  (matches train.py signature: (runner, _) -> ...)
