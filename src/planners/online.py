@@ -20,12 +20,10 @@ import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
 import wandb
-from craftax.craftax_env import make_craftax_env_from_name
 
 from src.diffusion.loss import compute_loss
 from src.diffusion.sampling import sample_plan
 from src.diffusion.schedules import SCHEDULE_MAP
-from src.models.denoiser import DenoisingTransformer
 
 from .data import PPOAgent, load_ppo_agent, make_env
 from .state import build_model, init_params, load_checkpoint, create_train_state, make_apply_fns
@@ -120,6 +118,15 @@ def make_train_online(config: dict[str, Any]):
         config.get("TRAIN_SIGMA", 0.0), config.get("LABEL_SMOOTHING", 0.0),
     )
 
+    # Pretrained checkpoint (host I/O — must happen before jit/vmap tracing)
+    pretrained_params = None
+    if config.get("OFFLINE_CHECKPOINT_PATH"):
+        _tmp_rng = jax.random.PRNGKey(0)
+        pretrained_params = load_checkpoint(
+            model, _tmp_rng, obs_dim, plan_horizon,
+            config["OFFLINE_CHECKPOINT_PATH"],
+        )
+
     # Samples per update
     n_cycles = config["NUM_STEPS"] // replan_every
     total_samples = n_cycles * group_size * num_envs
@@ -132,8 +139,11 @@ def make_train_online(config: dict[str, Any]):
     def train(rng: jax.Array) -> dict[str, Any]:
         rng, init_rng, env_rng = jax.random.split(rng, 3)
 
-        # Init diffusion params (or load pretrained via run_online)
-        params = init_params(model, init_rng, obs_dim, plan_horizon)
+        # Use pretrained params if available, otherwise init from scratch
+        if pretrained_params is not None:
+            params = pretrained_params
+        else:
+            params = init_params(model, init_rng, obs_dim, plan_horizon)
         state = create_train_state(model, params, config["LR"], config["MAX_GRAD_NORM"])
 
         obs, env_state = env.reset(env_rng, env_params)

@@ -11,7 +11,6 @@ import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
 import wandb
-from craftax.craftax_env import make_craftax_env_from_name
 
 from src.diffusion.loss import compute_loss
 from src.diffusion.sampling import sample_plan
@@ -20,16 +19,11 @@ from src.models.denoiser import DenoisingTransformer
 from .data import (
     PPOAgent,
     Transition,
+    make_env,
     build_ppo_network,
     load_ppo_params,
 )
 from .state import init_params, create_train_state, make_apply_fns
-from Craftax_Baselines.wrappers import (
-    LogWrapper,
-    OptimisticResetVecEnvWrapper,
-    BatchEnvWrapper,
-    AutoResetEnvWrapper,
-)
 from Craftax_Baselines.logz.batch_logging import create_log_dict, batch_log
 
 
@@ -96,17 +90,7 @@ def make_train(config: dict[str, Any]):
     config["MINIBATCH_SIZE"] = num_samples // config["NUM_MINIBATCHES"]
 
     # Environment
-    env = make_craftax_env_from_name(config["ENV_NAME"], not config["USE_OPTIMISTIC_RESETS"])
-    env_params = env.default_params
-    env = LogWrapper(env)
-    if config["USE_OPTIMISTIC_RESETS"]:
-        env = OptimisticResetVecEnvWrapper(
-            env, num_envs=num_envs,
-            reset_ratio=min(config["OPTIMISTIC_RESET_RATIO"], num_envs),
-        )
-    else:
-        env = AutoResetEnvWrapper(env)
-        env = BatchEnvWrapper(env, num_envs=num_envs)
+    env, env_params = make_env(config, num_envs)
 
     num_actions = env.action_space(env_params).n
     obs_shape = env.observation_space(env_params).shape
