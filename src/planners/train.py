@@ -53,16 +53,22 @@ def _action_stats(acts: jnp.ndarray, num_actions: int, valid: jnp.ndarray) -> di
 def _make_grad_step(apply_train, num_actions, schedule_fn, schedule_deriv_fn, sigma_t, label_smoothing):
     """Return a jittable function: (state, acts, obs, valid, rng) -> (state, metrics)."""
 
-    def _loss_fn(params, acts, obs, valid, rng):
-        return compute_loss(
+    def _loss_fn(params, acts, obs, valid, rng, advantages=None):
+        loss, info = compute_loss(
             apply_train, params, rng, acts, obs, valid,
             num_actions, schedule_fn, schedule_deriv_fn,
             sigma_t=sigma_t, label_smoothing=label_smoothing,
         )
 
-    def step(state, acts, obs, valid, rng):
+        if advantages is not None:
+            weights = jnp.clip(advantages, 0.0, 20.0)
+            loss = loss * weights.mean()
+
+        return loss, info
+
+    def step(state, acts, obs, valid, rng, advantages=None):
         (loss, info), grads = jax.value_and_grad(_loss_fn, has_aux=True)(
-            state.params, acts, obs, valid, rng,
+            state.params, acts, obs, valid, rng, advantages
         )
         state = state.apply_gradients(grads=grads)
         info["grad_norm"] = optax.tree.norm(grads)
