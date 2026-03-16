@@ -296,20 +296,31 @@ def make_train(config: dict[str, Any]):
                 acts = jax.lax.dynamic_slice(traj.action, (t_idx, 0), (plan_horizon, num_envs))
                 dones = jax.lax.dynamic_slice(traj.done, (t_idx, 0), (plan_horizon, num_envs))
                 valid = ~jnp.any(dones, axis=0)
-                
+            
                 obs_seq = jax.lax.dynamic_slice(all_obs, (t_idx, 0, 0), (plan_horizon, num_envs, obs_dim))
                 next_obs_seq = jax.lax.dynamic_slice(all_obs, (t_idx+1, 0, 0), (plan_horizon, num_envs, obs_dim))
                 rew_seq = jax.lax.dynamic_slice(traj.reward, (t_idx, 0), (plan_horizon, num_envs))
-                
+            
+                # NEW: sum rewards over the window per env
+                window_return = jnp.sum(rew_seq, axis=0)  # (num_envs,)
+            
                 return obs_t, jnp.swapaxes(acts, 0, 1), valid, \
                        jnp.swapaxes(obs_seq, 0, 1), jnp.swapaxes(next_obs_seq, 0, 1), \
-                       jnp.swapaxes(rew_seq, 0, 1), jnp.swapaxes(dones, 0, 1)
+                       jnp.swapaxes(rew_seq, 0, 1), jnp.swapaxes(dones, 0, 1), \
+                       window_return  # NEW
 
-            obs_w, act_w, valid_w, obs_seq_w, next_obs_seq_w, rew_seq_w, dones_seq_w = jax.vmap(_window)(jnp.arange(valid_per_rollout))
+            obs_w, act_w, valid_w, obs_seq_w, next_obs_seq_w, rew_seq_w, dones_seq_w, returns_w = \
+                jax.vmap(_window)(jnp.arange(valid_per_rollout))
             
             flat_obs = obs_w.reshape(-1, obs_dim)
             flat_acts = act_w.reshape(-1, plan_horizon)
             flat_valid = valid_w.reshape(-1)
+
+            flat_returns = returns_w.reshape(-1)
+            flat_returns_clipped = jnp.clip(flat_returns, 0.0, None)
+            return_weights = flat_returns_clipped / (jnp.mean(flat_returns_clipped) + 1e-8)
+            return_weights = jnp.maximum(return_weights, 0.1)
+            weighted_valid = flat_valid.astype(jnp.float32) * return_weights
             
             flat_obs_seq = obs_seq_w.reshape(-1, plan_horizon, obs_dim)
             flat_next_obs_seq = next_obs_seq_w.reshape(-1, plan_horizon, obs_dim)
@@ -321,7 +332,7 @@ def make_train(config: dict[str, Any]):
             # ------------------------------------------------------------------
             
             # --- 1. Diffusion Training Loop ---
-            diff_dataset = (flat_obs, flat_acts, flat_valid)
+            diff_dataset = (flat_obs, flat_acts, weighted_valid)
             def _diff_epoch(epoch_state, _):
                 st_d, ds, rng = epoch_state
                 rng, perm_rng = jax.random.split(rng)
