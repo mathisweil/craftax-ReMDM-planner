@@ -134,12 +134,16 @@ def _make_wm_grad_step(apply_wm_train, config):
             return (next_obs_seq_carry, rng), (obs_loss_t, rew_loss_t, bce_loss_t, mag_loss_t, valid_t)
 
         # --- THE NEW CODE: Wrap the step to save VRAM ---
-        remat_scan_step = remat(scan_step)
+        #remat_scan_step = remat(scan_step)
 
         # Autoregressive unroll (use the remat version!)
+        #init_obs_seq = obs_seq
+        #_, (obs_losses, rew_losses, bce_losses, mag_losses, valids) = jax.lax.scan(
+        #    remat_scan_step, (init_obs_seq, rng), jnp.arange(T)
+        #)
         init_obs_seq = obs_seq
         _, (obs_losses, rew_losses, bce_losses, mag_losses, valids) = jax.lax.scan(
-            remat_scan_step, (init_obs_seq, rng), jnp.arange(T)
+            scan_step, (init_obs_seq, rng), jnp.arange(T)  # <-- Just pass scan_step directly
         )
 
         # valids is shape (T, B), losses are (T, B)
