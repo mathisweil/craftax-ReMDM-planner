@@ -39,13 +39,13 @@ max_grad_norm: 1.0
 batch_size: 256
 
 # ── Offline training (--mode offline) ────────────────────────────────────────
-total_timesteps: 1.0e+9
+total_timesteps: 1.0e+6
 num_envs: 1024
 num_steps: 64
 num_minibatches: 8
 update_epochs: 4
 num_repeats: 1
-collect_temperature: 2.0
+collect_temperature: 1.0
 val_interval: 50
 val_diffusion_steps: 50
 

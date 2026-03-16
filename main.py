@@ -145,6 +145,8 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
     p.add_argument("--debug", action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--wandb_project", type=str, default=None)
     p.add_argument("--wandb_entity", type=str, default=None)
+    p.add_argument("--wm_checkpoint_path", type=str, default=None)
+    p.add_argument("--num_candidates", type=int, default=4)
 
     return p
 
