@@ -1,0 +1,52 @@
+# =============================================================================
+# RTX 3060 "Big Diffusion" OFFLINE Pre-training (100k Steps)
+# =============================================================================
+
+# ── Environment ──────────────────────────────────────────────────────────────
+env_name: "Craftax-Classic-Symbolic-v1"
+num_envs: 32               # Drastically lowered so your 3060 doesn't OOM
+num_steps: 128             
+num_updates: 25            # 25 updates * 4096 frames = 102,400 Global Steps
+replan_every: 1            # HYPER-REACTIVE: Re-rolls every single frame
+update_epochs: 4
+num_minibatches: 16        # Slices the 4,096 frames into tiny batches for VRAM safety
+
+
+# ── The Teacher (Data Generator) ────────────────────────────────────────────
+# The offline script will use this frozen Teacher to generate the training data
+ppo_checkpoint_path: "/home/ak/open-ended/Craftax/craftax-ReMDM-planner/checkpoints/policies" # <-- INSERT YOUR PATH
+num_envs: 32
+ppo_model_type: "ppo_rnn"
+layer_size: 512
+collect_temperature: 2.0   # Softens the teacher's logits for better diffusion diversity
+
+# ── Offline Training Limits ─────────────────────────────────────────────────
+num_train_steps: 100000    # Train for exactly 100k gradient steps
+batch_size: 128            # Lowered from 256 to fit the 64-horizon / 6-layer model on a 3060
+lr: 3.0e-4
+max_grad_norm: 1.0
+
+# ── Big Diffusion Architecture ──────────────────────────────────────────────
+plan_horizon: 64           # The network learns to predict 64 steps of Teacher actions
+diffusion_steps: 15
+diffusion_schedule: "cosine"
+remask_strategy: "rescale"
+train_sigma: 0.0           # Vanilla MDLM training
+
+# The "Big" Model Setup
+d_model: 256
+n_heads: 4
+n_layers: 6                # The deep 6-layer network
+d_ff: 512
+obs_encoder_layers: 2
+obs_encoder_width: 512
+dropout_rate: 0.1
+
+# ── System & Logging ────────────────────────────────────────────────────────
+use_wandb: true
+wandb_project: "craftax-remdm-offline"
+ckpt_every_steps: 25000    # Saves 4 times during the 100k run
+ckpt_max_to_keep: 2
+ckpt_dir: "checkpoints_3060_offline"
+save_policy: true        # Save the model checkpoint at the end of training
+num_repeats: 1            # Number of independent training runs (vmapped)

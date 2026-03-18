@@ -1,195 +1,202 @@
+"""Evaluation: run a trained diffusion planner with MPC + historical inpainting."""
+
+from __future__ import annotations
+
 import time
 from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import wandb
 from craftax.craftax_env import make_craftax_env_from_name
 from craftax.craftax.constants import Achievement as FullCraftaxAchievements
 from craftax.craftax_classic.constants import Achievement as ClassicAchievements
-from src.planners.utils import _build_model, _load_checkpoint, _make_apply_fns
+
+from .state import build_model, load_checkpoint, make_apply_fns
+
+
+# ---------------------------------------------------------------------------
+# Inpainting sampler: locks historical actions, diffuses the rest
+# ---------------------------------------------------------------------------
 
 def sample_plan_inpainting(
     apply_fn, params, rng, obs, history, hist_len,
-    num_actions, plan_horizon, diffusion_steps, temperature, top_k
+    num_actions, plan_horizon, diffusion_steps, temperature, top_p,
 ):
-    """Custom Diffusion Loop implementing the Historical Inpainting Paradox."""
-    batch_size = obs.shape[0]
-    mask_token_id = num_actions
+    """Diffusion sampling with locked historical prefix (inpainting)."""
+    B = obs.shape[0]
+    mask_id = num_actions
 
-    def diff_step(carry, step):
-        seq, step_rng = carry
-        step_rng, model_rng, sample_rng, remask_rng = jax.random.split(step_rng, 4)
+    def _step(carry, step):
+        seq, rng = carry
+        rng, model_rng, sample_rng, remask_rng = jax.random.split(rng, 4)
 
         ratio = step / diffusion_steps
-        t_val = 1.0 - ratio
-        t_tensor = jnp.full((batch_size,), t_val)
+        t_tensor = jnp.full((B,), 1.0 - ratio)
+        logits = apply_fn(params, obs, seq, t_tensor, model_rng) / jnp.maximum(temperature, 1e-8)
 
-        logits = apply_fn(params, obs, seq, t_tensor, model_rng)
-        scaled_logits = logits / jnp.maximum(temperature, 1e-8)
+        # Optional nucleus filtering
+        if top_p is not None:
+            probs = jax.nn.softmax(logits, axis=-1)
+            sorted_idx = jnp.argsort(-probs, axis=-1)
+            sorted_p = jnp.take_along_axis(probs, sorted_idx, axis=-1)
+            cutoff = jnp.cumsum(sorted_p, axis=-1) - sorted_p
+            inv_idx = jnp.argsort(sorted_idx, axis=-1)
+            nucleus_mask = jnp.take_along_axis(cutoff >= top_p, inv_idx, axis=-1)
+            logits = jnp.where(nucleus_mask, -jnp.inf, logits)
 
-        if top_k is not None:
-            top_k_vals, _ = jax.lax.top_k(scaled_logits, top_k)
-            kth_vals = top_k_vals[..., -1:]
-            filtered_logits = jnp.where(scaled_logits >= kth_vals, scaled_logits, -jnp.inf)
-        else:
-            filtered_logits = scaled_logits
+        preds = jax.random.categorical(sample_rng, logits, axis=-1)
+        conf = jnp.take_along_axis(
+            jax.nn.softmax(logits, axis=-1), preds[..., None], axis=-1,
+        ).squeeze(-1)
 
-        preds = jax.random.categorical(sample_rng, filtered_logits, axis=-1)
-        probs = jax.nn.softmax(filtered_logits, axis=-1)
-        confidences = jnp.take_along_axis(probs, preds[..., None], axis=-1).squeeze(-1)
+        # Keep top-k most confident predictions unmasked
+        num_unmask = jnp.maximum(1, (plan_horizon * ratio).astype(jnp.int32))
+        sorted_conf = jnp.sort(conf, axis=-1)[..., ::-1]
+        thresh = sorted_conf[jnp.arange(B), num_unmask - 1]
+        seq_new = jnp.where(conf < thresh[:, None], mask_id, preds)
 
-        num_to_unmask = jnp.maximum(1, (plan_horizon * ratio).astype(jnp.int32))
-        sorted_conf = jnp.sort(confidences, axis=-1)[..., ::-1]
-        thresholds = sorted_conf[jnp.arange(batch_size), num_to_unmask - 1]
-
-        mask_condition = confidences < thresholds[:, None]
-        seq_new = jnp.where(mask_condition, mask_token_id, preds)
-
+        # Light remasking (ReMDM-style)
         remask_prob = 0.15 * (1.0 - ratio)
-        is_unmasked = seq_new != mask_token_id
-        remdm_mask = (jax.random.uniform(remask_rng, seq_new.shape) < remask_prob) & is_unmasked
-        seq_new = jnp.where(remdm_mask, mask_token_id, seq_new)
+        do_remask = (jax.random.uniform(remask_rng, seq_new.shape) < remask_prob) & (seq_new != mask_id)
+        seq_new = jnp.where(do_remask, mask_id, seq_new)
 
-        idx_matrix = jnp.broadcast_to(jnp.arange(plan_horizon)[None, :], (batch_size, plan_horizon))
-        lock_mask = idx_matrix < hist_len[:, None]
-        seq_new = jnp.where(lock_mask, history, seq_new)
+        # Lock historical prefix
+        pos = jnp.broadcast_to(jnp.arange(plan_horizon)[None, :], (B, plan_horizon))
+        seq_new = jnp.where(pos < hist_len[:, None], history, seq_new)
 
-        return (seq_new, step_rng), None
+        return (seq_new, rng), None
 
-    init_seq = jnp.full((batch_size, plan_horizon), mask_token_id, dtype=jnp.int32)
-    idx_matrix = jnp.broadcast_to(jnp.arange(plan_horizon)[None, :], (batch_size, plan_horizon))
-    lock_mask = idx_matrix < hist_len[:, None]
-    init_seq = jnp.where(lock_mask, history, init_seq)
+    # Initialize with history locked, rest masked
+    init_seq = jnp.full((B, plan_horizon), mask_id, dtype=jnp.int32)
+    pos = jnp.broadcast_to(jnp.arange(plan_horizon)[None, :], (B, plan_horizon))
+    init_seq = jnp.where(pos < hist_len[:, None], history, init_seq)
 
-    steps_array = jnp.arange(1, diffusion_steps + 1)
-    (final_seq, _), _ = jax.lax.scan(diff_step, (init_seq, rng), steps_array)
-
+    (final_seq, _), _ = jax.lax.scan(_step, (init_seq, rng), jnp.arange(1, diffusion_steps + 1))
     return final_seq
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
 def run_inference(config: dict[str, Any]) -> None:
     env_name = config["ENV_NAME"]
-    
-    # Notice we REMOVED the AutoReset and Log wrappers. We want raw game access.
     env = make_craftax_env_from_name(env_name, auto_reset=True)
     env_params = env.default_params
-    num_actions: int = env.action_space(env_params).n
-    obs_dim: int = env.observation_space(env_params).shape[0]
+    num_actions = env.action_space(env_params).n
+    obs_dim = env.observation_space(env_params).shape[0]
     config["NUM_ACTIONS"] = num_actions
 
-    num_envs: int = config.get("NUM_ENVS", 32)
-    plan_horizon: int = config["PLAN_HORIZON"]
-    diffusion_steps: int = config.get("DIFFUSION_STEPS_EVAL", 10)
-    temperature: float = config.get("TEMPERATURE", 0.5)
-    top_k: int = config.get("TOP_K", 4)
-    
-    # 10,000 steps is exactly ONE maximum length Craftax game.
-    eval_steps = 10000 
+    num_envs = config.get("NUM_ENVS", 32)
+    plan_horizon = config["PLAN_HORIZON"]
+    diffusion_steps = config.get("DIFFUSION_STEPS_EVAL", 10)
+    temperature = config.get("TEMPERATURE", 0.5)
+    top_p = config.get("TOP_P", 0.95)
+    eval_steps = int(float(config.get("EVAL_STEPS", 10000)))
 
-    model = _build_model(config, num_actions)
-    apply_inference, _ = _make_apply_fns(model)
-
-    print(f"Loading checkpoint: {config['CHECKPOINT_PATH']}")
-    model_params = _load_checkpoint(config, model, obs_dim, config["CHECKPOINT_PATH"])
+    model = build_model(config, num_actions)
+    apply_eval, _ = make_apply_fns(model)
 
     rng = jax.random.PRNGKey(config.get("SEED", 42))
+    rng, ckpt_rng = jax.random.split(rng)
+    model_params = load_checkpoint(model, ckpt_rng, obs_dim, plan_horizon, config["CHECKPOINT_PATH"])
     env_indices = jnp.arange(num_envs)
+
     @jax.jit
-    def mpc_step(carry, step_idx):
+    def mpc_step(carry, _step_idx):
         obs, state, rng, history, hist_len = carry
         rng, plan_rng, env_rng = jax.random.split(rng, 3)
 
+        # Reset history when plan is exhausted
         seq_full = hist_len >= plan_horizon
         hist_len = jnp.where(seq_full, 0, hist_len)
         history = jnp.where(seq_full[:, None], num_actions, history)
 
         plan = sample_plan_inpainting(
-            apply_fn=apply_inference, params=model_params, rng=plan_rng,
-            obs=obs, history=history, hist_len=hist_len,
-            num_actions=num_actions, plan_horizon=plan_horizon,
-            diffusion_steps=diffusion_steps, temperature=temperature, top_k=top_k
+            apply_eval, model_params, plan_rng, obs,
+            history, hist_len, num_actions, plan_horizon,
+            diffusion_steps, temperature, top_p,
         )
 
         action = jnp.take_along_axis(plan, hist_len[:, None], axis=-1).squeeze(-1)
         history = history.at[env_indices, hist_len].set(action)
-        hist_len += 1
+        hist_len = hist_len + 1
 
         obs_next, state_next, reward, done, info = jax.vmap(env.step, in_axes=(0, 0, 0, None))(
-            jax.random.split(env_rng, num_envs), state, action, env_params
+            jax.random.split(env_rng, num_envs), state, action, env_params,
         )
 
         hist_len = jnp.where(done, 0, hist_len)
         history = jnp.where(done[:, None], num_actions, history)
-
-        # We return the RAW achievements array directly from the state!
         return (obs_next, state_next, rng, history, hist_len), (reward, done, state_next.achievements)
 
-    print(f"\nDropping {num_envs} agents into {env_name} for 1 full life (10,000 steps)...")
-    
+    print(f"\nRunning {num_envs} agents in {env_name} for {eval_steps} steps...")
+
     rng, env_rng = jax.random.split(rng)
     obs, state = jax.vmap(env.reset, in_axes=(0, None))(
-        jax.random.split(env_rng, num_envs), env_params
+        jax.random.split(env_rng, num_envs), env_params,
     )
-    
     history = jnp.full((num_envs, plan_horizon), num_actions, dtype=jnp.int32)
-    hist_len = jnp.zeros((num_envs,), dtype=jnp.int32)
-    carry = (obs, state, rng, history, hist_len)
+    hist_len = jnp.zeros(num_envs, dtype=jnp.int32)
 
     t0 = time.time()
-    # Run the full 10,000 steps
-    _, (rewards, dones, achievements) = jax.lax.scan(mpc_step, carry, jnp.arange(eval_steps))
+    _, (rewards, dones, achievements) = jax.lax.scan(
+        mpc_step, (obs, state, rng, history, hist_len), jnp.arange(eval_steps),
+    )
     elapsed = time.time() - t0
 
-    # achievements shape: [10000 steps, 32 envs, num_achievements]
-    # Find the maximum achievement unlocked for each of the 32 agents across the 10,000 steps
-    max_achievements_per_agent = jnp.max(achievements, axis=0) # Shape: [32, num_achievements]
-    
-    # Count how many total agents (out of 32) got each achievement
-    total_agents_with_achievement = jnp.sum(max_achievements_per_agent, axis=0)
-    
-    # Calculate the total reward each agent got
-    total_reward_per_agent = jnp.sum(rewards, axis=0)
+    # First-episode extraction (strict single-life evaluation)
+    rewards_np = np.array(rewards)
+    dones_np = np.array(dones)
+    ach_np = np.array(achievements)
 
-    print("\n" + "="*50)
-    print(f"EVALUATION COMPLETE IN {elapsed:.1f} SECONDS")
-    print("\n" + "="*50)
-    print(f"EVALUATION COMPLETE IN {elapsed:.1f} SECONDS")
-    print("="*50)
-    print(f"Average Score across 32 games: {float(jnp.mean(total_reward_per_agent)):.1f}")
-    print(f"Highest Score in a single game: {float(jnp.max(total_reward_per_agent)):.1f}")
-    print("\nACHIEVEMENT REPORT CARD (Out of 32 Agents):")
+    ep_rewards = np.zeros(num_envs)
+    ep_ach = np.zeros((num_envs, ach_np.shape[2]))
+    ep_lengths = np.zeros(num_envs, dtype=int)
 
-    achievement_cls = ClassicAchievements if "Classic" in env_name else FullCraftaxAchievements
-    achievement_names = [(a.name.replace("_", " ").title(), a.name.lower()) for a in achievement_cls]
+    for i in range(num_envs):
+        death = np.where(dones_np[:, i])[0]
+        end = death[0] if len(death) > 0 else eval_steps - 1
+        ep_rewards[i] = rewards_np[:end + 1, i].sum()
+        ep_ach[i] = ach_np[:end + 1, i].max(axis=0)
+        ep_lengths[i] = end + 1
 
-    # REMOVED the "if count > 0" check. Now it prints the entire tech tree!
-    for i, count in enumerate(total_agents_with_achievement):
-        name, key = achievement_names[i] if i < len(achievement_names) else (f"Achievement {i}", f"ach_{i}")
-        icon = "✅" if count > 0 else "❌"
-        print(f"  {icon} {name}: {int(count)} / {num_envs} agents")
-    print("="*50)
+    pct = ep_ach.mean(axis=0) * 100.0
 
-    # --- WANDB LOGGING ---
+    # Report
+    print(f"\n{'=' * 50}")
+    print(f"EVALUATION COMPLETE ({elapsed:.1f}s)")
+    print(f"{'=' * 50}")
+    print(f"Average Score: {ep_rewards.mean():.1f}  |  Best: {ep_rewards.max():.1f}")
+
+    ach_cls = ClassicAchievements if "Classic" in env_name else FullCraftaxAchievements
+    ach_names = [(a.name.replace("_", " ").title(), a.name.lower()) for a in ach_cls]
+    valid = [i for i, p in enumerate(pct) if p > 0]
+    top_idx = max(valid) if valid else 5
+
+    for i in range(top_idx + 1):
+        name, _ = ach_names[i]
+        count = int(pct[i] / 100.0 * num_envs)
+        icon = "+" if count > 0 else "-"
+        print(f"  [{icon}] {name}: {count}/{num_envs}")
+    print(f"{'=' * 50}")
+
     if config.get("USE_WANDB", True):
         wandb.init(
             project=config.get("WANDB_PROJECT", "craftax-remdm"),
-            name=f"ReportCard-T{temperature}-K{top_k}",
-            config=config,
-            job_type="evaluation"
+            name=f"Eval-T{temperature}-P{top_p}",
+            config=config, job_type="evaluation",
         )
-        
-        summary_log = {"eval/average_score": float(jnp.mean(total_reward_per_agent))}
-        for i, count in enumerate(total_agents_with_achievement):
-            _, key = achievement_names[i] if i < len(achievement_names) else (None, f"ach_{i}")
-            summary_log[f"eval/achievements/{key}"] = float(count) / num_envs * 100
-        wandb.log(summary_log)
-        
-        table = wandb.Table(columns=["Game ID", "Total Score", "Max Achievements Unlocked"])
-        scores = total_reward_per_agent.tolist()
-        unlocked_counts = jnp.sum(max_achievements_per_agent, axis=-1).tolist()
-        for env_id, (score, unlocked) in enumerate(zip(scores, unlocked_counts)):
-            table.add_data(f"Agent {env_id + 1}", float(score), int(unlocked))
-            
-        wandb.log({"Individual Game Results": table})
+        summary = {"eval/average_score": float(ep_rewards.mean())}
+        for i in range(top_idx + 1):
+            summary[f"eval/achievements/{ach_names[i][1]}"] = pct[i]
+        wandb.log(summary)
+
+        table = wandb.Table(columns=["Agent", "Score", "Achievements", "Lifespan"])
+        unlocked = ep_ach.sum(axis=-1)
+        for i in range(num_envs):
+            table.add_data(f"Agent {i + 1}", float(ep_rewards[i]), int(unlocked[i]), int(ep_lengths[i]))
+        wandb.log({"Individual Results": table})
         wandb.finish()
