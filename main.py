@@ -25,6 +25,8 @@ import argparse
 import pathlib
 from typing import Any
 
+import sys; sys.path.append(str(pathlib.Path(__file__).resolve().parent / "Craftax_Baselines"))
+
 import jax
 import numpy as np
 import yaml
