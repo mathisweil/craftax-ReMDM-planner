@@ -186,9 +186,6 @@ def make_train(config: dict[str, Any]):
                 _env_step, (state, env_state, last_obs, last_done, hstate, rng), None, num_steps,
             )
 
-            # Extract diffusion windows (with return weighting)
-            all_obs = jnp.concatenate([traj.obs, last_obs[None, ...]], axis=0)
-
             def _window(t_idx):
                 obs_t = traj.obs[t_idx]
                 acts = jax.lax.dynamic_slice(traj.action, (t_idx, 0), (plan_horizon, num_envs))
