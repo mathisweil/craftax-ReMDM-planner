@@ -504,7 +504,7 @@ def make_train_from_data(config: dict[str, Any]):
     _wandb_log = (
         make_wandb_callback(
             config,
-            steps_per_update=total_samples,
+            steps_per_update=None,  # no env frames consumed in data-replay mode
             val_interval=val_interval,
         )
         if config.get("USE_WANDB") else None
