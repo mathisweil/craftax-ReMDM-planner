@@ -164,7 +164,7 @@ def make_wandb_callback(
         now = time.time()
         dt = now - _t[0]
         _t[0] = now
-        # Skip SPS on the first update: elapsed time includes JAX JIT warm-up.
+
         sps: float | None = steps_per_update / dt if int(step_idx) > 0 and dt > 1e-6 else None
         log = build_log_dict(
             metric, int(step_idx), val_interval, is_online=is_online, sps=sps,
