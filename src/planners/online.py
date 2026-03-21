@@ -20,7 +20,7 @@ from .data import PPOAgent, load_ppo_agent, make_env
 from .state import build_model, init_params, load_checkpoint, create_train_state, make_apply_fns
 from .train import _action_stats
 
-from Craftax_Baselines.logz.batch_logging import create_log_dict, batch_log
+from .logging import make_wandb_callback
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +126,18 @@ def make_train_online(config: dict[str, Any]):
     )
 
     # -----------------------------------------------------------------------
+
+    # No periodic validation in online mode; set interval beyond num_updates.
+    _val_interval = num_updates + 1
+    _wandb_log = (
+        make_wandb_callback(
+            config,
+            steps_per_update=num_envs * config["NUM_STEPS"],
+            val_interval=_val_interval,
+            is_online=True,
+        )
+        if config.get("USE_WANDB") else None
+    )
 
     def train(rng: jax.Array) -> dict[str, Any]:
         rng, init_rng, env_rng = jax.random.split(rng, 3)
@@ -319,10 +331,8 @@ def make_train_online(config: dict[str, Any]):
             metric["advantage_std"] = jnp.std(advantages)
             metric["reward_mean"] = jnp.mean(traj_reward)
 
-            if config["DEBUG"] and config.get("USE_WANDB"):
-                def _log(m, s):
-                    batch_log(s, create_log_dict(m, config), config)
-                jax.debug.callback(_log, metric, step_idx)
+            if _wandb_log is not None:
+                jax.debug.callback(_wandb_log, metric, step_idx)
 
             runner = (state, env_state, obs, rng, step_idx + 1)
             return runner, metric
