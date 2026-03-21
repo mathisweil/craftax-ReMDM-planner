@@ -16,14 +16,13 @@ from craftax.craftax_env import make_craftax_env_from_name
 from src.diffusion.loss import compute_loss
 from src.diffusion.sampling import sample_plan
 from src.diffusion.schedules import SCHEDULE_MAP
-from src.models.denoiser import DenoisingTransformer
 from .data import (
     PPOAgent,
     Transition,
     build_ppo_network,
     load_ppo_params,
 )
-from .state import init_params, create_train_state, make_apply_fns
+from .state import build_model, init_params, create_train_state, make_apply_fns
 from Craftax_Baselines.wrappers import (
     LogWrapper,
     OptimisticResetVecEnvWrapper,
@@ -38,6 +37,16 @@ from .logging import make_wandb_callback
 # ---------------------------------------------------------------------------
 
 def _action_stats(acts: jnp.ndarray, num_actions: int, valid: jnp.ndarray) -> dict[str, jnp.ndarray]:
+    """Compute action-distribution entropy and unique-action fraction over valid windows.
+
+    Args:
+        acts:        [B, H] int32 action sequences.
+        num_actions: Size of the real action vocabulary.
+        valid:       [B] bool mask; invalid samples are excluded from counts.
+
+    Returns:
+        Dict with ``action_entropy`` and ``action_unique_frac``.
+    """
     mask = jnp.broadcast_to(valid[:, None], acts.shape).reshape(-1)
     flat = jnp.where(mask, acts.reshape(-1), num_actions + 1)
     counts = jnp.bincount(flat, length=num_actions).astype(jnp.float32)
@@ -50,18 +59,44 @@ def _action_stats(acts: jnp.ndarray, num_actions: int, valid: jnp.ndarray) -> di
 
 
 def _make_grad_step(apply_train, num_actions, schedule_fn, schedule_deriv_fn, sigma_t, label_smoothing):
-    """Return a jittable function: (state, acts, obs, valid, rng) -> (state, metrics)."""
+    """Return a jittable function: (state, acts, obs, valid, rng, advantages) -> (state, metrics).
 
-    def _loss_fn(params, acts, obs, valid, rng):
+    Args:
+        apply_train:       Model apply function with dropout enabled.
+        num_actions:       Size of the action vocabulary.
+        schedule_fn:       alpha(t) noise schedule.
+        schedule_deriv_fn: d(alpha)/dt analytic derivative.
+        sigma_t:           ReMDM remasking strength during training.
+        label_smoothing:   Cross-entropy label smoothing epsilon.
+
+    Returns:
+        A ``step`` function ready for use inside ``jax.lax.scan``.
+    """
+
+    def _loss_fn(params, acts, obs, valid, rng, advantages):
         return compute_loss(
             apply_train, params, rng, acts, obs, valid,
             num_actions, schedule_fn, schedule_deriv_fn,
             sigma_t=sigma_t, label_smoothing=label_smoothing,
+            advantages=advantages,
         )
 
-    def step(state, acts, obs, valid, rng):
+    def step(state, acts, obs, valid, rng, advantages):
+        """Single gradient update step.
+
+        Args:
+            state:      Current ``TrainState``.
+            acts:       [B, H] int32 action sequences.
+            obs:        [B, obs_dim] float32 observations.
+            valid:      [B] bool validity mask (episode-boundary filter).
+            rng:        PRNG key for dropout and noise sampling.
+            advantages: [B] float return weights applied per-sample before reduction.
+
+        Returns:
+            Updated ``TrainState`` and a metrics dict.
+        """
         (loss, info), grads = jax.value_and_grad(_loss_fn, has_aux=True)(
-            state.params, acts, obs, valid, rng,
+            state.params, acts, obs, valid, rng, advantages,
         )
         state = state.apply_gradients(grads=grads)
         info["grad_norm"] = optax.tree.norm(grads)
@@ -76,12 +111,28 @@ def _make_grad_step(apply_train, num_actions, schedule_fn, schedule_deriv_fn, si
 # ---------------------------------------------------------------------------
 
 def make_train(config: dict[str, Any]):
+    """Build the offline diffusion training closure.
+
+    All environment construction, model instantiation, and static pre-computation
+    happen here (outside the returned ``train`` closure) so they are not repeated
+    across ``jax.vmap`` replicas or JIT retraces.
+
+    Args:
+        config: Upper-cased hyperparameter dict (see ``configs/defaults.yaml``).
+
+    Returns:
+        A ``train(rng) -> dict`` closure that is safe to JIT and vmap.
+    """
     num_steps = config["NUM_STEPS"]
     num_envs = config["NUM_ENVS"]
     plan_horizon = config["PLAN_HORIZON"]
     val_interval = config.get("VAL_INTERVAL", 50)
+    val_replan_every = config.get("VAL_REPLAN_EVERY", 4)
+    val_steps = config.get("VAL_STEPS", 128)
+    n_val_cycles = val_steps // val_replan_every
     valid_per_rollout = num_steps - plan_horizon + 1
     num_samples = num_envs * valid_per_rollout
+    return_weight_cap = config.get("RETURN_WEIGHT_CAP", 5.0)
 
     config["NUM_UPDATES"] = config["TOTAL_TIMESTEPS"] // num_steps // num_envs
     assert num_samples % config["NUM_MINIBATCHES"] == 0, (
@@ -114,60 +165,98 @@ def make_train(config: dict[str, Any]):
     )
     ppo = PPOAgent(ppo_net, ppo_params, model_type, config["LAYER_SIZE"])
 
-    # Schedule
+    # Noise schedule
     schedule_fn, schedule_deriv_fn = SCHEDULE_MAP[config["DIFFUSION_SCHEDULE"]]
 
-    def train(rng: jax.Array) -> dict[str, Any]:
-        # Diffusion model
-        net = DenoisingTransformer(
-            num_actions=num_actions, plan_horizon=plan_horizon,
-            d_model=config["D_MODEL"], n_heads=config["N_HEADS"],
-            n_layers=config["N_LAYERS"], d_ff=config["D_FF"],
-            obs_encoder_layers=config["OBS_ENCODER_LAYERS"],
-            obs_encoder_width=config["OBS_ENCODER_WIDTH"],
-            dropout_rate=config["DROPOUT_RATE"],
-        )
-        apply_eval, apply_train = make_apply_fns(net)
-        grad_step = _make_grad_step(
-            apply_train, num_actions, schedule_fn, schedule_deriv_fn,
-            config.get("TRAIN_SIGMA", 0.0), config.get("LABEL_SMOOTHING", 0.0),
-        )
-        _wandb_log = (
-            make_wandb_callback(
-                config,
-                steps_per_update=num_steps * num_envs,
-                val_interval=val_interval,
-            )
-            if config["USE_WANDB"] else None
-        )
+    # Diffusion model — pure Flax dataclass, no randomness, safe to build once.
+    net = build_model(config, num_actions)
+    apply_eval, apply_train = make_apply_fns(net)
+    grad_step = _make_grad_step(
+        apply_train, num_actions, schedule_fn, schedule_deriv_fn,
+        config.get("TRAIN_SIGMA", 0.0), config.get("LABEL_SMOOTHING", 0.0),
+    )
 
+    # Cosine LR decay over total gradient steps with optional linear warm-up.
+    total_grad_steps = config["NUM_UPDATES"] * config["UPDATE_EPOCHS"] * config["NUM_MINIBATCHES"]
+    warmup_steps = config.get("LR_WARMUP_STEPS", 0)
+    lr_schedule = (
+        optax.warmup_cosine_decay_schedule(
+            init_value=0.0,
+            peak_value=config["LR"],
+            warmup_steps=warmup_steps,
+            decay_steps=total_grad_steps,
+            end_value=config["LR"] * 0.1,
+        )
+        if warmup_steps > 0
+        else optax.cosine_decay_schedule(
+            init_value=config["LR"],
+            decay_steps=total_grad_steps,
+            alpha=0.1,  # final LR = 10% of initial
+        )
+    )
+
+    # W&B callback — one closure shared across vmap replicas (timing is per-call).
+    _wandb_log = (
+        make_wandb_callback(
+            config,
+            steps_per_update=num_steps * num_envs,
+            val_interval=val_interval,
+        )
+        if config["USE_WANDB"] else None
+    )
+
+    def train(rng: jax.Array) -> dict[str, Any]:
+        """JIT/vmap-compatible training loop.
+
+        Args:
+            rng: JAX PRNG key (one per vmap replica).
+
+        Returns:
+            Dict with ``runner_state`` (final scan carry) and ``metrics`` (all update metrics).
+        """
         rng, init_rng, env_rng = jax.random.split(rng, 3)
         params = init_params(net, init_rng, obs_dim, plan_horizon)
-        state = create_train_state(net, params, config["LR"], config["MAX_GRAD_NORM"])
+        state = create_train_state(net, params, lr_schedule, config["MAX_GRAD_NORM"])
 
         obsv, env_state = env.reset(env_rng, env_params)
         init_hstate = ppo.init_hidden(num_envs)
 
         # ------------------------------------------------------------------
-        # Validation
+        # Validation: amortise sampling over val_replan_every env steps per plan.
         # ------------------------------------------------------------------
         def _validate(state, rng):
             rng, val_rng = jax.random.split(rng)
             val_obs, val_env_state = env.reset(val_rng, env_params)
 
-            def _val_step(carry, _):
+            def _val_cycle(carry, _):
                 vs, vo, rng = carry
-                rng, p_rng, s_rng = jax.random.split(rng, 3)
+                rng, p_rng = jax.random.split(rng)
                 plan = sample_plan(
                     apply_eval, state.params, p_rng, vo,
                     num_actions, plan_horizon,
                     num_steps=config.get("VAL_DIFFUSION_STEPS", 50),
                     schedule_fn=schedule_fn, remask_strategy="cap", use_loop=True,
-                )
-                vo, vs, _, _, info = env.step(s_rng, vs, plan[:, 0], env_params)
-                return (vs, vo, rng), info
+                )  # [num_envs, plan_horizon]
 
-            _, infos = jax.lax.scan(_val_step, (val_env_state, val_obs, rng), None, 128)
+                def _exec_step(inner_carry, step_i):
+                    vs_i, vo_i, r = inner_carry
+                    r, s_rng = jax.random.split(r)
+                    vo_next, vs_next, _, _, info = env.step(
+                        s_rng, vs_i, plan[:, step_i], env_params,
+                    )
+                    return (vs_next, vo_next, r), info
+
+                (vs, vo, rng), step_infos = jax.lax.scan(
+                    _exec_step, (vs, vo, rng), jnp.arange(val_replan_every),
+                )
+                return (vs, vo, rng), step_infos
+
+            _, cycle_infos = jax.lax.scan(
+                _val_cycle, (val_env_state, val_obs, rng), None, n_val_cycles,
+            )
+            # cycle_infos: {key: [n_val_cycles, val_replan_every, num_envs, ...]}
+            # Flatten to [val_steps, num_envs, ...] for episode-return aggregation.
+            infos = jax.tree.map(lambda x: x.reshape(-1, *x.shape[2:]), cycle_infos)
             returned = infos["returned_episode"]
             metrics = jax.tree.map(
                 lambda x: (x * returned).sum() / (returned.sum() + 1e-8), infos,
@@ -180,29 +269,35 @@ def make_train(config: dict[str, Any]):
         def _update_step(runner, _):
             state, env_state, last_obs, last_done, hstate, rng, step_idx = runner
 
-            # Collect trajectories
+            # --- Trajectory collection (state excluded from carry: not modified here) ---
             def _env_step(carry, _):
-                st, es, obs, done, hs, rng = carry
+                es, obs, done, hs, rng = carry
                 rng, act_rng, step_rng = jax.random.split(rng, 3)
                 action, new_hs = ppo.act(
                     obs, done, hs, act_rng, temperature=config.get("COLLECT_TEMPERATURE", 1.0),
                 )
                 new_obs, es, reward, new_done, info = env.step(step_rng, es, action, env_params)
                 t = Transition(done=done, action=action, reward=reward, obs=obs, info=info)
-                return (st, es, new_obs, new_done, new_hs, rng), t
+                return (es, new_obs, new_done, new_hs, rng), t
 
-            (state, env_state, last_obs, last_done, hstate, rng), traj = jax.lax.scan(
-                _env_step, (state, env_state, last_obs, last_done, hstate, rng), None, num_steps,
+            (env_state, last_obs, last_done, hstate, rng), traj = jax.lax.scan(
+                _env_step, (env_state, last_obs, last_done, hstate, rng), None, num_steps,
             )
 
+            # --- Diffusion window extraction ---
             def _window(t_idx):
                 obs_t = traj.obs[t_idx]
                 acts = jax.lax.dynamic_slice(traj.action, (t_idx, 0), (plan_horizon, num_envs))
-                dones = jax.lax.dynamic_slice(traj.done, (t_idx, 0), (plan_horizon, num_envs))
+                # traj.done[t] marks a reset *before* step t, so traj.done[t_idx]
+                # only tells us obs_t is an episode-start — it does NOT invalidate the
+                # window. We check done flags strictly *inside* the action sequence.
+                dones = jax.lax.dynamic_slice(
+                    traj.done, (t_idx + 1, 0), (plan_horizon - 1, num_envs),
+                )
                 valid = ~jnp.any(dones, axis=0)
 
                 rew_seq = jax.lax.dynamic_slice(traj.reward, (t_idx, 0), (plan_horizon, num_envs))
-                window_return = jnp.sum(rew_seq, axis=0)  # (num_envs,)
+                window_return = jnp.sum(rew_seq, axis=0)  # [num_envs]
 
                 return obs_t, jnp.swapaxes(acts, 0, 1), valid, window_return
 
@@ -210,18 +305,19 @@ def make_train(config: dict[str, Any]):
 
             flat_obs = obs_w.reshape(-1, obs_dim)
             flat_acts = act_w.reshape(-1, plan_horizon)
-            flat_valid = valid_w.reshape(-1)
+            flat_valid = valid_w.reshape(-1)  # bool: episode-boundary filter
 
-            # Return-weighted valid mask
+            # Return-weighted advantages: normalise by batch mean, clip to [0.1, cap].
+            # Passed as per-sample multipliers into compute_loss *after* per-position
+            # normalisation, so the weight correctly scales each sample's contribution.
             flat_returns = returns_w.reshape(-1)
             flat_returns_clipped = jnp.clip(flat_returns, 0.0, None)
             return_weights = flat_returns_clipped / (jnp.mean(flat_returns_clipped) + 1e-8)
-            return_weights = jnp.maximum(return_weights, 0.1)
-            weighted_valid = flat_valid.astype(jnp.float32) * return_weights
+            return_weights = jnp.clip(return_weights, 0.1, return_weight_cap)
 
-            dataset = (flat_obs, flat_acts, weighted_valid)
+            dataset = (flat_obs, flat_acts, flat_valid, return_weights)
 
-            # Minibatch training
+            # --- Minibatch SGD over UPDATE_EPOCHS epochs ---
             def _epoch(epoch_state, _):
                 state, ds, rng = epoch_state
                 rng, perm_rng = jax.random.split(rng)
@@ -234,8 +330,8 @@ def make_train(config: dict[str, Any]):
                 def _mb(carry, batch):
                     st, rng = carry
                     rng, loss_rng = jax.random.split(rng)
-                    obs_b, act_b, val_b = batch
-                    st, metrics = grad_step(st, act_b, obs_b, val_b, loss_rng)
+                    obs_b, act_b, val_b, adv_b = batch
+                    st, metrics = grad_step(st, act_b, obs_b, val_b, loss_rng, adv_b)
                     return (st, rng), metrics
 
                 (state, rng), metrics = jax.lax.scan(_mb, (state, rng), batches)
@@ -245,7 +341,7 @@ def make_train(config: dict[str, Any]):
                 _epoch, (state, dataset, rng), None, config["UPDATE_EPOCHS"],
             )
 
-            # Metrics
+            # --- Metrics ---
             metric = jax.tree.map(jnp.mean, loss_info)
             returned = traj.info["returned_episode"]
             env_metrics = jax.tree.map(
@@ -255,9 +351,11 @@ def make_train(config: dict[str, Any]):
             metric["valid_frac"] = jnp.mean(flat_valid.astype(jnp.float32))
             metric["mean_return_weight"] = jnp.mean(return_weights)
 
-            # Periodic validation
+            # --- Periodic validation ---
             rng, val_rng = jax.random.split(rng)
-            dummy = jax.tree.map(jnp.zeros_like, {f"val/{k}": v for k, v in env_metrics.items()})
+            dummy = jax.tree.map(
+                jnp.zeros_like, {f"val/{k}": v for k, v in env_metrics.items()},
+            )
             val_metrics = jax.lax.cond(
                 step_idx % val_interval == 0,
                 lambda: _validate(state, val_rng),
@@ -287,6 +385,11 @@ def make_train(config: dict[str, Any]):
 # ---------------------------------------------------------------------------
 
 def run_offline_diffusion(config):
+    """Configure, compile, and run offline diffusion training.
+
+    Args:
+        config: Lower-cased hyperparameter dict from ``defaults.yaml`` / CLI.
+    """
     config = {k.upper(): v for k, v in config.items()}
 
     if config["USE_WANDB"]:
