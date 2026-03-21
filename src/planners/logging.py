@@ -133,7 +133,7 @@ def build_log_dict(
 def make_wandb_callback(
     config: dict[str, Any],
     *,
-    steps_per_update: int,
+    steps_per_update: int | None,
     val_interval: int,
     is_online: bool = False,
 ) -> Any:
@@ -143,14 +143,16 @@ def make_wandb_callback(
     steps-per-second.  All state is local to the closure; there is no
     module-level mutable state.
 
-    SPS is not reported on ``step_idx == 0`` because the elapsed time from
-    factory creation to the first callback includes JIT compilation overhead.
+    SPS is not reported on ``step_idx == 0`` (JIT compilation overhead) or
+    when ``steps_per_update`` is ``None`` (e.g. data-replay mode where no
+    environment frames are consumed).
 
     Args:
         config:           Training config dict (read-only; only consulted for
                           ``USE_WANDB`` — callers are expected to guard).
-        steps_per_update: Environment frames consumed per update step, used to
-                          compute steps-per-second.
+        steps_per_update: Environment frames consumed per update step.  Pass
+                          ``None`` to disable ``train/sps`` logging entirely
+                          (e.g. when training from pre-collected data files).
         val_interval:     Frequency (in steps) at which validation runs occur.
         is_online:        If ``True``, emit GRPO keys under ``grpo/``.
 
@@ -165,7 +167,11 @@ def make_wandb_callback(
         dt = now - _t[0]
         _t[0] = now
 
-        sps: float | None = steps_per_update / dt if int(step_idx) > 0 and dt > 1e-6 else None
+        sps: float | None = (
+            steps_per_update / dt
+            if steps_per_update is not None and int(step_idx) > 0 and dt > 1e-6
+            else None
+        )
         log = build_log_dict(
             metric, int(step_idx), val_interval, is_online=is_online, sps=sps,
         )
