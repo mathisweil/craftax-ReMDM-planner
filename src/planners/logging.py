@@ -17,13 +17,6 @@ Metric namespacing
 ``val/``        — same as ``env/`` but from the held-out validation rollout
                   (only emitted when ``step_idx % val_interval == 0``).
 ``grpo/``       — GRPO-specific metrics (online training only).
-
-Note on multi-repeat runs
--------------------------
-When ``NUM_REPEATS > 1`` the train closure is vmapped, so the callback fires
-once per vmap replica per update step.  Each replica logs independently at the
-same W&B ``step``; W&B takes the last write.  For unambiguous logging, prefer
-``NUM_REPEATS = 1`` and run separate W&B sweeps.
 """
 
 from __future__ import annotations
@@ -42,27 +35,27 @@ _DIFFUSION_KEYS: tuple[str, ...] = (
     "acc_t_low",
     "acc_t_mid",
     "acc_t_high",
-    "frac_masked",   # forward-process sanity check; was previously dropped
+    "frac_masked",
     "mean_t",
     "grad_norm",
 )
 
 # Keys added locally by training loops.
 _TRAIN_KEYS: tuple[str, ...] = (
-    "action_entropy",       # action distribution entropy
-    "action_unique_frac",   # fraction of the action vocabulary used
-    "valid_frac",           # fraction of non-episode-boundary windows (offline)
-    "mean_return_weight",   # mean return weight applied to the valid mask (offline)
+    "action_entropy",
+    "action_unique_frac",
+    "valid_frac",
+    "mean_return_weight",
 )
 
 # Keys specific to online GRPO training.
 _GRPO_KEYS: tuple[str, ...] = (
-    "ppo_prob",        # current PPO expert-injection probability
-    "advantage_mean",  # group-relative advantage mean (from traj_reward)
-    "advantage_std",   # group-relative advantage std (from traj_reward)
-    "adv_mean",        # per-sample advantage mean forwarded through compute_loss
-    "adv_std",         # per-sample advantage std forwarded through compute_loss
-    "reward_mean",     # mean trajectory reward across group and environment
+    "ppo_prob",
+    "advantage_mean",
+    "advantage_std",
+    "adv_mean",
+    "adv_std",
+    "reward_mean",
 )
 
 

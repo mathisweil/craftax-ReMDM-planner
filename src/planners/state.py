@@ -1,7 +1,7 @@
 """Model initialization, optimizer setup, checkpoint I/O, and apply-function closures."""
 
 from __future__ import annotations
-from typing import Any
+from typing import Any, Callable, Union
 
 import jax
 import jax.numpy as jnp
@@ -77,10 +77,21 @@ def load_checkpoint(
 def create_train_state(
     model: DenoisingTransformer,
     params: Any,
-    lr: float,
+    lr: Union[float, Callable[[int], float]],
     max_grad_norm: float,
 ) -> TrainState:
-    """TrainState with gradient clipping + Adam."""
+    """TrainState with gradient clipping + Adam.
+
+    Args:
+        model:         Flax module (used only to bind ``apply_fn``).
+        params:        Initialised parameter pytree.
+        lr:            Constant learning rate or an optax schedule
+                       (any callable ``step -> lr``).
+        max_grad_norm: Global gradient clipping threshold.
+
+    Returns:
+        A Flax ``TrainState`` ready for ``apply_gradients``.
+    """
     tx = optax.chain(optax.clip_by_global_norm(max_grad_norm), optax.adam(lr, eps=1e-5))
     return TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
