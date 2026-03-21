@@ -30,7 +30,7 @@ from Craftax_Baselines.wrappers import (
     BatchEnvWrapper,
     AutoResetEnvWrapper,
 )
-from Craftax_Baselines.logz.batch_logging import create_log_dict, batch_log
+from .logging import make_wandb_callback
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +79,7 @@ def make_train(config: dict[str, Any]):
     num_steps = config["NUM_STEPS"]
     num_envs = config["NUM_ENVS"]
     plan_horizon = config["PLAN_HORIZON"]
+    val_interval = config.get("VAL_INTERVAL", 50)
     valid_per_rollout = num_steps - plan_horizon + 1
     num_samples = num_envs * valid_per_rollout
 
@@ -130,6 +131,14 @@ def make_train(config: dict[str, Any]):
         grad_step = _make_grad_step(
             apply_train, num_actions, schedule_fn, schedule_deriv_fn,
             config.get("TRAIN_SIGMA", 0.0), config.get("LABEL_SMOOTHING", 0.0),
+        )
+        _wandb_log = (
+            make_wandb_callback(
+                config,
+                steps_per_update=num_steps * num_envs,
+                val_interval=val_interval,
+            )
+            if config["USE_WANDB"] else None
         )
 
         rng, init_rng, env_rng = jax.random.split(rng, 3)
@@ -243,9 +252,10 @@ def make_train(config: dict[str, Any]):
                 lambda x: (x * returned).sum() / (returned.sum() + 1e-8), traj.info,
             )
             metric.update(env_metrics)
+            metric["valid_frac"] = jnp.mean(flat_valid.astype(jnp.float32))
+            metric["mean_return_weight"] = jnp.mean(return_weights)
 
             # Periodic validation
-            val_interval = config.get("VAL_INTERVAL", 50)
             rng, val_rng = jax.random.split(rng)
             dummy = jax.tree.map(jnp.zeros_like, {f"val/{k}": v for k, v in env_metrics.items()})
             val_metrics = jax.lax.cond(
@@ -255,19 +265,8 @@ def make_train(config: dict[str, Any]):
             )
             metric.update(val_metrics)
 
-            if config["USE_WANDB"]:
-                def _log(m, s):
-                    log_dict = create_log_dict(m, config)
-                    for k, v in m.items():
-                        if "loss" in k or "grad_norm" in k or "action_" in k or "val/" in k:
-                            log_dict[k] = float(v)
-
-                    if int(s) % config.get("VAL_INTERVAL", 50) != 0:
-                        log_dict = {k: v for k, v in log_dict.items() if not k.startswith("val/")}
-
-                    wandb.log(log_dict, step=int(s))
-
-                jax.debug.callback(_log, metric, step_idx)
+            if _wandb_log is not None:
+                jax.debug.callback(_wandb_log, metric, step_idx)
 
             runner = (state, env_state, last_obs, last_done, hstate, rng, step_idx + 1)
             return runner, metric

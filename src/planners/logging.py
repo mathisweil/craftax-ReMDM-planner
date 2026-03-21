@@ -1,0 +1,181 @@
+"""Centralised W&B logging utilities for ReMDM training loops.
+
+Design principles
+-----------------
+* ``build_log_dict`` is a pure function — no side effects, fully testable.
+* ``make_wandb_callback`` is a factory that returns a closure suitable for
+  ``jax.debug.callback``.  All timing state is local to the closure; there is
+  no module-level global state.
+* Both ``train.py`` and ``online.py`` import the same symbols, keeping all
+  metric naming and aggregation logic in one place.
+
+Metric namespacing
+------------------
+``diffusion/``  — ELBO loss, accuracy, and noise-level diagnostics from ``compute_loss``.
+``train/``      — data quality, action distribution, throughput.
+``env/``        — episode returns and per-achievement unlock rates (training envs).
+``val/``        — same as ``env/`` but from the held-out validation rollout
+                  (only emitted when ``step_idx % val_interval == 0``).
+``grpo/``       — GRPO-specific metrics (online training only).
+
+Note on multi-repeat runs
+-------------------------
+When ``NUM_REPEATS > 1`` the train closure is vmapped, so the callback fires
+once per vmap replica per update step.  Each replica logs independently at the
+same W&B ``step``; W&B takes the last write.  For unambiguous logging, prefer
+``NUM_REPEATS = 1`` and run separate W&B sweeps.
+"""
+
+from __future__ import annotations
+
+import time
+from typing import Any
+
+import wandb
+
+
+# Keys emitted by ``src.diffusion.loss.compute_loss`` info dict.
+_DIFFUSION_KEYS: tuple[str, ...] = (
+    "loss",
+    "unweighted_loss",
+    "accuracy",
+    "acc_t_low",
+    "acc_t_mid",
+    "acc_t_high",
+    "frac_masked",   # forward-process sanity check; was previously dropped
+    "mean_t",
+    "grad_norm",
+)
+
+# Keys added locally by training loops.
+_TRAIN_KEYS: tuple[str, ...] = (
+    "action_entropy",       # action distribution entropy
+    "action_unique_frac",   # fraction of the action vocabulary used
+    "valid_frac",           # fraction of non-episode-boundary windows (offline)
+    "mean_return_weight",   # mean return weight applied to the valid mask (offline)
+)
+
+# Keys specific to online GRPO training.
+_GRPO_KEYS: tuple[str, ...] = (
+    "ppo_prob",        # current PPO expert-injection probability
+    "advantage_mean",  # group-relative advantage mean (from traj_reward)
+    "advantage_std",   # group-relative advantage std (from traj_reward)
+    "adv_mean",        # per-sample advantage mean forwarded through compute_loss
+    "adv_std",         # per-sample advantage std forwarded through compute_loss
+    "reward_mean",     # mean trajectory reward across group and environment
+)
+
+
+def build_log_dict(
+    metric: dict[str, Any],
+    step_idx: int,
+    val_interval: int,
+    *,
+    is_online: bool = False,
+    sps: float | None = None,
+) -> dict[str, float]:
+    """Build a flat W&B-ready log dict from a merged training metric dict.
+
+    Args:
+        metric:       Merged metric dict from the current update step.
+        step_idx:     Integer update step index.
+        val_interval: How often (in steps) validation runs occur.
+        is_online:    If ``True``, emit GRPO-specific keys under ``grpo/``.
+        sps:          Pre-computed steps-per-second; omitted when ``None``.
+
+    Returns:
+        Flat ``{str: float}`` dict suitable for ``wandb.log``.
+    """
+    log: dict[str, float] = {}
+    is_val_step = (step_idx % val_interval == 0)
+
+    for k in _DIFFUSION_KEYS:
+        if k in metric:
+            log[f"diffusion/{k}"] = float(metric[k])
+
+    for k in _TRAIN_KEYS:
+        if k in metric:
+            log[f"train/{k}"] = float(metric[k])
+
+    if is_online:
+        for k in _GRPO_KEYS:
+            if k in metric:
+                log[f"grpo/{k}"] = float(metric[k])
+
+    if "returned_episode_returns" in metric:
+        log["env/episode_return"] = float(metric["returned_episode_returns"])
+    if "returned_episode_lengths" in metric:
+        log["env/episode_length"] = float(metric["returned_episode_lengths"])
+
+    # Per-achievement breakdown + aggregate score (Craftax reports as %, divide by 100).
+    achieve_total = 0.0
+    for k, v in metric.items():
+        if "achievement" in k.lower() and not k.startswith("val/"):
+            log[f"env/achieve/{k}"] = float(v)
+            achieve_total += float(v) / 100.0
+    log["env/achievements"] = achieve_total
+
+    # Validation metrics — only emitted on val steps to avoid polluting charts with zeros.
+    if is_val_step:
+        val_achieve_total = 0.0
+        for k, v in metric.items():
+            if not k.startswith("val/"):
+                continue
+            inner = k[4:]  # strip leading "val/"
+            if "achievement" in inner.lower():
+                log[f"val/achieve/{inner}"] = float(v)
+                val_achieve_total += float(v) / 100.0
+            elif inner == "returned_episode_returns":
+                log["val/episode_return"] = float(v)
+            elif inner == "returned_episode_lengths":
+                log["val/episode_length"] = float(v)
+        log["val/achievements"] = val_achieve_total
+
+    if sps is not None:
+        log["train/sps"] = sps
+
+    return log
+
+
+def make_wandb_callback(
+    config: dict[str, Any],
+    *,
+    steps_per_update: int,
+    val_interval: int,
+    is_online: bool = False,
+) -> Any:
+    """Return a host-side logging closure for ``jax.debug.callback``.
+
+    The closure tracks wall-clock time between successive calls to compute
+    steps-per-second.  All state is local to the closure; there is no
+    module-level mutable state.
+
+    SPS is not reported on ``step_idx == 0`` because the elapsed time from
+    factory creation to the first callback includes JIT compilation overhead.
+
+    Args:
+        config:           Training config dict (read-only; only consulted for
+                          ``USE_WANDB`` — callers are expected to guard).
+        steps_per_update: Environment frames consumed per update step, used to
+                          compute steps-per-second.
+        val_interval:     Frequency (in steps) at which validation runs occur.
+        is_online:        If ``True``, emit GRPO keys under ``grpo/``.
+
+    Returns:
+        A callable ``log_fn(metric, step_idx) -> None`` for
+        ``jax.debug.callback``.
+    """
+    _t: list[float] = [time.time()]
+
+    def log_fn(metric: dict[str, Any], step_idx: int) -> None:
+        now = time.time()
+        dt = now - _t[0]
+        _t[0] = now
+        # Skip SPS on the first update: elapsed time includes JAX JIT warm-up.
+        sps: float | None = steps_per_update / dt if int(step_idx) > 0 and dt > 1e-6 else None
+        log = build_log_dict(
+            metric, int(step_idx), val_interval, is_online=is_online, sps=sps,
+        )
+        wandb.log(log, step=int(step_idx))
+
+    return log_fn
