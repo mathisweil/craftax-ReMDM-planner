@@ -451,15 +451,22 @@ def make_train_from_data(config: dict[str, Any]):
     else:
         returns_w = np.ones((E, valid_per_env), dtype=np.float32)
 
-    # Flatten and normalise return weights
-    flat_obs    = jnp.array(obs_w.reshape(-1, obs_dim))
-    flat_acts   = jnp.array(acts_w.reshape(-1, H).astype(np.int32))
-    flat_valid  = jnp.array(valid_w.reshape(-1))
-    flat_returns_np = returns_w.reshape(-1)
-    clipped = np.clip(flat_returns_np, 0.0, None)
-    rw = clipped / (clipped.mean() + 1e-8)
-    flat_return_weights = jnp.array(
-        np.clip(rw, 0.1, return_weight_cap).astype(np.float32),
+    # Flatten and normalise return weights (stay as numpy until moved to device below)
+    obs_flat   = obs_w.reshape(-1, obs_dim)
+    acts_flat  = acts_w.reshape(-1, H).astype(np.int32)
+    valid_flat = valid_w.reshape(-1)
+    clipped    = np.clip(returns_w.reshape(-1), 0.0, None)
+    rw         = np.clip(clipped / (clipped.mean() + 1e-8), 0.1, return_weight_cap).astype(np.float32)
+
+    # Move to device once.  These are returned as `dataset` and passed as an
+    # *explicit argument* to train() so JAX treats them as abstract parameters
+    # rather than XLA literal constants (which would embed all data in the HLO
+    # graph and OOM during lowering).
+    dataset = (
+        jnp.array(obs_flat),
+        jnp.array(acts_flat),
+        jnp.array(valid_flat),
+        jnp.array(rw),
     )
 
     # -- Environment (validation only) ----------------------------------------
@@ -521,15 +528,24 @@ def make_train_from_data(config: dict[str, Any]):
         f"val/{k}": jnp.zeros(()) for k in _tmp_info
     }
 
-    def train(rng: jax.Array) -> dict[str, Any]:
+    def train(rng: jax.Array, dataset) -> dict[str, Any]:
         """JIT/vmap-compatible training loop over a fixed window dataset.
 
+        ``dataset`` must be passed as an explicit argument (not closed over)
+        so JAX treats the arrays as abstract parameters rather than XLA
+        literal constants.  Use ``jax.vmap(train, in_axes=(0, None))`` to
+        broadcast the shared dataset across RNG replicas.
+
         Args:
-            rng: JAX PRNG key (one per vmap replica).
+            rng:     JAX PRNG key (one per vmap replica).
+            dataset: ``(flat_obs, flat_acts, flat_valid, flat_return_weights)``
+                     device arrays pre-computed by ``make_train_from_data``.
 
         Returns:
             Dict with ``runner_state`` and ``metrics``.
         """
+        flat_obs, flat_acts, flat_valid, flat_return_weights = dataset
+
         rng, init_rng = jax.random.split(rng)
         params = init_params(net, init_rng, obs_dim, plan_horizon)
         state = create_train_state(net, params, lr_schedule, config["MAX_GRAD_NORM"])
@@ -573,16 +589,20 @@ def make_train_from_data(config: dict[str, Any]):
             return {f"val/{k}": v for k, v in metrics.items()}
 
         # -- Update step (no env rollout; dataset is fixed) -------------------
-        dataset = (flat_obs, flat_acts, flat_valid, flat_return_weights)
-
+        # flat_obs / flat_acts / flat_valid / flat_return_weights are local
+        # variables derived from the explicit `dataset` argument, so _epoch
+        # can close over them without triggering constant capture.
         def _update_step(runner, _):
             state, rng, step_idx = runner
 
             def _epoch(epoch_state, _):
-                state, ds, rng = epoch_state
+                state, rng = epoch_state
                 rng, perm_rng = jax.random.split(rng)
                 perm = jax.random.permutation(perm_rng, total_samples)
-                shuffled = jax.tree.map(lambda x: jnp.take(x, perm, axis=0), ds)
+                shuffled = jax.tree.map(
+                    lambda x: jnp.take(x, perm, axis=0),
+                    (flat_obs, flat_acts, flat_valid, flat_return_weights),
+                )
                 batches = jax.tree.map(
                     lambda x: x.reshape(config["NUM_MINIBATCHES"], -1, *x.shape[1:]),
                     shuffled,
@@ -596,10 +616,10 @@ def make_train_from_data(config: dict[str, Any]):
                     return (st, rng), metrics
 
                 (state, rng), metrics = jax.lax.scan(_mb, (state, rng), batches)
-                return (state, ds, rng), metrics
+                return (state, rng), metrics
 
-            (state, _, rng), loss_info = jax.lax.scan(
-                _epoch, (state, dataset, rng), None, config["UPDATE_EPOCHS"],
+            (state, rng), loss_info = jax.lax.scan(
+                _epoch, (state, rng), None, config["UPDATE_EPOCHS"],
             )
 
             metric = jax.tree.map(jnp.mean, loss_info)
@@ -627,7 +647,7 @@ def make_train_from_data(config: dict[str, Any]):
         )
         return {"runner_state": runner_final, "metrics": metrics}
 
-    return train
+    return train, dataset
 
 
 # ---------------------------------------------------------------------------
@@ -646,22 +666,30 @@ def run_offline_diffusion(config):
     config = {k.upper(): v for k, v in config.items()}
 
     if config.get("USE_WANDB"):
-        wandb.init(
-            project=config["WANDB_PROJECT"], entity=config.get("WANDB_ENTITY"),
-            config=config,
-            name=f"{config['ENV_NAME']}-OfflineDiffusion",
-        )
+        if config.get("OFFLINE_DATA_PATH"):
+            data_mode = "offline-dataset"
+        else:
+            data_mode = "offline-ppo"
 
+        wandb.init(
+            project=config["WANDB_PROJECT"],
+            entity=config.get("WANDB_ENTITY"),
+            config=config,
+            name=f"{config['ENV_NAME']}-OfflineDiffusion-{data_mode}",
+        )
     rng = jax.random.PRNGKey(config["SEED"])
     rngs = jax.random.split(rng, config["NUM_REPEATS"])
 
     if config.get("OFFLINE_DATA_PATH"):
-        train_fn = jax.jit(jax.vmap(make_train_from_data(config)))
+        train_fn_raw, dataset = make_train_from_data(config)
+        # vmap over rng (axis 0); broadcast the shared dataset to all replicas.
+        train_fn = jax.jit(jax.vmap(train_fn_raw, in_axes=(0, None)))
+        t0 = time.time()
+        out = train_fn(rngs, dataset)
     else:
         train_fn = jax.jit(jax.vmap(make_train(config)))
-
-    t0 = time.time()
-    out = train_fn(rngs)
+        t0 = time.time()
+        out = train_fn(rngs)
     elapsed = time.time() - t0
 
     num_updates = config.get("NUM_UPDATES", 0)
