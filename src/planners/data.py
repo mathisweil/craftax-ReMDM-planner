@@ -34,15 +34,13 @@ class Transition(NamedTuple):
 
 def make_env(config: dict, num_envs: int):
     """Build a wrapped Craftax environment. Returns (env, env_params)."""
-    env = make_craftax_env_from_name(
-        config["ENV_NAME"], not config.get("USE_OPTIMISTIC_RESETS", False),
-    )
+    env = make_craftax_env_from_name(config["ENV_NAME"], not config["USE_OPTIMISTIC_RESETS"])
     env_params = env.default_params
     env = LogWrapper(env)
-    if config.get("USE_OPTIMISTIC_RESETS", False):
+    if config["USE_OPTIMISTIC_RESETS"]:
         env = OptimisticResetVecEnvWrapper(
             env, num_envs=num_envs,
-            reset_ratio=min(config.get("OPTIMISTIC_RESET_RATIO", num_envs), num_envs),
+            reset_ratio=min(config["OPTIMISTIC_RESET_RATIO"], num_envs),
         )
     else:
         env = AutoResetEnvWrapper(env)

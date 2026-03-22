@@ -117,7 +117,7 @@ Roll out the PPO checkpoint and save `(obs, actions, rewards, dones)` as a `.npz
 python main.py --mode collect \
     --ppo_checkpoint_path /path/to/ppo_checkpoint \
     --offline_data_path data/trajectories.npz \
-    --collect_num_steps 10000000 \
+    --collect_num_steps 1000000 \
     --collect_num_envs 128
 ```
 
