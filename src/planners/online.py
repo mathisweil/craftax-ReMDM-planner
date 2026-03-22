@@ -180,9 +180,9 @@ def make_train_online(config: dict[str, Any]):
                     return sample_plan(
                         apply_eval, state.params, r, cur_obs,
                         num_actions, plan_horizon, diffusion_steps, schedule_fn,
-                        config.get("REMASK_STRATEGY", "cap"),
+                        config.get("REMASK_STRATEGY", "rescale"),
                         config.get("ETA", 0.5),
-                        config.get("USE_LOOP", False),
+                        config.get("USE_LOOP", True),
                         config.get("T_ON", 0.7),
                         config.get("T_OFF", 0.3),
                         temp, config.get("TOP_P", 0.95),
@@ -357,7 +357,7 @@ def run_online(config: dict[str, Any]) -> None:
 
     if config.get("USE_WANDB"):
         wandb.init(
-            project=config.get("WANDB_PROJECT", "craftax-remdm"),
+            project=config.get("WANDB_PROJECT", "remdm-craftax"),
             config=config,
             name=f"GRPO-{config['ENV_NAME']}",
         )

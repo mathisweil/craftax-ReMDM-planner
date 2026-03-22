@@ -133,6 +133,7 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
 
     # Inference
     p.add_argument("--eval_steps", type=lambda x: int(float(x)), default=None)
+    p.add_argument("--eval_num_envs", type=int, default=None)
 
     # Reward model
     p.add_argument("--reward_model_type", type=str, choices=REWARD_TYPES, default=None)

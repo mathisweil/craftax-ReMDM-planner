@@ -157,7 +157,7 @@ python main.py --mode online \
 python main.py --mode inference \
     --checkpoint_path /path/to/checkpoint \
     --eval_steps 10000 \
-    --num_envs 32
+    --eval_num_envs 32
 ```
 
 Prints mean episode return, completed episodes, steps per second, and per-achievement unlock counts. Uses historical inpainting: the first `hist_len` plan positions are locked to observed history.
@@ -293,6 +293,7 @@ Preset configs for larger runs are provided in `configs/`:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `eval_steps` | 10000 | Environment steps for evaluation |
+| `eval_num_envs` | 32 | Parallel agents during evaluation (independent of `num_envs`) |
 | `diffusion_steps_eval` | 10 | Denoising steps T used at evaluation time |
 
 **Reward model**
@@ -435,7 +436,9 @@ craftax-ReMDM-planner/
 
 **Loss weight clipping**: the MDLM SUBS weight `-alpha'(t) / (1 - alpha_t)` is clipped to 1000 to prevent numerical instability when `alpha_t ≈ 1`.
 
-**W&B logging**: all metric aggregation is centralised in `src/planners/logging.py`. Metric namespaces: `diffusion/` (loss, accuracy), `train/` (data quality, throughput), `env/` (episode returns, achievements), `val/` (validation rollouts, emitted every `val_interval` steps), `grpo/` (online training only). `train/sps` (environment frames/sec) is only logged in modes that perform live environment interaction; it is suppressed in `.npz` replay mode.
+**Validation rollouts**: during offline training, a held-out rollout runs every `val_interval` steps. It uses the same sampling parameters as inference (`remask_strategy`, `eta`, `use_loop`, `t_on`, `t_off`, `temperature`, `top_p`) with `val_diffusion_steps` denoising steps and `val_replan_every` env steps per plan, for a total of `val_steps` environment steps.
+
+**W&B logging**: all metric aggregation is centralised in `src/planners/logging.py`. Metric namespaces: `diffusion/` (loss, accuracy), `train/` (data quality, throughput), `env/` (episode returns, achievements), `val/` (validation rollouts, emitted every `val_interval` steps), `grpo/` (online training only). `train/sps` (environment frames/sec) is only logged in modes that perform live environment interaction.
 
 **Denoising step indexing**: the reverse scan runs from `step_idx = 0` to `T-1`, mapping to diffusion time `t = (T - step_idx) / T` (high noise to low noise).
 
