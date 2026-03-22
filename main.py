@@ -3,7 +3,7 @@
 Modes
 -----
 collect       Collect offline trajectories from a trained PPO agent.
-offline       Train diffusion model from PPO rollouts (live or from disk).
+offline       Train diffusion model from live PPO rollouts.
 online        GRPO fine-tuning with environment interaction.
 train_reward  Train a reward model on offline trajectory data.
 inference     Evaluate a trained diffusion planner via MPC.
@@ -113,15 +113,17 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
     p.add_argument("--collect_temperature", type=float, default=None)
     p.add_argument("--val_interval", type=int, default=None)
     p.add_argument("--val_diffusion_steps", type=int, default=None)
+    p.add_argument("--val_replan_every", type=int, default=None)
+    p.add_argument("--val_steps", type=int, default=None)
+    p.add_argument("--return_weight_cap", type=float, default=None)
+    p.add_argument("--lr_warmup_steps", type=int, default=None)
 
     # Online GRPO
     p.add_argument("--num_updates", type=lambda x: int(float(x)), default=None)
     p.add_argument("--replan_every", type=int, default=None)
     p.add_argument("--grpo_group_size", type=int, default=None)
-    p.add_argument("--awr_temperature", type=float, default=None)
     p.add_argument("--ppo_init_prob", type=float, default=None)
     p.add_argument("--ppo_decay_rate", type=float, default=None)
-    p.add_argument("--intrinsic_coef", type=float, default=None)
 
     # Data collection / PPO
     p.add_argument("--collect_num_steps", type=lambda x: int(float(x)), default=None)
@@ -144,11 +146,8 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
 
     # Logging
     p.add_argument("--use_wandb", action=argparse.BooleanOptionalAction, default=None)
-    p.add_argument("--debug", action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--wandb_project", type=str, default=None)
     p.add_argument("--wandb_entity", type=str, default=None)
-    p.add_argument("--wm_checkpoint_path", type=str, default=None)
-    p.add_argument("--num_candidates", type=int, default=4)
 
     return p
 
@@ -158,8 +157,8 @@ def _validate(mode: str, config: dict[str, Any]) -> None:
     if mode == "collect":
         assert config.get("PPO_CHECKPOINT_PATH"), "--ppo_checkpoint_path required for --mode collect"
     elif mode == "offline":
-        assert config.get("PPO_CHECKPOINT_PATH") or config.get("OFFLINE_DATA_PATH"), (
-            "--mode offline requires --ppo_checkpoint_path or --offline_data_path"
+        assert config.get("PPO_CHECKPOINT_PATH"), (
+            "--mode offline requires --ppo_checkpoint_path"
         )
     elif mode == "inference":
         assert config.get("CHECKPOINT_PATH"), "--checkpoint_path required for --mode inference"

@@ -46,17 +46,19 @@ num_minibatches: 8
 update_epochs: 4
 num_repeats: 1
 collect_temperature: 1.0
+lr_warmup_steps: 0                  # linear warm-up steps before cosine LR decay (0 = disabled)
+return_weight_cap: 5.0              # clip ceiling for per-window return weights
 val_interval: 50
 val_diffusion_steps: 50
+val_replan_every: 4                 # env steps executed per diffusion plan during validation
+val_steps: 128                      # total env steps per validation rollout
 
 # ── Online GRPO training (--mode online) ─────────────────────────────────────
 num_updates: 1000
 replan_every: 4
 grpo_group_size: 4
-awr_temperature: 2.0
 ppo_init_prob: 0.1
 ppo_decay_rate: 0.99
-intrinsic_coef: 0.0
 
 # ── Data collection (--mode collect) ─────────────────────────────────────────
 collect_num_steps: 10000000
@@ -68,7 +70,7 @@ layer_size: 512
 eval_steps: 10000
 diffusion_steps_eval: 10
 
-# ── Reward model (--mode train_reward / online intrinsic) ────────────────────
+# ── Reward model (--mode train_reward) ───────────────────────────────────────
 reward_model_type: "mlp"            # mlp | rnd | vision_rnd
 reward_epochs: 10
 reward_lr: 1.0e-4
@@ -85,4 +87,3 @@ seed: null                          # random if not set
 use_wandb: true
 wandb_project: "remdm-craftax"
 wandb_entity:
-debug: true

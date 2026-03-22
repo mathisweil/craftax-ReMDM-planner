@@ -15,7 +15,6 @@ num_minibatches: 16        # Slices the 4,096 frames into tiny batches for VRAM 
 offline_checkpoint_path: null                                 # Fresh Brain
 ppo_checkpoint_path: "/home/ak/open-ended/Craftax/craftax-ReMDM-planner/checkpoints/policies"
 ppo_model_type: "ppo_rnn"        # Explicitly telling it to use the RNN teacher
-intrinsic_coef: 0.0              # Vision RND is OFF (Saves massive compute)
 ppo_init_prob: 0.5               # Start with 50% Teacher guidance since the run is so short
 ppo_decay_rate: 0.95             # Faster decay to let the student take over quickly
 
@@ -42,7 +41,6 @@ dropout_rate: 0.1
 
 # ── GRPO & Optimisation ─────────────────────────────────────────────────────
 grpo_group_size: 4         # Lowered from 8 to 4 to save VRAM during multiverse simulation
-awr_temperature: 2.0
 lr: 3.0e-4
 max_grad_norm: 1.0
 batch_size: 256
@@ -50,8 +48,8 @@ batch_size: 256
 # ── System & Logging ────────────────────────────────────────────────────────
 use_wandb: true
 wandb_project: "craftax-remdm-3060-tests"
-ckpt_every_steps: 10       # Saves a checkpoint at step 10 and step 20
-ckpt_max_to_keep: 1
-ckpt_dir: "checkpoints_3060_hyper"
+checkpoint_interval: 10
+max_checkpoints: 1
+checkpoint_dir: "checkpoints_3060_hyper"
 save_policy: true        # Save the model checkpoint at the end of training
 num_repeats: 1            # Number of independent training runs (vmapped)

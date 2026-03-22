@@ -135,7 +135,7 @@ def make_train(config: dict[str, Any]):
     config["MINIBATCH_SIZE"] = num_samples // config["NUM_MINIBATCHES"]
 
     # Environment
-    env, env_params = make_env(config, config["ENV_NAME"])
+    env, env_params = make_env(config, num_envs)
 
     num_actions = env.action_space(env_params).n
     obs_shape = env.observation_space(env_params).shape
