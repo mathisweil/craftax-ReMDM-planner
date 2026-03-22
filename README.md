@@ -14,8 +14,11 @@ Training follows a four-stage pipeline:
 [Stage 1]  Train PPO agent          Craftax_Baselines/ppo_rnn.py | ppo_rnd.py
                |
                v  checkpoint
-[Stage 2]  Collect / train offline  main.py --mode collect
-               |                    main.py --mode offline
+[Stage 2a] Collect trajectories     main.py --mode collect          (optional)
+               |
+               v  .npz file
+[Stage 2b] Train offline            main.py --mode offline
+               |  (from .npz or live PPO rollouts)
                v  diffusion checkpoint
 [Stage 3]  Online fine-tuning       main.py --mode online
                |
@@ -78,6 +81,12 @@ All modes share the same entry point. Defaults are loaded from `configs/defaults
 python main.py --mode <MODE> [--config PATH] [OVERRIDES...]
 ```
 
+Pass `--no-jit` to disable JIT compilation (useful for debugging):
+
+```bash
+python main.py --mode offline --no-jit --num_envs 4
+```
+
 ### Stage 1 — Train a PPO agent
 
 PPO training is handled by the `Craftax_Baselines` submodule and produces the checkpoint consumed by all downstream stages.
@@ -87,13 +96,13 @@ cd Craftax_Baselines
 
 # PPO with GRU hidden state (recommended)
 python ppo_rnn.py \
-    --env_name Craftax-Symbolic-v1 \
+    --env_name Craftax-Classic-Symbolic-v1 \
     --total_timesteps 500000000 \
     --save_policy --use_wandb
 
 # PPO with Random Network Distillation
 python ppo_rnd.py \
-    --env_name Craftax-Symbolic-v1 \
+    --env_name Craftax-Classic-Symbolic-v1 \
     --total_timesteps 500000000 \
     --save_policy --use_wandb
 
@@ -102,43 +111,45 @@ cd ..
 
 ### Stage 2a — Collect trajectories to disk
 
-Roll out the PPO checkpoint and save `(obs, actions, dones)` as a `.npz` file for reuse across multiple diffusion training runs.
+Roll out the PPO checkpoint and save `(obs, actions, rewards, dones)` as a `.npz` file for reuse across multiple diffusion training runs.
 
 ```bash
 python main.py --mode collect \
     --ppo_checkpoint_path /path/to/ppo_checkpoint \
     --offline_data_path data/trajectories.npz \
-    --collect_num_steps 1000000 \
-    --collect_num_envs 64
+    --collect_num_steps 10000000 \
+    --collect_num_envs 128
 ```
 
-The file has shape `[num_envs, num_iters, ...]`, preserving per-environment contiguity so the offline sampler can enforce episode boundaries.
+The file stores arrays shaped `[num_envs, num_iters, ...]`, preserving per-environment contiguity so episode boundaries are respected during window sampling.
 
-### Stage 2b — Train offline (live PPO, no disk I/O)
+### Stage 2b — Train offline from saved trajectories
 
-Pass `--ppo_checkpoint_path` directly to `--mode offline` to skip saving trajectories. The PPO agent is rolled out live at each training step.
-
-```bash
-python main.py --mode offline \
-    --ppo_checkpoint_path /path/to/ppo_checkpoint \
-    --num_train_steps 100000 \
-    --save_policy
-```
-
-### Stage 3 — Train offline from saved trajectories
+Train the diffusion model by replaying a pre-collected `.npz` file. No live environment rollout occurs; all valid sliding windows are pre-computed at load time and shuffled each epoch.
 
 ```bash
 python main.py --mode offline \
     --offline_data_path data/trajectories.npz \
-    --num_train_steps 100000 \
+    --num_updates 500 \
     --save_policy
 ```
 
-The sampler masks out windows that cross episode boundaries, so the model is never trained across episode resets.
+Windows that cross episode boundaries are masked out. When `rewards` are present in the file (produced by `--mode collect`), training is return-weighted: windows with higher cumulative reward receive proportionally larger gradient contributions.
 
-### Stage 4 — Online GRPO fine-tuning
+### Stage 2b (alternative) — Train offline from live PPO rollouts
 
-The diffusion model acts as its own policy: it generates plans, executes them, and trains on the resulting `(obs, plan)` pairs via group relative advantage weighting.
+Pass `--ppo_checkpoint_path` without `--offline_data_path` to skip saving trajectories and roll out the PPO agent live at each update step.
+
+```bash
+python main.py --mode offline \
+    --ppo_checkpoint_path /path/to/ppo_checkpoint \
+    --total_timesteps 100000000 \
+    --save_policy
+```
+
+### Stage 3 — Online GRPO fine-tuning
+
+The diffusion model acts as its own policy: it generates groups of plans, executes them in the environment, and trains on the resulting `(obs, plan)` pairs weighted by group-relative advantages.
 
 ```bash
 # From scratch
@@ -153,7 +164,7 @@ python main.py --mode online \
     --save_policy
 ```
 
-### Stage 5 — Evaluate
+### Stage 4 — Evaluate
 
 ```bash
 python main.py --mode inference \
@@ -193,7 +204,7 @@ Pass the saved model to online training via `--reward_load_path`.
 All hyperparameters are in `configs/defaults.yaml`. Override any value on the command line:
 
 ```bash
-python main.py --mode offline --lr 1e-4 --plan_horizon 64 --batch_size 512
+python main.py --mode offline --lr 1e-4 --plan_horizon 64 --num_minibatches 16
 ```
 
 Point to a custom config file:
@@ -214,6 +225,14 @@ Preset configs for larger runs are provided in `configs/`:
 
 ### Key hyperparameters
 
+**Environment**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `env_name` | `Craftax-Classic-Symbolic-v1` | Craftax environment ID |
+| `use_optimistic_resets` | `false` | Use `OptimisticResetVecEnvWrapper` instead of `AutoResetEnvWrapper` |
+| `optimistic_reset_ratio` | 16 | Fraction of envs reset per step when optimistic resets are enabled |
+
 **Diffusion model**
 
 | Parameter | Default | Description |
@@ -222,11 +241,12 @@ Preset configs for larger runs are provided in `configs/`:
 | `diffusion_steps` | 15 | Denoising steps T at inference |
 | `diffusion_schedule` | `cosine` | Noise schedule: `cosine` or `linear` |
 | `remask_strategy` | `rescale` | Remasking strategy: `rescale`, `cap`, or `conf` |
-| `train_sigma` | 0.0 | Per-token remasking during training (0 = vanilla MDLM) |
+| `train_sigma` | 0.0 | Per-token remasking correction during training (0 = standard MDLM) |
+| `label_smoothing` | 0.0 | Cross-entropy label smoothing epsilon (0 = exact ELBO) |
 | `eta` | 0.5 | Remasking strength |
 | `use_loop` | `true` | Three-phase loop remasking (Algorithm 3) |
-| `t_on` / `t_off` | 0.7 / 0.3 | Time window for loop remasking |
-| `temperature` | 0.5 | Softmax temperature for sampling |
+| `t_on` / `t_off` | 0.7 / 0.3 | Time window boundaries for loop remasking |
+| `temperature` | 0.5 | Softmax temperature for token sampling |
 | `top_p` | 0.95 | Nucleus sampling threshold |
 
 **Transformer architecture**
@@ -239,28 +259,53 @@ Preset configs for larger runs are provided in `configs/`:
 | `d_ff` | 512 | FFN inner dimension |
 | `obs_encoder_layers` | 2 | MLP layers in the observation encoder |
 | `obs_encoder_width` | 512 | Observation encoder hidden width |
-| `dropout_rate` | 0.1 | Dropout (disabled at inference) |
+| `dropout_rate` | 0.1 | Dropout rate (disabled at inference) |
 
 **Offline training**
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `total_timesteps` | 1e8 | Environment steps for data collection |
+| `total_timesteps` | 1e8 | Total environment steps for live-PPO data collection |
+| `num_updates` | 1000 | Update steps for `.npz` replay mode; derived from `total_timesteps` if unset |
 | `num_envs` | 1024 | Parallel environments |
-| `batch_size` | 256 | Minibatch size |
-| `lr` | 3e-4 | Adam learning rate |
-| `max_grad_norm` | 1.0 | Gradient clipping norm |
-| `collect_temperature` | 1.0 | Softmax temperature on PPO logits during collection |
+| `num_steps` | 64 | Environment steps collected per update (live-PPO mode) |
+| `num_minibatches` | 8 | Gradient minibatches per epoch |
+| `update_epochs` | 4 | SGD epochs per update step |
+| `num_repeats` | 1 | Independent training seeds (vmapped) |
+| `lr` | 3e-4 | Adam learning rate (cosine-decayed to 10% over all gradient steps) |
+| `max_grad_norm` | 1.0 | Global gradient clipping norm |
+| `batch_size` | 256 | Minibatch size (used by reward model training) |
+| `collect_temperature` | 1.0 | Softmax temperature on PPO logits during live data collection |
+| `val_interval` | 50 | Validation frequency in update steps |
+| `val_diffusion_steps` | 50 | Denoising steps used during validation rollouts |
 
 **Online GRPO training**
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `num_updates` | 1000 | Outer update iterations |
-| `replan_every` | 4 | Steps executed per plan before replanning |
+| `replan_every` | 4 | Environment steps executed per plan before replanning |
 | `grpo_group_size` | 4 | Plans sampled per state for group advantage |
+| `awr_temperature` | 2.0 | Temperature for advantage-weighted regression |
 | `ppo_init_prob` | 0.1 | Initial probability of injecting PPO expert actions |
-| `ppo_decay_rate` | 0.99 | Exponential decay of PPO injection per update |
+| `ppo_decay_rate` | 0.99 | Exponential decay of PPO injection probability per update |
+| `intrinsic_coef` | 0.0 | Weight on intrinsic reward model signal (0 = extrinsic reward only) |
+
+**Data collection**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `collect_num_steps` | 10000000 | Total environment steps to collect |
+| `collect_num_envs` | 128 | Parallel environments during collection |
+| `ppo_model_type` | `ppo_rnn` | PPO architecture: `ppo`, `ppo_rnn`, or `ppo_rnd` |
+| `layer_size` | 512 | PPO actor-critic hidden layer width |
+
+**Inference**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `eval_steps` | 10000 | Environment steps for evaluation |
+| `diffusion_steps_eval` | 10 | Denoising steps T used at evaluation time |
 
 **Reward model**
 
@@ -271,14 +316,24 @@ Preset configs for larger runs are provided in `configs/`:
 | `reward_lr` | 1e-4 | Adam learning rate |
 | `reward_save_path` | `checkpoints/reward_model.msgpack` | Output path |
 
+**Checkpointing**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `checkpoint_dir` | `checkpoints_online` | Directory for periodic checkpoints |
+| `checkpoint_interval` | 500 | Save a checkpoint every N update steps |
+| `max_checkpoints` | 3 | Maximum number of checkpoints to retain |
+| `save_policy` | `true` | Save final checkpoint at end of training |
+
 **Logging**
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `use_wandb` | `true` | Enable Weights & Biases logging |
 | `wandb_project` | `remdm-craftax` | W&B project name |
-| `save_policy` | `true` | Save checkpoint at end of training |
+| `wandb_entity` | `""` | W&B entity (team or username); empty = personal account |
 | `seed` | `null` | RNG seed (random if null) |
+| `debug` | `true` | Enable JAX debug mode |
 
 ---
 
@@ -302,7 +357,7 @@ Selected via `--reward_model_type`. During online GRPO training, the reward mode
 |-------|------|-------------|
 | `mlp` | `DeterministicNeuralReward` | MLP discriminator with hidden dims 512 → 256 → 128 |
 | `rnd` | `RNDReward` | Random Network Distillation: frozen target MLP vs. trained predictor MLP (256 → 128 → 64) |
-| `vision_rnd` | `VisionRNDReward` | CNN-based RND: projects obs to 9x9x16 grid, applies two conv layers (64 → 128), then computes target/predictor MSE |
+| `vision_rnd` | `VisionRNDReward` | CNN-based RND: projects obs to 9×9×16 grid, applies two conv layers (64 → 128), then computes target/predictor MSE |
 
 ---
 
@@ -357,7 +412,7 @@ craftax-ReMDM-planner/
 │   │   ├── schedules.py           # Linear and cosine noise schedules
 │   │   ├── forward.py             # Forward masking process q(z_t | x_0)
 │   │   ├── loss.py                # Continuous-time MDLM ELBO loss
-│   │   └── sampling.py           # Reverse diffusion with ReMDM remasking
+│   │   └── sampling.py            # Reverse diffusion with ReMDM remasking
 │   ├── models/
 │   │   ├── denoiser.py            # DenoisingTransformer (obs encoder + transformer)
 │   │   └── reward_models.py       # DeterministicNeuralReward, RNDReward, VisionRNDReward
@@ -365,12 +420,13 @@ craftax-ReMDM-planner/
 │   │   └── wrappers.py            # SequenceHistoryWrapper, DiscreteTokenizationWrapper
 │   └── planners/
 │       ├── collect.py             # --mode collect: PPO rollouts -> .npz
-│       ├── train.py               # --mode offline: train from .npz or live PPO agent
+│       ├── train.py               # --mode offline: make_train (live PPO) and make_train_from_data (.npz replay)
 │       ├── online.py              # --mode online: GRPO fine-tuning
 │       ├── inference.py           # --mode inference: MPC evaluation with inpainting
 │       ├── train_reward.py        # --mode train_reward: standalone reward model training
-│       ├── data.py                # PPOAgent wrapper, environment construction, data loading
-│       └── state.py               # Model init, checkpoint I/O, TrainState creation
+│       ├── data.py                # PPOAgent wrapper, environment construction, data utilities
+│       ├── state.py               # Model init, checkpoint I/O, TrainState creation
+│       └── logging.py             # Centralised W&B logging utilities
 ├── main.py                        # CLI entry point
 ├── environment.yaml               # Conda environment specification
 └── requirements.txt               # pip requirements
@@ -380,14 +436,20 @@ craftax-ReMDM-planner/
 
 ## Implementation Notes
 
-**JAX functional purity**: training closures (`make_train`, `make_train_online`) are fully JIT-compatible. Environment construction and checkpoint I/O happen outside `jax.jit`.
+**JAX functional purity**: training closures (`make_train`, `make_train_from_data`, `make_train_online`) are fully JIT-compatible. Environment construction and checkpoint I/O happen outside `jax.jit`.
 
-**Episode-boundary masking**: the offline sampler pre-computes a validity mask over all `(env, time)` positions. A window at `(e, t)` is valid only if `dones[e, t:t+H-1]` are all `False`.
+**Offline training modes**: `--mode offline` routes to two implementations depending on the arguments supplied. `--ppo_checkpoint_path` triggers `make_train`, which rolls out the PPO agent live at each update step. `--offline_data_path` triggers `make_train_from_data`, which pre-computes all valid windows from a `.npz` file at load time and replays them without any live environment interaction.
 
-**Loss weight clipping**: the MDLM SUBS weight `-alpha'(t) / (1 - alpha_t)` is clipped to 1000 to prevent numerical instability when `alpha_t ~= 1`.
+**Episode-boundary masking**: the offline sampler pre-computes a validity mask over all `(env, time)` positions. A window at `(e, t)` is valid only if `dones[e, t+1:t+H-1]` are all `False`.
 
-**Online training repeats**: `run_online` uses a sequential loop over `num_repeats` rather than `jax.vmap`, because `BatchEnvWrapper` already vmaps `step/reset` internally.
+**Return weighting**: valid windows are weighted by their cumulative reward, normalised by the batch mean and clipped to `[0.1, RETURN_WEIGHT_CAP]`. Weights are passed as per-sample multipliers into the MDLM loss before reduction, so they correctly scale each sample's gradient contribution.
 
-**Denoising step indexing**: the scan runs from `step_idx = 0` to `T-1`, mapping to time `t = (T - step_idx) / T` (high noise to low noise).
+**LR schedule**: cosine decay from `lr` to `lr * 0.1` over all gradient steps, with optional linear warm-up via `--lr_warmup_steps`.
+
+**Loss weight clipping**: the MDLM SUBS weight `-alpha'(t) / (1 - alpha_t)` is clipped to 1000 to prevent numerical instability when `alpha_t ≈ 1`.
+
+**W&B logging**: all metric aggregation is centralised in `src/planners/logging.py`. Metric namespaces: `diffusion/` (loss, accuracy), `train/` (data quality, throughput), `env/` (episode returns, achievements), `val/` (validation rollouts, emitted every `val_interval` steps), `grpo/` (online training only). `train/sps` (environment frames/sec) is only logged in modes that perform live environment interaction; it is suppressed in `.npz` replay mode.
+
+**Denoising step indexing**: the reverse scan runs from `step_idx = 0` to `T-1`, mapping to diffusion time `t = (T - step_idx) / T` (high noise to low noise).
 
 **Submodule PPO agents**: PPO training lives entirely in `Craftax_Baselines/`. Planner scripts only consume pre-trained checkpoints via `--ppo_checkpoint_path`.
