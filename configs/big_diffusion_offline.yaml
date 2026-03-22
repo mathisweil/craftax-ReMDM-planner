@@ -45,8 +45,8 @@ dropout_rate: 0.1
 # ── System & Logging ────────────────────────────────────────────────────────
 use_wandb: true
 wandb_project: "craftax-remdm-offline"
-ckpt_every_steps: 25000    # Saves 4 times during the 100k run
-ckpt_max_to_keep: 2
-ckpt_dir: "checkpoints_3060_offline"
+checkpoint_interval: 5
+max_checkpoints: 2
+checkpoint_dir: "checkpoints_3060_offline"
 save_policy: true        # Save the model checkpoint at the end of training
 num_repeats: 1            # Number of independent training runs (vmapped)

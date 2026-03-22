@@ -96,7 +96,7 @@ def run_train_reward(config: dict[str, Any]) -> None:
 
     state = TrainState.create(
         apply_fn=model.apply, params=params,
-        tx=optax.adam(config.get("REWARD_LR", 3e-4)),
+        tx=optax.adam(config.get("REWARD_LR", 1e-4)),
     )
 
     train_step = _mlp_train_step(model) if model_type == "mlp" else _rnd_train_step(model)

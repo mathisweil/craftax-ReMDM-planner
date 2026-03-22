@@ -123,22 +123,9 @@ python main.py --mode collect \
 
 The file stores arrays shaped `[num_envs, num_iters, ...]`, preserving per-environment contiguity so episode boundaries are respected during window sampling.
 
-### Stage 2b — Train offline from saved trajectories
+### Stage 2b — Train offline from live PPO rollouts
 
-Train the diffusion model by replaying a pre-collected `.npz` file. No live environment rollout occurs; all valid sliding windows are pre-computed at load time and shuffled each epoch.
-
-```bash
-python main.py --mode offline \
-    --offline_data_path data/trajectories.npz \
-    --num_updates 500 \
-    --save_policy
-```
-
-Windows that cross episode boundaries are masked out. When `rewards` are present in the file (produced by `--mode collect`), training is return-weighted: windows with higher cumulative reward receive proportionally larger gradient contributions.
-
-### Stage 2b (alternative) — Train offline from live PPO rollouts
-
-Pass `--ppo_checkpoint_path` without `--offline_data_path` to skip saving trajectories and roll out the PPO agent live at each update step.
+Roll out the PPO agent live at each update step and train the diffusion model on the collected windows. Windows that cross episode boundaries are masked out; windows with higher cumulative reward receive proportionally larger gradient contributions (clipped to `[0.1, return_weight_cap]`).
 
 ```bash
 python main.py --mode offline \
@@ -266,18 +253,21 @@ Preset configs for larger runs are provided in `configs/`:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `total_timesteps` | 1e8 | Total environment steps for live-PPO data collection |
-| `num_updates` | 1000 | Update steps for `.npz` replay mode; derived from `total_timesteps` if unset |
 | `num_envs` | 1024 | Parallel environments |
-| `num_steps` | 64 | Environment steps collected per update (live-PPO mode) |
+| `num_steps` | 64 | Environment steps collected per update |
 | `num_minibatches` | 8 | Gradient minibatches per epoch |
 | `update_epochs` | 4 | SGD epochs per update step |
 | `num_repeats` | 1 | Independent training seeds (vmapped) |
 | `lr` | 3e-4 | Adam learning rate (cosine-decayed to 10% over all gradient steps) |
+| `lr_warmup_steps` | 0 | Linear warm-up steps before cosine decay (0 = disabled) |
 | `max_grad_norm` | 1.0 | Global gradient clipping norm |
 | `batch_size` | 256 | Minibatch size (used by reward model training) |
+| `return_weight_cap` | 5.0 | Clip ceiling for per-window return weights |
 | `collect_temperature` | 1.0 | Softmax temperature on PPO logits during live data collection |
 | `val_interval` | 50 | Validation frequency in update steps |
 | `val_diffusion_steps` | 50 | Denoising steps used during validation rollouts |
+| `val_replan_every` | 4 | Environment steps executed per diffusion plan during validation |
+| `val_steps` | 128 | Total environment steps per validation rollout |
 
 **Online GRPO training**
 
@@ -286,10 +276,8 @@ Preset configs for larger runs are provided in `configs/`:
 | `num_updates` | 1000 | Outer update iterations |
 | `replan_every` | 4 | Environment steps executed per plan before replanning |
 | `grpo_group_size` | 4 | Plans sampled per state for group advantage |
-| `awr_temperature` | 2.0 | Temperature for advantage-weighted regression |
 | `ppo_init_prob` | 0.1 | Initial probability of injecting PPO expert actions |
 | `ppo_decay_rate` | 0.99 | Exponential decay of PPO injection probability per update |
-| `intrinsic_coef` | 0.0 | Weight on intrinsic reward model signal (0 = extrinsic reward only) |
 
 **Data collection**
 
@@ -333,7 +321,6 @@ Preset configs for larger runs are provided in `configs/`:
 | `wandb_project` | `remdm-craftax` | W&B project name |
 | `wandb_entity` | `""` | W&B entity (team or username); empty = personal account |
 | `seed` | `null` | RNG seed (random if null) |
-| `debug` | `true` | Enable JAX debug mode |
 
 ---
 
@@ -420,7 +407,7 @@ craftax-ReMDM-planner/
 │   │   └── wrappers.py            # SequenceHistoryWrapper, DiscreteTokenizationWrapper
 │   └── planners/
 │       ├── collect.py             # --mode collect: PPO rollouts -> .npz
-│       ├── train.py               # --mode offline: make_train (live PPO) and make_train_from_data (.npz replay)
+│       ├── train.py               # --mode offline: make_train (live PPO rollouts)
 │       ├── online.py              # --mode online: GRPO fine-tuning
 │       ├── inference.py           # --mode inference: MPC evaluation with inpainting
 │       ├── train_reward.py        # --mode train_reward: standalone reward model training
@@ -436,15 +423,15 @@ craftax-ReMDM-planner/
 
 ## Implementation Notes
 
-**JAX functional purity**: training closures (`make_train`, `make_train_from_data`, `make_train_online`) are fully JIT-compatible. Environment construction and checkpoint I/O happen outside `jax.jit`.
+**JAX functional purity**: training closures (`make_train`, `make_train_online`) are fully JIT-compatible. Environment construction and checkpoint I/O happen outside `jax.jit`.
 
-**Offline training modes**: `--mode offline` routes to two implementations depending on the arguments supplied. `--ppo_checkpoint_path` triggers `make_train`, which rolls out the PPO agent live at each update step. `--offline_data_path` triggers `make_train_from_data`, which pre-computes all valid windows from a `.npz` file at load time and replays them without any live environment interaction.
+**Offline training**: `--mode offline` rolls out the PPO agent live at each update step via `make_train`. Use `--mode collect` to save a trajectory `.npz` for inspection or analysis; re-feeding it to `--mode offline` is not supported — pass `--ppo_checkpoint_path` instead.
 
 **Episode-boundary masking**: the offline sampler pre-computes a validity mask over all `(env, time)` positions. A window at `(e, t)` is valid only if `dones[e, t+1:t+H-1]` are all `False`.
 
 **Return weighting**: valid windows are weighted by their cumulative reward, normalised by the batch mean and clipped to `[0.1, RETURN_WEIGHT_CAP]`. Weights are passed as per-sample multipliers into the MDLM loss before reduction, so they correctly scale each sample's gradient contribution.
 
-**LR schedule**: cosine decay from `lr` to `lr * 0.1` over all gradient steps, with optional linear warm-up via `--lr_warmup_steps`.
+**LR schedule**: cosine decay from `lr` to `lr * 0.1` over all gradient steps. Set `lr_warmup_steps > 0` to prepend a linear warm-up phase.
 
 **Loss weight clipping**: the MDLM SUBS weight `-alpha'(t) / (1 - alpha_t)` is clipped to 1000 to prevent numerical instability when `alpha_t ≈ 1`.
 
