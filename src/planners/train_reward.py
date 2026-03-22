@@ -81,7 +81,7 @@ def run_train_reward(config: dict[str, Any]) -> None:
     obs_neg, obs_pos = obs[:split_idx], obs[split_idx:]
     print(f"Negative: {obs_neg.shape[0]}, Positive: {obs_pos.shape[0]}")
 
-    rng = jax.random.PRNGKey(config.get("SEED", 42))
+    rng = jax.random.PRNGKey(config["SEED"])
     rng, init_rng = jax.random.split(rng)
 
     model_type = config.get("REWARD_MODEL_TYPE", "mlp")

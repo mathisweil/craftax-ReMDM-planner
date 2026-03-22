@@ -89,7 +89,7 @@ def run_inference(config: dict[str, Any]) -> None:
     obs_dim = env.observation_space(env_params).shape[0]
     config["NUM_ACTIONS"] = num_actions
 
-    num_envs = config.get("NUM_ENVS", 32)
+    num_envs = config.get("EVAL_NUM_ENVS", 32)
     plan_horizon = config["PLAN_HORIZON"]
     diffusion_steps = config.get("DIFFUSION_STEPS_EVAL", 10)
     temperature = config.get("TEMPERATURE", 0.5)
@@ -99,7 +99,7 @@ def run_inference(config: dict[str, Any]) -> None:
     model = build_model(config, num_actions)
     apply_eval, _ = make_apply_fns(model)
 
-    rng = jax.random.PRNGKey(config.get("SEED", 42))
+    rng = jax.random.PRNGKey(config["SEED"])
     rng, ckpt_rng = jax.random.split(rng)
     model_params = load_checkpoint(model, ckpt_rng, obs_dim, plan_horizon, config["CHECKPOINT_PATH"])
     env_indices = jnp.arange(num_envs)
@@ -185,7 +185,7 @@ def run_inference(config: dict[str, Any]) -> None:
 
     if config.get("USE_WANDB", True):
         wandb.init(
-            project=config.get("WANDB_PROJECT", "craftax-remdm"),
+            project=config.get("WANDB_PROJECT", "remdm-craftax"),
             name=f"Eval-T{temperature}-P{top_p}",
             config=config, job_type="evaluation",
         )

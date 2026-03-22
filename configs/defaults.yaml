@@ -68,6 +68,7 @@ layer_size: 512
 
 # ── Inference (--mode inference) ─────────────────────────────────────────────
 eval_steps: 10000
+eval_num_envs: 32                   # parallel agents during evaluation (separate from training num_envs)
 diffusion_steps_eval: 10
 
 # ── Reward model (--mode train_reward) ───────────────────────────────────────

@@ -219,7 +219,14 @@ def make_train(config: dict[str, Any]):
                     apply_eval, state.params, p_rng, vo,
                     num_actions, plan_horizon,
                     num_steps=config.get("VAL_DIFFUSION_STEPS", 50),
-                    schedule_fn=schedule_fn, remask_strategy="cap", use_loop=True,
+                    schedule_fn=schedule_fn,
+                    remask_strategy=config.get("REMASK_STRATEGY", "rescale"),
+                    eta=config.get("ETA", 0.5),
+                    use_loop=config.get("USE_LOOP", True),
+                    t_on=config.get("T_ON", 0.7),
+                    t_off=config.get("T_OFF", 0.3),
+                    temperature=config.get("TEMPERATURE", 0.5),
+                    top_p=config.get("TOP_P", 0.95),
                 )  # [num_envs, plan_horizon]
 
                 def _exec_step(inner_carry, step_i):
@@ -359,7 +366,7 @@ def make_train(config: dict[str, Any]):
             init_hstate, run_rng, 0,
         )
         runner_final, metrics = jax.lax.scan(_update_step, runner_init, None, config["NUM_UPDATES"])
-        return {"runner_state": runner_final, "metric": metrics}
+        return {"runner_state": runner_final, "metrics": metrics}
 
     return train
 
@@ -372,7 +379,8 @@ def run_offline_diffusion(config):
     """Configure, compile, and run offline diffusion training.
 
     Args:
-        config: Lower-cased hyperparameter dict from ``defaults.yaml`` / CLI.
+        config: Mixed-case hyperparameter dict from ``defaults.yaml`` / CLI merge.
+                Keys are upper-cased on entry.
     """
     config = {k.upper(): v for k, v in config.items()}
 
