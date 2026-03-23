@@ -8,59 +8,18 @@ from typing import Any, Optional
 
 import jax
 import jax.numpy as jnp
-import optax
 import orbax.checkpoint as ocp
 import wandb
 
-from src.diffusion.loss import compute_loss
 from src.diffusion.sampling import sample_plan
 from src.diffusion.schedules import SCHEDULE_MAP
 
-from .data import PPOAgent, load_ppo_agent, make_env
-from .state import build_model, init_params, load_checkpoint, create_train_state, make_apply_fns
-from .train import _action_stats
+from .common import make_grad_step
+from .env import make_env
+from .model import build_model, init_params, load_checkpoint, create_train_state, make_apply_fns
+from .ppo import PPOAgent, load_ppo_agent
 
 from .logging import make_wandb_callback
-
-
-# ---------------------------------------------------------------------------
-# Gradient step (online variant with per-sample advantages)
-# ---------------------------------------------------------------------------
-
-def _make_online_grad_step(
-    apply_train, num_actions, schedule_fn, schedule_deriv_fn, sigma_t, label_smoothing,
-):
-    """Return a jittable (state, acts, obs, valid, rng, advantages) -> (state, metrics).
-
-    ISSUE FIXED: train.py's _make_grad_step does NOT pass advantages into
-    compute_loss.  It applies `loss = loss * weights.mean()`, which multiplies
-    the *batch-mean* scalar loss by the *mean* advantage — not per-sample
-    weighting.  The mathematically correct GRPO objective is
-    E_i[ adv_i * loss_i ], i.e. per-sample weighting before reduction.
-
-    This version passes advantages directly into compute_loss, which applies
-    `per_sample = per_sample * stop_gradient(advantages)` before the mean.
-    """
-
-    def _loss_fn(params, acts, obs, valid, rng, advantages):
-        loss, info = compute_loss(
-            apply_train, params, rng, acts, obs, valid,
-            num_actions, schedule_fn, schedule_deriv_fn,
-            sigma_t=sigma_t, label_smoothing=label_smoothing,
-            advantages=advantages,
-        )
-        return loss, info
-
-    def step(state, acts, obs, valid, rng, advantages):
-        (loss, info), grads = jax.value_and_grad(_loss_fn, has_aux=True)(
-            state.params, acts, obs, valid, rng, advantages,
-        )
-        state = state.apply_gradients(grads=grads)
-        info["grad_norm"] = optax.tree.norm(grads)
-        info.update(_action_stats(acts, num_actions, valid))
-        return state, info
-
-    return step
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +63,7 @@ def make_train_online(config: dict[str, Any]):
     # Diffusion model / apply fns ------------------------------------------
     model = build_model(config, num_actions)
     apply_eval, apply_train = make_apply_fns(model)
-    grad_step = _make_online_grad_step(
+    grad_step = make_grad_step(
         apply_train, num_actions, schedule_fn, schedule_deriv_fn,
         config.get("TRAIN_SIGMA", 0.0), config.get("LABEL_SMOOTHING", 0.0),
     )
@@ -192,10 +151,6 @@ def make_train_online(config: dict[str, Any]):
                     jax.random.split(plan_rng, group_size), temps,
                 )  # [G, E, H]
 
-                # ISSUE FIXED: split sim_rng per group member so each gets
-                # independent environment stochasticity.  Original code
-                # captured a single sim_rng as a free variable inside vmap,
-                # meaning every group member shared identical randomness.
                 sim_rngs = jax.random.split(sim_base_rng, group_size)
                 is_teacher = jnp.arange(group_size) == 0
 
@@ -283,13 +238,6 @@ def make_train_online(config: dict[str, Any]):
             flat_plans = traj_plans.reshape(-1, plan_horizon)
             flat_adv = advantages.reshape(-1)
             flat_valid = jnp.ones(flat_obs.shape[0])
-
-            # ISSUE FIXED: removed redundant exp / clip on advantages.
-            # The old code applied exp(adv / temp) then clip(0, 20)
-            # before passing to grad_step, where _make_grad_step applied
-            # clip(0, 20) *again* and then multiplied the scalar loss.
-            # Now advantages go directly into compute_loss for correct
-            # per-sample weighting with stop_gradient.
 
             # Minibatch SGD  (matches train.py _epoch / _mb pattern)
             dataset = (flat_obs, flat_plans, flat_valid, flat_adv)

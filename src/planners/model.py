@@ -1,6 +1,7 @@
-"""Model initialization, optimizer setup, checkpoint I/O, and apply-function closures."""
+"""Diffusion model lifecycle: construction, parameter init, checkpoint I/O, and apply closures."""
 
 from __future__ import annotations
+
 from typing import Any, Callable, Union
 
 import jax
@@ -13,7 +14,15 @@ from src.models.denoiser import DenoisingTransformer
 
 
 def build_model(config: dict, num_actions: int) -> DenoisingTransformer:
-    """Construct a DenoisingTransformer from a config dict."""
+    """Construct a :class:`DenoisingTransformer` from a config dict.
+
+    Args:
+        config:      Upper-cased config dict with architecture hyperparameters.
+        num_actions: Size of the discrete action vocabulary.
+
+    Returns:
+        An uninitialised :class:`DenoisingTransformer` instance.
+    """
     return DenoisingTransformer(
         num_actions=num_actions,
         plan_horizon=config["PLAN_HORIZON"],
@@ -33,7 +42,17 @@ def init_params(
     obs_dim: int,
     plan_horizon: int,
 ) -> Any:
-    """Initialize model parameters with dummy inputs."""
+    """Initialize model parameters with dummy inputs.
+
+    Args:
+        model:        Flax module to initialise.
+        rng:          PRNG key.
+        obs_dim:      Observation dimensionality.
+        plan_horizon: Number of action steps in a plan.
+
+    Returns:
+        Initialised parameter pytree.
+    """
     return model.init(
         rng,
         jnp.zeros((1, obs_dim)),
@@ -49,22 +68,28 @@ def load_checkpoint(
     plan_horizon: int,
     path: str,
 ) -> Any:
-    """Load diffusion model parameters from an Orbax checkpoint."""
-    params = init_params(model, rng, obs_dim, plan_horizon)
+    """Load diffusion model parameters from an Orbax checkpoint.
 
-    # Build an abstract/dummy TrainState matching the saved structure
-    abstract_state = create_train_state(
-        model=model,
-        params=params,
-        lr=1e-4,  # dummy, only used to match structure
-        max_grad_norm=1.0,  # dummy, only used to match structure
-    )
+    Args:
+        model:        Flax module (used to build the abstract state structure).
+        rng:          PRNG key for dummy initialisation.
+        obs_dim:      Observation dimensionality.
+        plan_horizon: Number of action steps in a plan.
+        path:         Path to the Orbax checkpoint directory.
+
+    Returns:
+        Restored parameter pytree.
+
+    Raises:
+        FileNotFoundError: If the checkpoint directory contains no saved steps.
+    """
+    params = init_params(model, rng, obs_dim, plan_horizon)
+    abstract_state = create_train_state(model=model, params=params, lr=1e-4, max_grad_norm=1.0)
 
     with ocp.CheckpointManager(path) as mgr:
         step = mgr.latest_step()
         if step is None:
             raise FileNotFoundError(f"No checkpoint at {path}")
-
         restored_state = mgr.restore(
             step,
             args=ocp.args.StandardRestore(item=abstract_state),
@@ -80,7 +105,7 @@ def create_train_state(
     lr: Union[float, Callable[[int], float]],
     max_grad_norm: float,
 ) -> TrainState:
-    """TrainState with gradient clipping + Adam.
+    """Create a :class:`TrainState` with gradient clipping and Adam.
 
     Args:
         model:         Flax module (used only to bind ``apply_fn``).
@@ -96,13 +121,23 @@ def create_train_state(
     return TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
 
-def make_apply_fns(model: DenoisingTransformer):
-    """Return (apply_eval, apply_train) closures matching ModelApplyFn."""
+def make_apply_fns(
+    model: DenoisingTransformer,
+) -> tuple[Callable, Callable]:
+    """Return ``(apply_eval, apply_train)`` closures matching ``ModelApplyFn``.
 
-    def apply_eval(params, obs, z_t, t, _rng=None):
+    Args:
+        model: Flax module.
+
+    Returns:
+        Tuple of ``(apply_eval, apply_train)`` where ``apply_train`` enables
+        dropout via ``rngs={"dropout": rng}``.
+    """
+
+    def apply_eval(params: Any, obs: jnp.ndarray, z_t: jnp.ndarray, t: jnp.ndarray, _rng=None):
         return model.apply(params, obs, z_t, t)
 
-    def apply_train(params, obs, z_t, t, rng=None):
+    def apply_train(params: Any, obs: jnp.ndarray, z_t: jnp.ndarray, t: jnp.ndarray, rng=None):
         return model.apply(
             params, obs, z_t, t,
             deterministic=False,
