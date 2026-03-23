@@ -9,7 +9,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .data import load_ppo_agent, make_env
+from .ppo import load_ppo_agent
+from .env import make_env
 
 
 def collect_offline_data(config: dict[str, Any]) -> None:

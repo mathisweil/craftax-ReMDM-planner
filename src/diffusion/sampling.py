@@ -215,3 +215,98 @@ def sample_plan(
     final_logits = model_apply(params, obs, z_final, jnp.zeros((B,)), None)
     fallback = jnp.argmax(final_logits, axis=-1)
     return jnp.where(z_final == mask_id, fallback, z_final)
+
+
+# ---------------------------------------------------------------------------
+# Inpainting sampler (MPC / historical prefix)
+# ---------------------------------------------------------------------------
+
+def sample_plan_inpainting(
+    apply_fn: ModelApplyFn,
+    params: Any,
+    rng: jax.Array,
+    obs: jnp.ndarray,
+    history: jnp.ndarray,
+    hist_len: jnp.ndarray,
+    num_actions: int,
+    plan_horizon: int,
+    diffusion_steps: int,
+    temperature: float,
+    top_p: Optional[float],
+) -> jnp.ndarray:
+    """Diffusion sampling with a locked historical prefix (inpainting).
+
+    Positions ``0 .. hist_len[b] - 1`` are fixed to the values in ``history``
+    for each batch element ``b``; the remainder are diffused freely.
+
+    Args:
+        apply_fn:       Model apply closure (eval mode, no dropout).
+        params:         Model parameter pytree.
+        rng:            PRNG key.
+        obs:            ``[B, obs_dim]`` conditioning observations.
+        history:        ``[B, plan_horizon]`` int32 prefix of executed actions.
+        hist_len:       ``[B]`` int32 number of valid prefix tokens per element.
+        num_actions:    Size of the real action vocabulary (mask token = ``num_actions``).
+        plan_horizon:   Total sequence length.
+        diffusion_steps: Number of denoising iterations.
+        temperature:    Softmax temperature for token sampling.
+        top_p:          Nucleus-sampling threshold; ``None`` disables nucleus filtering.
+
+    Returns:
+        ``[B, plan_horizon]`` int32 completed action plan.
+    """
+    B = obs.shape[0]
+    mask_id = num_actions
+
+    def _step(carry, step):
+        seq, rng = carry
+        rng, model_rng, sample_rng, remask_rng = jax.random.split(rng, 4)
+
+        ratio = step / diffusion_steps
+        t_tensor = jnp.full((B,), 1.0 - ratio)
+        logits = apply_fn(params, obs, seq, t_tensor, model_rng) / jnp.maximum(temperature, 1e-8)
+
+        # Optional nucleus filtering
+        if top_p is not None:
+            probs = jax.nn.softmax(logits, axis=-1)
+            sorted_idx = jnp.argsort(-probs, axis=-1)
+            sorted_p = jnp.take_along_axis(probs, sorted_idx, axis=-1)
+            cutoff = jnp.cumsum(sorted_p, axis=-1) - sorted_p
+            inv_idx = jnp.argsort(sorted_idx, axis=-1)
+            nucleus_mask = jnp.take_along_axis(cutoff >= top_p, inv_idx, axis=-1)
+            logits = jnp.where(nucleus_mask, -jnp.inf, logits)
+
+        preds = jax.random.categorical(sample_rng, logits, axis=-1)
+        conf = jnp.take_along_axis(
+            jax.nn.softmax(logits, axis=-1), preds[..., None], axis=-1,
+        ).squeeze(-1)
+
+        # Keep top-(ratio * H) most confident predictions unmasked
+        num_unmask = jnp.maximum(1, (plan_horizon * ratio).astype(jnp.int32))
+        sorted_conf = jnp.sort(conf, axis=-1)[..., ::-1]
+        thresh = sorted_conf[jnp.arange(B), num_unmask - 1]
+        seq_new = jnp.where(conf < thresh[:, None], mask_id, preds)
+
+        # Light ReMDM-style remasking
+        remask_prob = 0.15 * (1.0 - ratio)
+        do_remask = (
+            (jax.random.uniform(remask_rng, seq_new.shape) < remask_prob)
+            & (seq_new != mask_id)
+        )
+        seq_new = jnp.where(do_remask, mask_id, seq_new)
+
+        # Lock historical prefix
+        pos = jnp.broadcast_to(jnp.arange(plan_horizon)[None, :], (B, plan_horizon))
+        seq_new = jnp.where(pos < hist_len[:, None], history, seq_new)
+
+        return (seq_new, rng), None
+
+    # Initialise: history locked, remainder fully masked
+    init_seq = jnp.full((B, plan_horizon), mask_id, dtype=jnp.int32)
+    pos = jnp.broadcast_to(jnp.arange(plan_horizon)[None, :], (B, plan_horizon))
+    init_seq = jnp.where(pos < hist_len[:, None], history, init_seq)
+
+    (final_seq, _), _ = jax.lax.scan(
+        _step, (init_seq, rng), jnp.arange(1, diffusion_steps + 1),
+    )
+    return final_seq
