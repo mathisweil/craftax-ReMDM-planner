@@ -36,10 +36,10 @@ top_p: 0.95                         # nucleus sampling threshold
 # ── Optimisation ─────────────────────────────────────────────────────────────
 lr: 3.0e-4
 max_grad_norm: 1.0
-batch_size: 1024
+batch_size: 768
 
 # ── Offline training (--mode offline) ────────────────────────────────────────
-total_timesteps: 1.0e+8
+total_timesteps: 1.0e+9
 num_envs: 512
 num_steps: 64
 num_minibatches: 8
