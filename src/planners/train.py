@@ -329,3 +329,13 @@ def run_offline_diffusion(config):
         with ocp.CheckpointManager(path, options=ocp.CheckpointManagerOptions(max_to_keep=1)) as mgr:
             mgr.save(int(config["TOTAL_TIMESTEPS"]), args=ocp.args.StandardSave(train_state))
         print(f"Saved policy to {path}")
+
+        artifact = wandb.Artifact(
+            name=f"{config['ENV_NAME']}-policy",
+            type="model",
+            metadata=config
+        )
+        artifact.add_dir(path)
+        wandb.log_artifact(artifact)
+
+        print("Uploaded policy artifact to wandb")
