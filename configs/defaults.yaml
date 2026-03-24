@@ -79,8 +79,6 @@ reward_save_path: "checkpoints/reward_model.msgpack"
 
 # ── Checkpointing ───────────────────────────────────────────────────────────
 checkpoint_dir: "checkpoints_online"
-checkpoint_interval: 500
-max_checkpoints: 3
 save_policy: true
 
 # ── Logging ──────────────────────────────────────────────────────────────────
