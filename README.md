@@ -397,10 +397,10 @@ craftax-ReMDM-planner/
 │   └── A100_diffusion_online.yaml
 ├── src/
 │   ├── diffusion/
-│   │   ├── schedules.py           # Linear and cosine noise schedules
 │   │   ├── forward.py             # Forward masking process q(z_t | x_0)
 │   │   ├── loss.py                # Continuous-time MDLM ELBO loss
-│   │   └── sampling.py            # Reverse diffusion with ReMDM remasking
+│   │   ├── sampling.py            # Reverse diffusion with ReMDM remasking
+│   │   └── schedules.py           # Linear and cosine noise schedules
 │   ├── models/
 │   │   ├── denoiser.py            # DenoisingTransformer (obs encoder + transformer)
 │   │   └── reward_models.py       # DeterministicNeuralReward, RNDReward, VisionRNDReward
@@ -408,13 +408,15 @@ craftax-ReMDM-planner/
 │   │   └── wrappers.py            # SequenceHistoryWrapper, DiscreteTokenizationWrapper
 │   └── planners/
 │       ├── collect.py             # --mode collect: PPO rollouts -> .npz
-│       ├── train.py               # --mode offline: make_train (live PPO rollouts)
-│       ├── online.py              # --mode online: GRPO fine-tuning
+│       ├── common.py              # Shared utilities
+│       ├── env.py                 # Environment construction
 │       ├── inference.py           # --mode inference: MPC evaluation with inpainting
-│       ├── train_reward.py        # --mode train_reward: standalone reward model training
-│       ├── data.py                # PPOAgent wrapper, environment construction, data utilities
-│       ├── state.py               # Model init, checkpoint I/O, TrainState creation
-│       └── logging.py             # Centralised W&B logging utilities
+│       ├── logging.py             # Centralised W&B logging utilities
+│       ├── model.py               # Diffusion model lifecycle
+│       ├── online.py              # --mode online: GRPO fine-tuning
+│       ├── ppo.py                 # PPO agent adapter and checkpoint loading utilities
+│       ├── train.py               # --mode offline: make_train (live PPO rollouts)                         
+│       └── train_reward.py        # --mode train_reward: standalone reward model training
 ├── main.py                        # CLI entry point
 ├── environment.yaml               # Conda environment specification
 └── requirements.txt               # pip requirements
