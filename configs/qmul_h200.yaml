@@ -45,7 +45,7 @@ num_steps: 64
 num_minibatches: 8
 update_epochs: 4
 num_repeats: 1
-collect_temperature: 1.0
+collect_temperature: 0.5
 lr_warmup_steps: 1000                # linear warm-up steps before cosine LR decay (0 = disabled)
 return_weight_cap: 5.0              # clip ceiling for per-window return weights
 val_interval: 100
