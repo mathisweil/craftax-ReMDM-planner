@@ -55,13 +55,18 @@ CRAFTAX_ACHIEVEMENTS: list[str] = [
     "make_wood_sword",
     "place_plant",
     "defeat_skeleton",
-    "collect_arrow",
     "make_stone_pickaxe",
     "make_stone_sword",
     "wake_up",
     "place_stone",
     "place_furnace",
     "collect_coal",
+    "make_iron_sword",
+    "make_iron_pickaxe",
+    "eat_cow",
+    "collect_stone",
+    "collect_iron",
+    "collect_diamond",
 ]
 
 
