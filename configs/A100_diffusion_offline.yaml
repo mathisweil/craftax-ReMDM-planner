@@ -44,6 +44,7 @@ dropout_rate: 0.1
 # ── System & Logging ────────────────────────────────────────────────────────
 use_wandb: true
 wandb_project: "craftax-remdm-offline"
+wandb_entity: "mathis-weil-university-college-london-ucl-"
 checkpoint_interval: 5
 max_checkpoints: 2
 checkpoint_dir: "checkpoints_3060_offline"
