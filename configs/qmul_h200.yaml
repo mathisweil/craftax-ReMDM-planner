@@ -4,7 +4,7 @@
 # =============================================================================
 
 # ── Environment ──────────────────────────────────────────────────────────────
-env_name: "Craftax-Symbolic-v1"
+env_name: "Craftax-Classic-Symbolic-v1"
 use_optimistic_resets: false
 optimistic_reset_ratio: 16
 
