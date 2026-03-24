@@ -85,4 +85,4 @@ save_policy: true
 seed: null                          # random if not set
 use_wandb: true
 wandb_project: "remdm-craftax"
-wandb_entity:
+wandb_entity: "mathis-weil-university-college-london-ucl-"
