@@ -96,7 +96,7 @@ def make_train(config: dict[str, Any]):
         else optax.cosine_decay_schedule(
             init_value=config["LR"],
             decay_steps=total_grad_steps,
-            alpha=0.1,  # final LR = 10% of initial
+            alpha=0.1,
         )
     )
 
