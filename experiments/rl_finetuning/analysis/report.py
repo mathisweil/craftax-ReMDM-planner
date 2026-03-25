@@ -20,7 +20,6 @@ from typing import Any
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-import polars as pl
 
 from experiments.rl_finetuning.ablations.registry import REGISTRY
 from experiments.rl_finetuning.ablations.training import AblationHistory
@@ -140,7 +139,7 @@ def _plot_decision_tree(
         scored_hypotheses: List of scored hypothesis dicts (sorted by evidence_score).
         output_dir:        Output directory for the PNG.
     """
-    fig, ax = plt.subplots(figsize=(16, max(8, len(scored_hypotheses) * 1.5)))
+    fig, ax = plt.subplots(figsize=(16, max(8.0, len(scored_hypotheses) * 1.5)))
     ax.set_xlim(0, 10)
     ax.set_ylim(0, len(scored_hypotheses) + 1)
     ax.axis("off")
@@ -148,7 +147,7 @@ def _plot_decision_tree(
     fig.patch.set_facecolor("white")
     ax.set_title("Hypothesis Attribution Decision Tree", fontsize=14, fontweight="bold")
 
-    cmap = plt.cm.RdYlGn
+    cmap = plt.get_cmap("RdYlGn")
     for i, hyp in enumerate(scored_hypotheses):
         y = len(scored_hypotheses) - i
         ev = hyp["evidence_score"]

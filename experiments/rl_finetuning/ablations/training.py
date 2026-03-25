@@ -11,6 +11,7 @@ The gradient step is JIT-compiled via Flax TrainState.apply_gradients.
 from __future__ import annotations
 
 import logging
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -136,7 +137,8 @@ class AblationHistory:
         Returns:
             ``AblationHistory`` instance.
         """
-        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+        valid_keys = {f.name for f in dataclasses.fields(cls)}
+        return cls(**{k: v for k, v in d.items() if k in valid_keys})
 
 
 # ---------------------------------------------------------------------------

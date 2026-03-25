@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -212,7 +211,7 @@ def plot_final_score_comparison(
     colors = ["black"] + [_group_color(n) for n in results]
 
     with plt.rc_context(_STYLE):
-        fig, ax = plt.subplots(figsize=(max(8, len(names) * 0.7), 5))
+        fig, ax = plt.subplots(figsize=(max(8.0, len(names) * 0.7), 5))
         bars = ax.bar(range(len(names)), scores, color=colors, alpha=0.8, edgecolor="white")
         ax.axhline(pretrained_score, linestyle="--", color="black", alpha=0.6, label="pretrained")
         ax.set_xticks(range(len(names)))
@@ -279,7 +278,7 @@ def plot_score_delta(
     names, vals = zip(*sorted_items) if sorted_items else ([], [])
 
     with plt.rc_context(_STYLE):
-        fig, ax = plt.subplots(figsize=(max(8, len(names) * 0.7), 5))
+        fig, ax = plt.subplots(figsize=(max(8.0, len(names) * 0.7), 5))
         colors = [_group_color(n) for n in names]
         ax.bar(range(len(names)), vals, color=colors, alpha=0.8, edgecolor="white")
         ax.axhline(0, linestyle="-", color="black", alpha=0.5, linewidth=1.0)
@@ -346,7 +345,7 @@ def plot_per_layer_gradient_heatmap(
     iters = history.per_layer_iters or list(range(len(history.per_layer_norms)))
 
     with plt.rc_context(_STYLE):
-        fig, ax = plt.subplots(figsize=(12, max(4, len(all_keys) * 0.5)))
+        fig, ax = plt.subplots(figsize=(12, max(4.0, len(all_keys) * 0.5)))
         im = ax.imshow(matrix, aspect="auto", cmap="viridis", interpolation="nearest")
         ax.set_xticks(range(len(iters)))
         ax.set_xticklabels([str(i) for i in iters], rotation=45, ha="right", fontsize=7)
@@ -381,7 +380,7 @@ def plot_gradient_conflict_map(
         matrix[i, :len(aligns)] = [1.0 if a < 0 else 0.0 for a in aligns]
 
     with plt.rc_context(_STYLE):
-        fig, ax = plt.subplots(figsize=(12, max(3, len(names) * 0.5)))
+        fig, ax = plt.subplots(figsize=(12, max(3.0, len(names) * 0.5)))
         im = ax.imshow(matrix, aspect="auto", cmap="RdYlGn_r", vmin=0, vmax=1, interpolation="nearest")
         ax.set_yticks(range(len(names)))
         ax.set_yticklabels(names, fontsize=8)

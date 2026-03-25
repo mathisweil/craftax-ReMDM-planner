@@ -100,4 +100,5 @@ dependencies:
       - wandb==0.25.1
       - wrapt==2.1.2
       - zipp==3.23.0
+  - orjson
 prefix: /Users/mathisweil/miniforge3/envs/craftax

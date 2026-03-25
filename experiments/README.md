@@ -38,8 +38,8 @@ rl_finetuning/
 **Smoke test (2 ablations, fast config):**
 ```bash
 python experiments/rl_finetuning/run_ablations.py \
-    --ablations_config experiments/rl_finetuning/configs/ablations_fast.yaml \
     --ablations baseline_rl kl_penalty \
+    --fast \
     --offline_checkpoint_path $OFFLINE_CKPT \
     --ppo_checkpoint_path $PPO_CKPT
 ```

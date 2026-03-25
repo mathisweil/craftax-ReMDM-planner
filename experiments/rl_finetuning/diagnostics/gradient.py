@@ -12,7 +12,6 @@ from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
-import optax
 
 
 # ---------------------------------------------------------------------------
