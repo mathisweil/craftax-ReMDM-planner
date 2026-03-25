@@ -5,7 +5,6 @@ Modes
 collect       Collect offline trajectories from a trained PPO agent.
 offline       Train diffusion model from live PPO rollouts.
 online        GRPO fine-tuning with environment interaction.
-train_reward  Train a reward model on offline trajectory data.
 inference     Evaluate a trained diffusion planner via MPC.
 
 Usage
@@ -35,12 +34,10 @@ from src.planners.collect import run_collect
 from src.planners.train import run_offline_diffusion
 from src.planners.online import run_online
 from src.planners.inference import run_inference
-from src.planners.train_reward import run_train_reward
 
 REMASK_STRATEGIES = ["rescale", "cap", "conf"]
 DIFFUSION_SCHEDULES = ["cosine", "linear"]
 PPO_TYPES = ["ppo", "ppo_rnn", "ppo_rnd"]
-REWARD_TYPES = ["mlp", "rnd", "vision_rnd"]
 
 
 def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
@@ -55,7 +52,7 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
     # Mode
     p.add_argument(
         "--mode", required=True,
-        choices=["collect", "offline", "online", "inference", "train_reward"],
+        choices=["collect", "offline", "online", "inference"],
     )
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--jit", action=argparse.BooleanOptionalAction, default=True)
@@ -66,8 +63,6 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
     p.add_argument("--offline_checkpoint_path", type=str, default=None)
     p.add_argument("--checkpoint_path", type=str, default=None)
     p.add_argument("--checkpoint_dir", type=str, default=None)
-    p.add_argument("--reward_load_path", type=str, default=None)
-    p.add_argument("--reward_save_path", type=str, default=None)
 
     # Environment
     p.add_argument("--env_name", type=str, default=None)
@@ -135,14 +130,7 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
     p.add_argument("--eval_steps", type=lambda x: int(float(x)), default=None)
     p.add_argument("--eval_num_envs", type=int, default=None)
 
-    # Reward model
-    p.add_argument("--reward_model_type", type=str, choices=REWARD_TYPES, default=None)
-    p.add_argument("--reward_epochs", type=int, default=None)
-    p.add_argument("--reward_lr", type=float, default=None)
-
     # Checkpointing
-    p.add_argument("--checkpoint_interval", type=lambda x: int(float(x)), default=None)
-    p.add_argument("--max_checkpoints", type=int, default=None)
     p.add_argument("--save_policy", action=argparse.BooleanOptionalAction, default=None)
 
     # Logging
@@ -163,8 +151,6 @@ def _validate(mode: str, config: dict[str, Any]) -> None:
         )
     elif mode == "inference":
         assert config.get("CHECKPOINT_PATH"), "--checkpoint_path required for --mode inference"
-    elif mode == "train_reward":
-        assert config.get("OFFLINE_DATA_PATH"), "--offline_data_path required for --mode train_reward"
 
 
 DISPATCH = {
@@ -172,7 +158,6 @@ DISPATCH = {
     "offline": run_offline_diffusion,
     "online": run_online,
     "inference": run_inference,
-    "train_reward": run_train_reward,
 }
 
 

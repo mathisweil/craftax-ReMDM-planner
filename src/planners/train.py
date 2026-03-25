@@ -96,7 +96,7 @@ def make_train(config: dict[str, Any]):
         else optax.cosine_decay_schedule(
             init_value=config["LR"],
             decay_steps=total_grad_steps,
-            alpha=0.1,  # final LR = 10% of initial
+            alpha=0.1,
         )
     )
 
@@ -329,3 +329,13 @@ def run_offline_diffusion(config):
         with ocp.CheckpointManager(path, options=ocp.CheckpointManagerOptions(max_to_keep=1)) as mgr:
             mgr.save(int(config["TOTAL_TIMESTEPS"]), args=ocp.args.StandardSave(train_state))
         print(f"Saved policy to {path}")
+
+        artifact = wandb.Artifact(
+            name=f"{config['ENV_NAME']}-policy",
+            type="model",
+            metadata=config
+        )
+        artifact.add_dir(path)
+        wandb.log_artifact(artifact)
+
+        print("Uploaded policy artifact to wandb")

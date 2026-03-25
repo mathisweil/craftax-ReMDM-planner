@@ -1,0 +1,116 @@
+# =============================================================================
+# ReMDM ablation study hyperparameters
+# Loaded explicitly by notebook setup cells — NOT auto-loaded by main.py.
+# This file is self-contained: all keys relevant to src/ablations/ are here.
+# =============================================================================
+
+# ── Regularisation family ────────────────────────────────────────────────────
+
+# EWC penalty strength. Higher = stronger regularisation toward pretrained weights.
+# Range: [0, ∞). 0 disables EWC entirely. Typical values: 10–1000.
+ewc_lambda: 100.0
+
+# Layer-wise LR decay factor per layer depth (1.0 = uniform, 0.9 = mild decay).
+# Applied to gradient magnitudes before the optimiser update step.
+# Range: (0, 1].
+llrd_decay: 0.9
+
+# LoRA adapter rank r. Smaller = fewer trainable parameters.
+# Range: 1–64. Typical: 4, 8, 16.
+lora_rank: 8
+
+# LoRA scaling factor alpha. Effective learning rate scale = alpha / lora_rank.
+# Range: (0, ∞). Typically set to 2×rank.
+lora_alpha: 16.0
+
+# ── Data / sampling family ───────────────────────────────────────────────────
+
+# Fraction of the minibatch drawn from the online rollout (rest from offline buffer).
+# Range: [0, 1]. 0.5 = 50/50 blend; 1.0 = online only (same as baseline).
+mixed_replay_ratio: 0.5
+
+# ── Diffusion-time curriculum ─────────────────────────────────────────────────
+
+# Initial upper bound on t for the curriculum loss.
+# Training begins restricted to t ∈ [eps, t_curriculum_start].
+t_curriculum_start: 0.2
+
+# Final upper bound on t once the curriculum completes.
+t_curriculum_end: 1.0
+
+# Number of gradient steps over which t_max grows from start to end.
+t_curriculum_steps: 200
+
+# ── Architecture / loss family ────────────────────────────────────────────────
+
+# Entropy regularisation coefficient (added as an exploration bonus).
+# Range: [0, ∞). 0 disables entropy regularisation.
+entropy_coef: 0.01
+
+# ── Training dynamics family ──────────────────────────────────────────────────
+
+# KL budget for the trust-region loss (nats). The hinge penalty activates
+# only when KL(theta || theta_ref) > trust_region_kl.
+# Range: (0, ∞). Typical: 0.02–0.1.
+trust_region_kl: 0.05
+
+# Coefficient of the hinge penalty once the KL budget is exceeded.
+# Range: (0, ∞). Typical: 10–1000.
+trust_region_penalty_coef: 100.0
+
+# If true, gradient surgery projects out BC-conflicting gradient components.
+gradient_surgery: false
+
+# ── KL penalty (existing ablation) ───────────────────────────────────────────
+
+# KL penalty coefficient for make_loss_kl.
+kl_coef: 0.1
+
+# ── BC on wins threshold ──────────────────────────────────────────────────────
+
+# Advantage threshold above which a window is considered a "win".
+# Range: (-∞, ∞). 0.0 = non-negative return.
+win_threshold: 0.0
+
+# ── Low-t restriction ────────────────────────────────────────────────────────
+
+# Maximum diffusion time for make_loss_low_t.
+# Range: (0, 1). Default 0.2 = focus on the refinement regime.
+t_max_low: 0.2
+
+# ── Ablation study run configuration ─────────────────────────────────────────
+
+# Maximum number of gradient steps per ablation run.
+max_iter: 500
+
+# Evaluate every this many gradient steps.
+eval_every: 100
+
+# Environment steps per evaluation rollout.
+eval_steps: 512
+
+# Minibatch size for gradient steps.
+batch_size: 256
+
+# Adam learning rate.
+lr: 1.0e-4
+
+# Global gradient clipping norm.
+max_grad_norm: 1.0
+
+# Lower clip for normalised return weights. Prevents zero gradients from
+# fully zeroing out optimiser state for low-return windows.
+# Range: [0, 1). Must be > 0 to preserve optimiser activity.
+return_weight_floor: 0.1
+
+# Number of diffusion-time bins for per-t-bin ELBO diagnostic.
+# Range: 1–100. 10 gives a clear picture of loss distribution across t.
+n_t_bins: 10
+
+# Number of independent random seeds (for mean ± std reporting).
+num_seeds: 3
+
+# ── Output paths ─────────────────────────────────────────────────────────────
+
+# Root directory for saved figures and tables.
+ablation_output_dir: "notebooks/ablation_results"

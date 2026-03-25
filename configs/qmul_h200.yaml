@@ -71,12 +71,6 @@ eval_steps: 10000
 eval_num_envs: 32                   # parallel agents during evaluation (separate from training num_envs)
 diffusion_steps_eval: 10
 
-# ── Reward model (--mode train_reward) ───────────────────────────────────────
-reward_model_type: "mlp"            # mlp | rnd | vision_rnd
-reward_epochs: 10
-reward_lr: 1.0e-4
-reward_save_path: "checkpoints/reward_model.msgpack"
-
 # ── Checkpointing ───────────────────────────────────────────────────────────
 checkpoint_dir: "checkpoints_online"
 checkpoint_interval: 500

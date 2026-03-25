@@ -171,3 +171,10 @@ texture_cache*.pbz2
 
 # Macbook specific
 .DS_Store
+
+#Claude specific
+.claude/
+Claude.md
+claude_code_prompt.md
+
+craftax_ablations.py

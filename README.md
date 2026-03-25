@@ -25,7 +25,6 @@ Training follows a four-stage pipeline:
                v  fine-tuned checkpoint
 [Stage 4]  Evaluate                 main.py --mode inference
 
-[Optional] Train reward model       main.py --mode train_reward
 ```
 
 ---
@@ -162,27 +161,6 @@ python main.py --mode inference \
 
 Prints mean episode return, completed episodes, steps per second, and per-achievement unlock counts. Uses historical inpainting: the first `hist_len` plan positions are locked to observed history.
 
-### Optional — Train a reward model
-
-```bash
-# MLP discriminator (default)
-python main.py --mode train_reward \
-    --offline_data_path data/trajectories.npz \
-    --reward_model_type mlp
-
-# Random Network Distillation
-python main.py --mode train_reward \
-    --offline_data_path data/trajectories.npz \
-    --reward_model_type rnd \
-    --reward_save_path checkpoints/rnd_reward.msgpack
-
-# CNN-based Vision RND
-python main.py --mode train_reward \
-    --offline_data_path data/trajectories.npz \
-    --reward_model_type vision_rnd
-```
-
-Pass the saved model to online training via `--reward_load_path`.
 
 ---
 
@@ -261,7 +239,7 @@ Preset configs for larger runs are provided in `configs/`:
 | `lr` | 3e-4 | Adam learning rate (cosine-decayed to 10% over all gradient steps) |
 | `lr_warmup_steps` | 0 | Linear warm-up steps before cosine decay (0 = disabled) |
 | `max_grad_norm` | 1.0 | Global gradient clipping norm |
-| `batch_size` | 256 | Minibatch size (used by reward model training) |
+| `batch_size` | 256 | Minibatch size |
 | `return_weight_cap` | 5.0 | Clip ceiling for per-window return weights |
 | `collect_temperature` | 1.0 | Softmax temperature on PPO logits during live data collection |
 | `val_interval` | 50 | Validation frequency in update steps |
@@ -296,15 +274,6 @@ Preset configs for larger runs are provided in `configs/`:
 | `eval_num_envs` | 32 | Parallel agents during evaluation (independent of `num_envs`) |
 | `diffusion_steps_eval` | 10 | Denoising steps T used at evaluation time |
 
-**Reward model**
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `reward_model_type` | `mlp` | Architecture: `mlp`, `rnd`, or `vision_rnd` |
-| `reward_epochs` | 10 | Training epochs |
-| `reward_lr` | 1e-4 | Adam learning rate |
-| `reward_save_path` | `checkpoints/reward_model.msgpack` | Output path |
-
 **Checkpointing**
 
 | Parameter | Default | Description |
@@ -334,18 +303,6 @@ Controlled by `--remask_strategy`. All strategies operate on top of the three-ph
 | `rescale` | `sigma = eta * sigma_max` | Scales maximum remasking probability proportionally |
 | `cap` | `sigma = min(eta, sigma_max)` | Caps remasking at a fixed rate |
 | `conf` | `sigma = eta * sigma_max * (1 - confidence)` | High-confidence tokens are remasked less |
-
----
-
-## Reward Models
-
-Selected via `--reward_model_type`. During online GRPO training, the reward model is co-trained every 100 gradient steps. Observations from the first 80% of each episode are labelled negative; the last 20% are labelled positive.
-
-| Model | Type | Description |
-|-------|------|-------------|
-| `mlp` | `DeterministicNeuralReward` | MLP discriminator with hidden dims 512 → 256 → 128 |
-| `rnd` | `RNDReward` | Random Network Distillation: frozen target MLP vs. trained predictor MLP (256 → 128 → 64) |
-| `vision_rnd` | `VisionRNDReward` | CNN-based RND: projects obs to 9×9×16 grid, applies two conv layers (64 → 128), then computes target/predictor MSE |
 
 ---
 
@@ -397,24 +354,24 @@ craftax-ReMDM-planner/
 │   └── A100_diffusion_online.yaml
 ├── src/
 │   ├── diffusion/
-│   │   ├── schedules.py           # Linear and cosine noise schedules
 │   │   ├── forward.py             # Forward masking process q(z_t | x_0)
 │   │   ├── loss.py                # Continuous-time MDLM ELBO loss
-│   │   └── sampling.py            # Reverse diffusion with ReMDM remasking
+│   │   ├── sampling.py            # Reverse diffusion with ReMDM remasking
+│   │   └── schedules.py           # Linear and cosine noise schedules
 │   ├── models/
-│   │   ├── denoiser.py            # DenoisingTransformer (obs encoder + transformer)
-│   │   └── reward_models.py       # DeterministicNeuralReward, RNDReward, VisionRNDReward
+│   │   └── denoiser.py            # DenoisingTransformer (obs encoder + transformer)
 │   ├── envs/
 │   │   └── wrappers.py            # SequenceHistoryWrapper, DiscreteTokenizationWrapper
 │   └── planners/
 │       ├── collect.py             # --mode collect: PPO rollouts -> .npz
-│       ├── train.py               # --mode offline: make_train (live PPO rollouts)
-│       ├── online.py              # --mode online: GRPO fine-tuning
+│       ├── common.py              # Shared utilities
+│       ├── env.py                 # Environment construction
 │       ├── inference.py           # --mode inference: MPC evaluation with inpainting
-│       ├── train_reward.py        # --mode train_reward: standalone reward model training
-│       ├── data.py                # PPOAgent wrapper, environment construction, data utilities
-│       ├── state.py               # Model init, checkpoint I/O, TrainState creation
-│       └── logging.py             # Centralised W&B logging utilities
+│       ├── logging.py             # Centralised W&B logging utilities
+│       ├── model.py               # Diffusion model lifecycle
+│       ├── online.py              # --mode online: GRPO fine-tuning
+│       ├── ppo.py                 # PPO agent adapter and checkpoint loading utilities            
+│       └── train.py               # --mode offline: make_train (live PPO rollouts)
 ├── main.py                        # CLI entry point
 ├── environment.yaml               # Conda environment specification
 └── requirements.txt               # pip requirements
