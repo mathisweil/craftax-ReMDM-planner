@@ -48,7 +48,7 @@ from src.ablations.visualisations import (
     make_summary_table,
     make_correlation_table,
 )
-from src.ablations.runner import run_ablation_v2
+from src.ablations.runner import run_ablation_v2, compute_return_weights, make_stateful_rollout_fn
 
 __all__ = [
     # losses
@@ -88,4 +88,6 @@ __all__ = [
     "make_correlation_table",
     # runner
     "run_ablation_v2",
+    "compute_return_weights",
+    "make_stateful_rollout_fn",
 ]

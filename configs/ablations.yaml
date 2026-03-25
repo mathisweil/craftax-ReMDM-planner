@@ -98,6 +98,15 @@ lr: 1.0e-4
 # Global gradient clipping norm.
 max_grad_norm: 1.0
 
+# Lower clip for normalised return weights. Prevents zero gradients from
+# fully zeroing out optimiser state for low-return windows.
+# Range: [0, 1). Must be > 0 to preserve optimiser activity.
+return_weight_floor: 0.1
+
+# Number of diffusion-time bins for per-t-bin ELBO diagnostic.
+# Range: 1–100. 10 gives a clear picture of loss distribution across t.
+n_t_bins: 10
+
 # Number of independent random seeds (for mean ± std reporting).
 num_seeds: 3
 

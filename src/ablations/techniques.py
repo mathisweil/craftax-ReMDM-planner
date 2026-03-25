@@ -38,7 +38,6 @@ ModelApplyFn = Callable[
 
 def make_ablation_grad_step(
     loss_fn: LossFn,
-    num_actions: int,
     frozen_backbone: bool = False,
     llrd_decay: float = 1.0,
     gradient_surgery: bool = False,
@@ -51,7 +50,7 @@ def make_ablation_grad_step(
 
     1. **Frozen backbone** (``frozen_backbone=True``): zero all gradients
        except those belonging to the final output Dense layer
-       (``params['params']['Dense_0']``). Only the action head is updated.
+       (``params['params']['Dense_5']``). Only the action head is updated.
 
     2. **Layer-wise learning-rate decay** (``llrd_decay < 1.0``): scale the
        gradient of each named sub-pytree by ``llrd_decay^depth``, where
@@ -64,7 +63,6 @@ def make_ablation_grad_step(
 
     Args:
         loss_fn:          RL / ablation loss function (returns ``(loss, info)``).
-        num_actions:      Real action vocabulary size (for action stats).
         frozen_backbone:  If True, zero all gradients except the output head.
         llrd_decay:       Exponential LR decay factor per layer depth (1.0 = off).
         gradient_surgery: If True, project out BC-conflicting gradient components.
@@ -206,8 +204,10 @@ def _zero_backbone_grads(grads: Any) -> Any:
     """Zero all gradients except the output Dense layer (frozen backbone).
 
     Assumes a Flax params structure with a top-level ``'params'`` key.
-    The output head is identified by the key ``'Dense_0'`` under
-    ``params['params']`` (the final linear projection in DenoisingTransformer).
+    The output head is identified by the key ``'Dense_5'`` under
+    ``params['params']`` (the final linear projection in DenoisingTransformer;
+    with obs_encoder_layers=2: Dense_0/1=obs_enc, Dense_2=obs_tok,
+    Dense_3/4=time_emb, Dense_5=action logit head).
 
     Args:
         grads: Full gradient pytree.
@@ -218,8 +218,8 @@ def _zero_backbone_grads(grads: Any) -> Any:
     def _zero_unless_head(path: tuple, leaf: jnp.ndarray) -> jnp.ndarray:
         # path is a tuple of dict keys / indices.
         path_str = "/".join(str(p.key) for p in path if hasattr(p, "key"))
-        # Preserve only the output head Dense layer.
-        is_head = "Dense_0" in path_str
+        # Preserve only the output head Dense layer (Dense_5 with obs_encoder_layers=2).
+        is_head = "Dense_5" in path_str
         return leaf if is_head else jnp.zeros_like(leaf)
 
     return jax.tree_util.tree_map_with_path(_zero_unless_head, grads)
