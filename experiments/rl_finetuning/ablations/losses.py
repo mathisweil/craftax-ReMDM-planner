@@ -199,12 +199,15 @@ def _ewc_penalty(
         Scalar unweighted EWC penalty (caller multiplies by ewc_lambda).
     """
     return sum(
-        jnp.sum(f * (p - p_ref) ** 2)
-        for f, p, p_ref in zip(
+        (
+            jnp.sum(f * (p - p_ref) ** 2)
+            for f, p, p_ref in zip(
             jax.tree.leaves(fisher),
             jax.tree.leaves(params),
             jax.tree.leaves(ref_params),
         )
+        ),
+        jnp.array(0.0)
     )
 
 
