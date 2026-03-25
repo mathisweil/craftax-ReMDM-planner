@@ -16,6 +16,7 @@ import jax.numpy as jnp
 import optax
 from flax.training.train_state import TrainState
 
+from src.ablations.losses import _base_elbo
 from src.diffusion.sampling import sample_plan
 from src.diffusion.schedules import ScheduleFn
 from src.ablations.diagnostics import (
@@ -210,7 +211,9 @@ def run_ablation_v2(
                 path_str = "/".join(
                     str(p.key) for p in path if hasattr(p, "key")
                 )
-                return leaf if "Dense_0" in path_str else jnp.zeros_like(leaf)
+                # Dense_5 is the output head (Dense_0/1=obs_enc, Dense_2=obs_tok,
+                # Dense_3/4=time_emb, Dense_5=action logit head).
+                return leaf if "Dense_5" in path_str else jnp.zeros_like(leaf)
 
             grads = jax.tree_util.tree_map_with_path(_zero_unless_head, grads)
 
@@ -278,7 +281,6 @@ def run_ablation_v2(
             rng, align_rng_rl, align_rng_bc = jax.random.split(rng, 3)
 
             def _bc_loss_fn(p: Any) -> tuple[jnp.ndarray, dict]:
-                from src.ablations.losses import _base_elbo
                 return _base_elbo(
                     apply_train_fn, p, align_rng_bc,
                     acts_b, obs_b, valid_b, num_actions,
