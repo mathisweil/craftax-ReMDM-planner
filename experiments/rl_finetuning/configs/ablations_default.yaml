@@ -35,7 +35,7 @@ temperature: 0.5
 top_p: 0.95
 
 # ── Training loop ─────────────────────────────────────────────────────────────
-max_iter: 500                 # training iterations per ablation
+max_iter: 5000                 # training iterations per ablation
 num_envs: 64                  # parallel environments for rollouts
 num_steps: 128                # PPO steps per rollout
 batch_size: 512               # gradient batch size
