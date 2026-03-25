@@ -46,6 +46,11 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+# Add Craftax_Baselines to sys.path so its internal modules (like logz) can be found
+_CRAFTAX_BASELINES = _PROJECT_ROOT / "Craftax_Baselines"
+if str(_CRAFTAX_BASELINES) not in sys.path:
+    sys.path.insert(0, str(_CRAFTAX_BASELINES))
+
 from experiments.rl_finetuning.ablations.registry import REGISTRY, AblationSpec
 from experiments.rl_finetuning.ablations.training import AblationHistory, run_ablation
 from experiments.rl_finetuning.analysis.plots import generate_all_plots
