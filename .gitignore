@@ -174,5 +174,5 @@ texture_cache*.pbz2
 
 #Claude specific
 .claude/
-Claude.md
+CLAUDE.md
 claude_code_prompt.md
