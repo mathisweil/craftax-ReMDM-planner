@@ -176,3 +176,5 @@ texture_cache*.pbz2
 .claude/
 Claude.md
 claude_code_prompt.md
+
+craftax_ablations.py
