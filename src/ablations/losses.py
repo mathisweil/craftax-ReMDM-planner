@@ -32,9 +32,6 @@ import jax.numpy as jnp
 from src.diffusion.forward import forward_process
 from src.diffusion.schedules import ScheduleFn
 
-# Re-export for callers that want the base loss directly.
-from src.diffusion.loss import compute_loss as _compute_loss
-
 _EPS: float = 1e-5
 _MAX_WEIGHT: float = 1000.0
 

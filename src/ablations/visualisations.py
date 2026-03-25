@@ -158,20 +158,22 @@ def plot_training_dynamics(
 
     for method, history in all_histories.items():
         color = _method_color(method)
-        all_steps = history.get("step", [])
+        step_xs = history.get("step", [])          # per gradient step
+        eval_xs = history.get("eval_step", [])     # per eval interval
         for key, (ax, ylabel, add_baseline) in metric_axes.items():
             if key not in history:
                 continue
-            values = history[key]
+            values = [v for v in history[key] if v is not None]
             if not values:
                 continue
-            # Use per-metric step range (eval metrics recorded less often than loss).
-            if len(all_steps) == len(values):
-                steps = all_steps
+            # loss is recorded every step; all other metrics at eval intervals.
+            if key == "loss":
+                xs = step_xs if len(step_xs) == len(history[key]) else list(range(len(values)))
+                smoothed = _ema(values)
             else:
-                steps = list(range(len(values)))
-            smoothed = _ema(values) if key == "loss" else values
-            ax.plot(steps, smoothed, label=method, color=color, linewidth=1.5)
+                xs = eval_xs if len(eval_xs) == len([v for v in history[key] if v is not None]) else list(range(len(values)))
+                smoothed = values
+            ax.plot(xs, smoothed, label=method, color=color, linewidth=1.5)
 
     for key, (ax, ylabel, add_baseline) in metric_axes.items():
         if add_baseline:
