@@ -158,11 +158,18 @@ def plot_training_dynamics(
 
     for method, history in all_histories.items():
         color = _method_color(method)
+        all_steps = history.get("step", [])
         for key, (ax, ylabel, add_baseline) in metric_axes.items():
             if key not in history:
                 continue
             values = history[key]
-            steps = history.get("step", list(range(len(values))))
+            if not values:
+                continue
+            # Use per-metric step range (eval metrics recorded less often than loss).
+            if len(all_steps) == len(values):
+                steps = all_steps
+            else:
+                steps = list(range(len(values)))
             smoothed = _ema(values) if key == "loss" else values
             ax.plot(steps, smoothed, label=method, color=color, linewidth=1.5)
 
