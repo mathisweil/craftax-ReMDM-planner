@@ -36,7 +36,7 @@ top_p: 0.95                         # nucleus sampling threshold
 # ── Optimisation ─────────────────────────────────────────────────────────────
 lr: 3.0e-4
 max_grad_norm: 1.0
-batch_size: 256
+batch_size: 768
 
 # ── Offline training (--mode offline) ────────────────────────────────────────
 total_timesteps: 1.0e+8
@@ -70,12 +70,6 @@ layer_size: 512
 eval_steps: 10000
 eval_num_envs: 32                   # parallel agents during evaluation (separate from training num_envs)
 diffusion_steps_eval: 10
-
-# ── Reward model (--mode train_reward) ───────────────────────────────────────
-reward_model_type: "mlp"            # mlp | rnd | vision_rnd
-reward_epochs: 10
-reward_lr: 1.0e-4
-reward_save_path: "checkpoints/reward_model.msgpack"
 
 # ── Checkpointing ───────────────────────────────────────────────────────────
 checkpoint_dir: "checkpoints_online"

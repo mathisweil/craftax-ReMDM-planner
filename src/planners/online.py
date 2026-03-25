@@ -334,3 +334,13 @@ def run_online(config: dict[str, Any]) -> None:
                 args=ocp.args.StandardSave(train_state),
             )
         print(f"Saved policy to {path}")
+
+        artifact = wandb.Artifact(
+            name=f"{config['ENV_NAME']}-policy",
+            type="model",
+            metadata=config
+        )
+        artifact.add_dir(path)
+        wandb.log_artifact(artifact)
+
+        print("Uploaded policy artifact to wandb")

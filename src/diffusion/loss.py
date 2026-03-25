@@ -30,6 +30,8 @@ def compute_loss(
     sigma_t: float = 0.0,
     label_smoothing: float = 0.0,
     advantages: Optional[jnp.ndarray] = None,
+    t_min: float = _EPS,
+    t_max: float = 1.0,
 ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
     """Continuous-time ELBO loss on masked positions only.
 
@@ -46,6 +48,8 @@ def compute_loss(
         sigma_t:           Remasking correction for ELBO weight (0 = standard MDLM).
         label_smoothing:   Smoothing epsilon (0 = exact ELBO targets).
         advantages:        Optional [B] advantage weights (GRPO).
+        t_min:             Lower bound for uniform t sampling (default: _EPS).
+        t_max:             Upper bound for uniform t sampling (default: 1.0).
 
     Returns:
         (loss, info_dict).
@@ -54,8 +58,8 @@ def compute_loss(
     mask_id = num_actions
     rng, t_rng, mask_rng, drop_rng = jax.random.split(rng, 4)
 
-    # Sample t ~ U(eps, 1)
-    t = jax.random.uniform(t_rng, (B,), minval=_EPS, maxval=1.0)
+    # Sample t ~ U(t_min, t_max). Defaults give full ELBO; narrow range for ablations.
+    t = jax.random.uniform(t_rng, (B,), minval=t_min, maxval=t_max)
     alpha_t = schedule_fn(t)
 
     # Analytic loss weight: w(t) = (1 - sigma) * (-d(alpha)/dt) / (1 - alpha(t))
