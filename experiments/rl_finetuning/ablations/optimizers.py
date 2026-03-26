@@ -99,9 +99,8 @@ def make_optimizer_llrd(config: dict, params: Any) -> optax.GradientTransformati
     )
 
     # Build optimizer for each label
-    transforms: dict[str, optax.GradientTransformation] = {}
+    transforms: dict[str, optax.GradientTransformation] = {"head": optax.adam(base_lr, eps=1e-5)}
     # Head: fastest (depth 0 from top)
-    transforms["head"] = optax.adam(base_lr, eps=1e-5)
     # Obs encoder: slowest (depth n_layers+1)
     obs_lr = base_lr * (decay ** (n_layers + 1))
     transforms["obs_enc"] = optax.adam(obs_lr, eps=1e-5)
@@ -259,7 +258,8 @@ def apply_fn_with_lora(
         path_str = "/".join(str(k.key) if hasattr(k, "key") else str(k) for k in path)
         if path_str in lora_params:
             ab = lora_params[path_str]
-            return param + scale * (ab["B"] @ ab["A"])
+            # A: [d_in, rank], B: [rank, d_out] → delta: [d_in, d_out]
+            return param + scale * (ab["A"] @ ab["B"])
         return param
 
     effective_params = jax.tree_util.tree_map_with_path(inject, base_params)
@@ -287,8 +287,10 @@ def make_optimizer_lora_only(
     lr = config.get("LR", 3e-4)
     max_grad_norm = config.get("MAX_GRAD_NORM", 1.0)
 
-    combined = {"base": base_params, "lora": lora_params}
-    mask_tree = {"base": False, "lora": jax.tree.map(lambda _: True, lora_params)}
+    mask_tree = {
+        "base": jax.tree.map(lambda _: False, base_params),
+        "lora": jax.tree.map(lambda _: True, lora_params),
+    }
 
     return optax.chain(
         optax.clip_by_global_norm(max_grad_norm),

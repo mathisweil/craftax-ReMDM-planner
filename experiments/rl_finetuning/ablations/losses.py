@@ -387,8 +387,9 @@ def make_loss_t_curriculum(ctx: LossContext, current_iter: list[int]) -> LossFn:
 
     def loss_fn(params, acts, obs, valid, rng, advantages):
         frac = min(current_iter[0] / max(steps, 1), 1.0)
-        t_min = _EPS + frac * (t_end - _EPS)
-        t_max = 1.0 - frac * (1.0 - t_start)
+        # Anneal from [t_start, 1.0] (high-noise only) → [eps, t_end] (low-noise only)
+        t_min = t_start - frac * (t_start - _EPS)
+        t_max = 1.0 - frac * (1.0 - t_end)
         # Clamp to valid range
         t_min = float(jnp.clip(t_min, _EPS, 0.95))
         t_max = float(jnp.clip(t_max, t_min + 0.05, 1.0))
