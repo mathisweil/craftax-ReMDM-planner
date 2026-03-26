@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from experiments.rl_finetuning.ablations.losses import (
-    LossContext,
     LossFn,
     make_loss_advantage_clip,
     make_loss_baseline,
@@ -33,7 +32,6 @@ from experiments.rl_finetuning.ablations.losses import (
 from experiments.rl_finetuning.ablations.optimizers import (
     make_optimizer_frozen_paths,
     make_optimizer_llrd,
-    make_optimizer_lora_only,
     make_optimizer_standard,
 )
 
@@ -41,8 +39,7 @@ from experiments.rl_finetuning.ablations.optimizers import (
 # Signature: (config, params) -> optax.GradientTransformation
 OptimizerFactory = Callable[[dict, Any], Any]
 
-# Type alias for loss factory
-# Signature: (ctx: LossContext, **extra_kwargs) -> LossFn
+# Type alias for loss factory: (ctx: LossContext, **extra_kwargs) -> LossFn
 LossFactory = Callable[..., LossFn]
 
 

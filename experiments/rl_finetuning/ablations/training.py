@@ -24,7 +24,6 @@ from flax.training.train_state import TrainState
 from experiments.rl_finetuning.ablations.losses import (
     LossContext,
     estimate_fisher_diagonal,
-    make_loss_bc_wins,
     make_loss_baseline,
     make_loss_t_curriculum,
 )
@@ -36,8 +35,6 @@ from experiments.rl_finetuning.ablations.optimizers import (
 )
 from experiments.rl_finetuning.ablations.registry import AblationSpec
 from experiments.rl_finetuning.diagnostics.gradient import (
-    GradAlignResult,
-    PerLayerGradNorms,
     compute_per_layer_grad_norms,
     compute_surgery_metrics,
     make_grad_alignment_fn,
@@ -662,7 +659,6 @@ def run_ablation(
                 total_stored -= removed[0].shape[0]
 
         # Compute advantages
-        adv_returns = flat_returns
         if reward_model is not None:
             rm_train_steps = config.get("REWARD_MODEL_TRAIN_STEPS", 50)
             bs_rm = min(flat_obs.shape[0], config["BATCH_SIZE"])
