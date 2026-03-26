@@ -251,19 +251,22 @@ def _results_to_json(
     results: dict[str, dict],
     pretrained_score: float,
     config: dict,
+    pretrained_ach_rates: dict[str, float] | None = None,
 ) -> bytes:
     """Serialise all results to orjson bytes.
 
     Args:
-        results:          Dict mapping name -> {"history": AblationHistory, "score": float}.
-        pretrained_score: Pretrained baseline score.
-        config:           Merged config dict.
+        results:              Dict mapping name -> {"history": AblationHistory, "score": float}.
+        pretrained_score:     Pretrained baseline score.
+        config:               Merged config dict.
+        pretrained_ach_rates: Per-achievement unlock rates for the pretrained baseline.
 
     Returns:
         UTF-8 JSON bytes.
     """
     serialisable = {
         "pretrained_score": pretrained_score,
+        "pretrained_ach_rates": pretrained_ach_rates or {},
         "config": {k: v for k, v in config.items() if isinstance(v, (str, int, float, bool, type(None)))},
         "ablations": {
             name: {
@@ -276,19 +279,20 @@ def _results_to_json(
     return orjson.dumps(serialisable, option=orjson.OPT_INDENT_2)
 
 
-def _results_from_json(path: str) -> tuple[dict, float, dict]:
+def _results_from_json(path: str) -> tuple[dict, float, dict[str, float], dict]:
     """Load results from a JSON file produced by ``_results_to_json``.
 
     Args:
         path: Path to the JSON file.
 
     Returns:
-        Tuple of (results_dict, pretrained_score, config).
+        Tuple of (results_dict, pretrained_score, pretrained_ach_rates, config).
     """
     with open(path, "rb") as f:
         data = orjson.loads(f.read())
 
     pretrained_score = data["pretrained_score"]
+    pretrained_ach_rates: dict[str, float] = data.get("pretrained_ach_rates", {})
     config = data.get("config", {})
     results = {}
     for name, res_data in data["ablations"].items():
@@ -296,7 +300,7 @@ def _results_from_json(path: str) -> tuple[dict, float, dict]:
             "score": res_data["score"],
             "history": AblationHistory.from_dict(res_data["history"]),
         }
-    return results, pretrained_score, config
+    return results, pretrained_score, pretrained_ach_rates, config
 
 
 # ---------------------------------------------------------------------------
@@ -333,10 +337,11 @@ def main(argv: list[str] | None = None) -> None:
         if not args.results_path:
             parser.error("--analyze_only requires --results_path")
         logger.info("Loading results from %s", args.results_path)
-        results, pretrained_score, config = _results_from_json(args.results_path)
+        results, pretrained_score, pretrained_ach_rates, config = _results_from_json(args.results_path)
         logger.info("Loaded %d ablation results.", len(results))
-        tables = generate_summary_tables(results, pretrained_score, output_dir)
-        generate_all_plots(results, pretrained_score, output_dir)
+        ach_rates_arg = pretrained_ach_rates if pretrained_ach_rates else None
+        tables = generate_summary_tables(results, pretrained_score, output_dir, ach_rates_arg)
+        generate_all_plots(results, pretrained_score, output_dir, ach_rates_arg)
         generate_diagnosis_report(results, pretrained_score, tables, output_dir)
         logger.info("Analysis complete. Outputs in %s", output_dir)
         return
@@ -415,6 +420,13 @@ def main(argv: list[str] | None = None) -> None:
     pretrained_info = eval_fn(pretrained_params, eval_rng)
     pretrained_score = float(pretrained_info.get("returned_episode_returns", jnp.array(0.0)))
     logger.info("Pretrained baseline score: %.4f", pretrained_score)
+    # Extract per-achievement unlock rates from pretrained eval (Craftax reports percentages).
+    pretrained_ach_rates: dict[str, float] = {
+        k: float(v) / 100.0
+        for k, v in pretrained_info.items()
+        if "achievement" in k.lower()
+    }
+    logger.info("Pretrained achievements tracked: %d", len(pretrained_ach_rates))
 
     # ── W&B setup ──────────────────────────────────────────────────────────
     wandb_run = None
@@ -482,7 +494,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # ── Save results ───────────────────────────────────────────────────────
     results_path = output_dir / "results.json"
-    results_path.write_bytes(_results_to_json(results, pretrained_score, merged))
+    results_path.write_bytes(_results_to_json(results, pretrained_score, merged, pretrained_ach_rates))
     logger.info("Saved results to %s", results_path)
 
     # ── Save checkpoints ───────────────────────────────────────────────────
@@ -491,8 +503,9 @@ def main(argv: list[str] | None = None) -> None:
 
     # ── Analysis ───────────────────────────────────────────────────────────
     logger.info("Generating plots and tables...")
-    tables = generate_summary_tables(results, pretrained_score, output_dir)
-    generate_all_plots(results, pretrained_score, output_dir)
+    ach_rates_arg = pretrained_ach_rates if pretrained_ach_rates else None
+    tables = generate_summary_tables(results, pretrained_score, output_dir, ach_rates_arg)
+    generate_all_plots(results, pretrained_score, output_dir, ach_rates_arg)
     report_path = generate_diagnosis_report(results, pretrained_score, tables, output_dir)
 
     if wandb_run is not None:

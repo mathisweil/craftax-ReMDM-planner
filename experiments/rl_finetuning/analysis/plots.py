@@ -574,6 +574,147 @@ def plot_return_distributions(
 
 
 # ---------------------------------------------------------------------------
+# 3.7 Achievement tracking
+# ---------------------------------------------------------------------------
+
+
+def plot_achievement_breakdown(
+    results: dict[str, dict],
+    pretrained_ach_rates: dict[str, float],
+    output_dir: Path,
+) -> None:
+    """Stacked bar chart: achievement breakdown at start vs end of training per ablation.
+
+    Reveals whether a 'neutral' overall score hides a shift in *which* achievements
+    are being unlocked. One pair of stacked bars (start, end) per ablation.
+
+    Args:
+        results:              Dict mapping ablation_name -> {"history": AblationHistory}.
+        pretrained_ach_rates: Achievement rates for the pretrained baseline (keys = achievement
+                              names, values in [0, 1]).
+        output_dir:           Output directory for the figure.
+    """
+    # Collect ablations that have at least two eval checkpoints.
+    valid: list[tuple[str, dict[str, float], dict[str, float]]] = []
+    for name, res in results.items():
+        rates = res["history"].per_achievement_rates
+        if len(rates) >= 2:
+            valid.append((name, rates[0], rates[-1]))
+
+    if not valid:
+        logger.warning("plot_achievement_breakdown: no ablation has >=2 eval checkpoints; skipping.")
+        return
+
+    # Union of all achievement keys across pretrained + all ablations.
+    all_keys: list[str] = sorted(
+        {k for _, s, e in valid for k in (*s, *e)} | set(pretrained_ach_rates)
+    )
+    if not all_keys:
+        return
+
+    n_ablations = len(valid)
+    n_ach = len(all_keys)
+    # Colour each achievement with a distinct pastel colour.
+    cmap = plt.get_cmap("tab20", n_ach)
+
+    with plt.rc_context(_STYLE):
+        # Two bars per ablation (start, end) + one pair for pretrained baseline.
+        n_groups = n_ablations + 1  # +1 for pretrained
+        bar_w = 0.35
+        group_gap = 1.0
+        xs_start = np.arange(n_groups) * group_gap
+        xs_end = xs_start + bar_w
+
+        fig, ax = plt.subplots(figsize=(max(10.0, n_groups * 1.4), 6.0))
+
+        bottoms_start = np.zeros(n_groups)
+        bottoms_end = np.zeros(n_groups)
+
+        for j, key in enumerate(all_keys):
+            # Pretrained bar uses both start+end as the same baseline rate.
+            pt_rate = pretrained_ach_rates.get(key, 0.0)
+            start_vals = np.array(
+                [pt_rate] + [s.get(key, 0.0) for _, s, _ in valid]
+            )
+            end_vals = np.array(
+                [pt_rate] + [e.get(key, 0.0) for _, _, e in valid]
+            )
+
+            color = cmap(j)
+            label = key if j < 20 else None  # cap legend entries
+            ax.bar(xs_start, start_vals, width=bar_w, bottom=bottoms_start,
+                   color=color, alpha=0.9, label=label)
+            ax.bar(xs_end, end_vals, width=bar_w, bottom=bottoms_end,
+                   color=color, alpha=0.55)  # end bars slightly transparent
+            bottoms_start += start_vals
+            bottoms_end += end_vals
+
+        tick_positions = (xs_start + xs_end) / 2.0
+        tick_labels = ["pretrained"] + [n for n, _, _ in valid]
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels(tick_labels, rotation=40, ha="right", fontsize=7)
+        ax.set_ylabel("Cumulative Achievement Rate")
+        ax.set_title("Achievement Breakdown: Start (opaque) vs End (transparent) of Training")
+        ax.legend(loc="upper right", ncol=2, fontsize=6, title="Achievement")
+        fig.tight_layout()
+        _save(fig, output_dir / "achievement_breakdown.png")
+
+
+def plot_achievement_collapse_heatmap(
+    name: str,
+    history: AblationHistory,
+    output_dir: Path,
+) -> None:
+    """Heatmap: rows=achievements, cols=eval iterations, colour=unlock rate.
+
+    One figure per ablation, showing which achievements are lost first during collapse.
+
+    Args:
+        name:       Ablation name (used in the figure title and filename).
+        history:    Training history for a single ablation.
+        output_dir: Output directory for the figure.
+    """
+    if not history.per_achievement_rates:
+        return
+
+    # Build a matrix: rows = achievements (sorted), cols = eval checkpoints.
+    all_keys: list[str] = sorted({k for d in history.per_achievement_rates for k in d})
+    if not all_keys:
+        return
+
+    n_ach = len(all_keys)
+    n_evals = len(history.per_achievement_rates)
+    matrix = np.zeros((n_ach, n_evals), dtype=np.float32)
+    for col, rates in enumerate(history.per_achievement_rates):
+        for row, key in enumerate(all_keys):
+            matrix[row, col] = rates.get(key, 0.0)
+
+    iters = history.eval_iters if history.eval_iters else list(range(n_evals))
+
+    with plt.rc_context(_STYLE):
+        fig_h = max(4.0, n_ach * 0.35 + 1.5)
+        fig, ax = plt.subplots(figsize=(max(10.0, n_evals * 0.5), fig_h))
+        im = ax.imshow(matrix, aspect="auto", interpolation="nearest",
+                       vmin=0.0, vmax=1.0, cmap="YlOrRd_r")
+
+        ax.set_yticks(np.arange(n_ach))
+        ax.set_yticklabels(all_keys, fontsize=6)
+        # Label only a reasonable subset of x-ticks to avoid crowding.
+        step = max(1, n_evals // 10)
+        ax.set_xticks(np.arange(0, n_evals, step))
+        ax.set_xticklabels([str(iters[i]) for i in range(0, n_evals, step)],
+                           rotation=45, ha="right", fontsize=7)
+        ax.set_xlabel("Eval Iteration")
+        ax.set_ylabel("Achievement")
+        ax.set_title(f"Achievement Collapse Heatmap: {name}")
+
+        cbar = plt.colorbar(im, ax=ax, fraction=0.03, pad=0.02)
+        cbar.set_label("Unlock Rate", fontsize=8)
+        fig.tight_layout()
+        _save(fig, output_dir / f"achievement_collapse_{name}.png")
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -582,16 +723,21 @@ def generate_all_plots(
     results: dict[str, dict],
     pretrained_score: float,
     output_dir: Path,
+    pretrained_ach_rates: dict[str, float] | None = None,
 ) -> None:
     """Generate all analysis figures and save to output_dir/figures/.
 
     Args:
-        results:          Dict mapping ablation_name -> {
-                              "history": AblationHistory,
-                              "score": float
-                          }.
-        pretrained_score: Pretrained model eval score (no fine-tuning).
-        output_dir:       Root output directory; figures go in output_dir/figures/.
+        results:              Dict mapping ablation_name -> {
+                                  "history": AblationHistory,
+                                  "score": float
+                              }.
+        pretrained_score:     Pretrained model eval score (no fine-tuning).
+        output_dir:           Root output directory; figures go in output_dir/figures/.
+        pretrained_ach_rates: Optional per-achievement unlock rates for the pretrained
+                              baseline (keys = achievement name, values in [0, 1]).
+                              When provided, achievement breakdown and collapse heatmaps
+                              are generated.
     """
     fig_dir = output_dir / "figures"
     fig_dir.mkdir(parents=True, exist_ok=True)
@@ -622,5 +768,11 @@ def generate_all_plots(
 
     logger.info("Generating return / advantage plots...")
     plot_return_distributions(results, fig_dir)
+
+    if pretrained_ach_rates is not None:
+        logger.info("Generating achievement tracking plots...")
+        plot_achievement_breakdown(results, pretrained_ach_rates, fig_dir)
+        for name, res in results.items():
+            plot_achievement_collapse_heatmap(name, res["history"], fig_dir)
 
     logger.info("All plots saved to %s", fig_dir)

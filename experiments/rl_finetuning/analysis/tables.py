@@ -286,6 +286,55 @@ def make_hypothesis_verdict_table(
 
 
 # ---------------------------------------------------------------------------
+# 3.8 Per-achievement summary table
+# ---------------------------------------------------------------------------
+
+
+def make_achievement_table(
+    results: dict[str, dict],
+    pretrained_ach_rates: dict[str, float],
+) -> pl.DataFrame:
+    """Per-achievement summary table.
+
+    Rows = achievements, columns = ablation methods (final unlock rate) plus a
+    ``delta_vs_pretrained`` column showing the change from the pretrained baseline.
+
+    Args:
+        results:              Dict mapping ablation_name -> {"history": AblationHistory}.
+        pretrained_ach_rates: Per-achievement unlock rates for the pretrained baseline
+                              (keys = achievement name, values in [0, 1]).
+
+    Returns:
+        Polars DataFrame with one row per achievement.
+    """
+    # Collect final achievement rates for every ablation.
+    ablation_finals: dict[str, dict[str, float]] = {}
+    for name, res in results.items():
+        rates = res["history"].per_achievement_rates
+        ablation_finals[name] = rates[-1] if rates else {}
+
+    # Union of all achievement keys.
+    all_keys: list[str] = sorted(
+        set(pretrained_ach_rates) | {k for d in ablation_finals.values() for k in d}
+    )
+    if not all_keys:
+        return pl.DataFrame()
+
+    ablation_names = sorted(ablation_finals)
+    rows = []
+    for key in all_keys:
+        pt_rate = pretrained_ach_rates.get(key, 0.0)
+        row: dict[str, object] = {"Achievement": key, "Pretrained": round(pt_rate, 4)}
+        for abl_name in ablation_names:
+            final_rate = ablation_finals[abl_name].get(key, 0.0)
+            row[abl_name] = round(final_rate, 4)
+            row[f"delta_{abl_name}"] = round(final_rate - pt_rate, 4)
+        rows.append(row)
+
+    return pl.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -294,16 +343,20 @@ def generate_summary_tables(
     results: dict[str, dict],
     pretrained_score: float,
     output_dir: Path,
+    pretrained_ach_rates: dict[str, float] | None = None,
 ) -> dict[str, pl.DataFrame]:
     """Generate all summary tables and save to output_dir/tables/.
 
     Args:
-        results:          Dict mapping ablation_name -> {
-                              "history": AblationHistory,
-                              "score": float
-                          }.
-        pretrained_score: Pretrained model eval score.
-        output_dir:       Root output directory; tables go in output_dir/tables/.
+        results:              Dict mapping ablation_name -> {
+                                  "history": AblationHistory,
+                                  "score": float
+                              }.
+        pretrained_score:     Pretrained model eval score.
+        output_dir:           Root output directory; tables go in output_dir/tables/.
+        pretrained_ach_rates: Optional per-achievement unlock rates for the pretrained
+                              baseline (keys = achievement name, values in [0, 1]).
+                              When provided, a per-achievement summary table is generated.
 
     Returns:
         Dict mapping table name -> polars DataFrame.
@@ -342,6 +395,16 @@ def generate_summary_tables(
         tables["hypothesis_verdict"], tables_dir / "hypothesis_verdict",
         caption="Hypothesis verdict per ablation.", label="tab:hypothesis"
     )
+
+    if pretrained_ach_rates is not None:
+        ach_df = make_achievement_table(results, pretrained_ach_rates)
+        if ach_df.height > 0:
+            tables["achievement_summary"] = ach_df
+            _save_table(
+                ach_df, tables_dir / "achievement_summary",
+                caption="Per-achievement final unlock rates and delta vs pretrained.",
+                label="tab:achievements",
+            )
 
     logger.info("All tables saved to %s", tables_dir)
     return tables

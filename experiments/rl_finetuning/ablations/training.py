@@ -119,6 +119,11 @@ class AblationHistory:
     surgery_fraction: list[float] = field(default_factory=list)
     surgery_n_conflicting: list[int] = field(default_factory=list)
 
+    # Per-achievement unlock rates (one entry per eval checkpoint, same indices as eval_iters).
+    # Each dict maps achievement name -> rate in [0, 1].
+    # Craftax LogWrapper reports achievements as percentages; stored here divided by 100.
+    per_achievement_rates: list[dict[str, float]] = field(default_factory=list)
+
     def to_dict(self) -> dict:
         """Convert to a JSON-serialisable dict.
 
@@ -657,7 +662,6 @@ def run_ablation(
                 total_stored -= removed[0].shape[0]
 
         # Compute advantages
-        params_for_adv = state.params if not is_lora else state.params
         adv_returns = flat_returns
         if reward_model is not None:
             rm_train_steps = config.get("REWARD_MODEL_TRAIN_STEPS", 50)
@@ -845,9 +849,24 @@ def run_ablation(
             eval_score = float(eval_info.get("returned_episode_returns", jnp.array(0.0)))
             history.eval_iters.append(iteration)
             history.eval_score.append(eval_score)
-            logger.info("  [%s] Eval score: %.4f", spec.name, eval_score)
+
+            # Extract per-achievement unlock rates.
+            # Craftax LogWrapper reports counts as percentages; convert to [0, 1] rates.
+            # The returned_episode mask is already applied inside eval_policy, so each
+            # value is the episode-weighted mean unlock rate as a percentage.
+            ach_rates = {
+                k: float(v) / 100.0
+                for k, v in eval_info.items()
+                if "achievement" in k.lower()
+            }
+            history.per_achievement_rates.append(ach_rates)
+
+            logger.info("  [%s] Eval score: %.4f  (achievements: %d tracked)", spec.name, eval_score, len(ach_rates))
             if wandb_run is not None:
-                wandb_run.log({f"ablations/{spec.name}/eval_score": eval_score, "iteration": iteration})
+                log_dict = {f"ablations/{spec.name}/eval_score": eval_score, "iteration": iteration}
+                for ach_name, rate in ach_rates.items():
+                    log_dict[f"ablations/{spec.name}/achievements/{ach_name}"] = rate
+                wandb_run.log(log_dict)
 
     # ── Final eval ────────────────────────────────────────────────────────────
     rng, eval_rng = jax.random.split(rng)
