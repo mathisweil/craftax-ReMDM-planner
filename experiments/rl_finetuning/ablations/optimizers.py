@@ -1,0 +1,328 @@
+"""Optimizer factory functions for all RL fine-tuning ablations.
+
+Each factory returns an ``optax.GradientTransformation`` ready for use
+in a Flax ``TrainState``.  All factories are pure functions with no
+side effects.
+
+LoRA parameter injection is also handled here: ``make_lora_params``
+creates trainable LoRA matrices, and ``apply_fn_with_lora`` wraps
+the base model apply function to include LoRA contributions.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Callable
+
+import jax
+import jax.numpy as jnp
+import optax
+
+
+# ---------------------------------------------------------------------------
+# Standard Adam
+# ---------------------------------------------------------------------------
+
+
+def make_optimizer_standard(config: dict, params: Any = None) -> optax.GradientTransformation:
+    """Adam with global gradient clipping — baseline optimizer.
+
+    Args:
+        config: UPPERCASE config dict with ``LR`` and ``MAX_GRAD_NORM``.
+        params: Unused; accepted for uniform interface.
+
+    Returns:
+        Optax gradient transformation.
+    """
+    return optax.chain(
+        optax.clip_by_global_norm(config.get("MAX_GRAD_NORM", 1.0)),
+        optax.adam(config.get("LR", 3e-4), eps=1e-5),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Group A: LLRD
+# ---------------------------------------------------------------------------
+
+
+def _get_llrd_label(path: tuple) -> str:
+    """Assign a learning-rate group label to a parameter path.
+
+    Groups (from fastest to slowest LR):
+    - ``head``:       final output projection
+    - ``block_{i}``:  TransformerBlock at index i (0 = first / earliest)
+    - ``obs_enc``:    observation encoder layers
+
+    Args:
+        path: Tuple of ``jax.tree_util.KeyEntry`` objects.
+
+    Returns:
+        Group label string.
+    """
+    path_str = "/".join(str(k.key) if hasattr(k, "key") else str(k) for k in path)
+    if "TransformerBlock_" in path_str:
+        block_str = path_str.split("TransformerBlock_")[1].split("/")[0]
+        try:
+            return f"block_{int(block_str)}"
+        except ValueError:
+            return "head"
+    # Obs encoder: Dense layers and LayerNorms before TransformerBlocks
+    return "obs_enc"
+
+
+def make_optimizer_llrd(config: dict, params: Any) -> optax.GradientTransformation:
+    """Adam with Layer-wise Learning Rate Decay (LLRD).
+
+    Assigns lower learning rates to earlier (more general) layers.
+    LR for a layer at depth d from the top = base_lr * decay^d.
+
+    - Head (final projection):  base_lr * decay^0 = base_lr
+    - TransformerBlock_N-1:     base_lr * decay^1
+    - TransformerBlock_0:       base_lr * decay^N
+    - Obs encoder:              base_lr * decay^(N+1)
+
+    Args:
+        config: UPPERCASE config dict with ``LR``, ``MAX_GRAD_NORM``, ``LLRD_DECAY``,
+                and ``N_LAYERS``.
+        params: Parameter pytree used to build the label tree.
+
+    Returns:
+        Optax multi_transform with per-group learning rates.
+    """
+    base_lr = config.get("LR", 3e-4)
+    decay = config.get("LLRD_DECAY", 0.9)
+    n_layers = config.get("N_LAYERS", 4)
+    max_grad_norm = config.get("MAX_GRAD_NORM", 1.0)
+
+    # Build label tree
+    label_tree = jax.tree_util.tree_map_with_path(
+        lambda path, _: _get_llrd_label(path), params
+    )
+
+    # Build optimizer for each label
+    transforms: dict[str, optax.GradientTransformation] = {"head": optax.adam(base_lr, eps=1e-5)}
+    # Head: fastest (depth 0 from top)
+    # Obs encoder: slowest (depth n_layers+1)
+    obs_lr = base_lr * (decay ** (n_layers + 1))
+    transforms["obs_enc"] = optax.adam(obs_lr, eps=1e-5)
+    # Transformer blocks: depth 1..n_layers from top (last block = 1, first = n_layers)
+    for i in range(n_layers):
+        depth_from_top = n_layers - i  # block_0 is farthest from head
+        lr_i = base_lr * (decay ** depth_from_top)
+        transforms[f"block_{i}"] = optax.adam(lr_i, eps=1e-5)
+
+    return optax.chain(
+        optax.clip_by_global_norm(max_grad_norm),
+        optax.multi_transform(transforms, label_tree),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Group A: Frozen backbone / parameter isolation
+# ---------------------------------------------------------------------------
+
+
+def make_optimizer_frozen_paths(
+    config: dict, params: Any, frozen_path_fragments: list[str]
+) -> optax.GradientTransformation:
+    """Adam with gradient masking for specified parameter paths.
+
+    Parameters whose full path string contains ANY fragment from
+    ``frozen_path_fragments`` receive zero gradient (effectively frozen).
+
+    Args:
+        config:                 UPPERCASE config dict.
+        params:                 Parameter pytree.
+        frozen_path_fragments:  Path substrings identifying frozen params.
+
+    Returns:
+        Optax transformation with frozen parameters.
+    """
+    max_grad_norm = config.get("MAX_GRAD_NORM", 1.0)
+    lr = config.get("LR", 3e-4)
+
+    def should_freeze(path: tuple) -> bool:
+        path_str = "/".join(str(k.key) if hasattr(k, "key") else str(k) for k in path)
+        return any(frag in path_str for frag in frozen_path_fragments)
+
+    # Build a mask tree: True = trainable, False = frozen
+    mask_tree = jax.tree_util.tree_map_with_path(
+        lambda path, _: not should_freeze(path), params
+    )
+
+    return optax.chain(
+        optax.clip_by_global_norm(max_grad_norm),
+        optax.masked(optax.adam(lr, eps=1e-5), mask_tree),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Group A: LoRA
+# ---------------------------------------------------------------------------
+
+
+def _lora_target_paths(params: Any, path_fragment: str = "MultiHeadDotProductAttention") -> list[str]:
+    """Return canonical path strings for attention kernel params.
+
+    Args:
+        params:        Parameter pytree.
+        path_fragment: Substring identifying LoRA target layers.
+
+    Returns:
+        Sorted list of path strings for matching kernel parameters.
+    """
+    target_paths: list[str] = []
+
+    def _collect(path: tuple, leaf):
+        path_str = "/".join(str(k.key) if hasattr(k, "key") else str(k) for k in path)
+        if path_fragment in path_str and "kernel" in path_str:
+            target_paths.append(path_str)
+
+    jax.tree_util.tree_map_with_path(_collect, params)
+    return sorted(target_paths)
+
+
+def make_lora_params(
+    params: Any,
+    rank: int,
+    rng: jax.Array,
+    path_fragment: str = "MultiHeadDotProductAttention",
+) -> dict[str, dict[str, jax.Array]]:
+    """Create LoRA A and B matrices for all target attention kernels.
+
+    For a kernel of shape ``[d_in, d_out]``:
+    - A: ``[d_in, rank]`` — Gaussian initialised
+    - B: ``[rank, d_out]`` — zero initialised (so initial LoRA delta = 0)
+
+    Args:
+        params:        Parameter pytree to inspect for target shapes.
+        rank:          LoRA rank r.
+        rng:           PRNG key.
+        path_fragment: Substring identifying target layers.
+
+    Returns:
+        Dict mapping canonical path string -> {"A": array, "B": array}.
+    """
+    lora: dict[str, dict[str, jax.Array]] = {}
+
+    def _init(path: tuple, leaf):
+        path_str = "/".join(str(k.key) if hasattr(k, "key") else str(k) for k in path)
+        if path_fragment in path_str and "kernel" in path_str and leaf.ndim == 2:
+            nonlocal rng
+            d_in, d_out = leaf.shape
+            rng, a_rng = jax.random.split(rng)
+            lora[path_str] = {
+                "A": jax.random.normal(a_rng, (d_in, rank)) * 0.02,
+                "B": jnp.zeros((rank, d_out)),
+            }
+
+    jax.tree_util.tree_map_with_path(_init, params)
+    return lora
+
+
+def apply_fn_with_lora(
+    base_apply_fn: Callable,
+    base_params: Any,
+    lora_params: dict[str, dict[str, jax.Array]],
+    alpha: float,
+    rank: int,
+    obs: jnp.ndarray,
+    z_t: jnp.ndarray,
+    t: jnp.ndarray,
+    rng: jax.Array | None = None,
+) -> jnp.ndarray:
+    """Apply base model with LoRA by injecting effective weights into the param tree.
+
+    For each attention kernel W at path p, the effective weight is:
+        W_eff = W_frozen + (alpha / rank) * lora_B @ lora_A
+
+    The base model is called with W_eff in place of W, without any
+    modification to the model definition.
+
+    Args:
+        base_apply_fn: Original model apply fn (params, obs, z_t, t, rng) -> logits.
+        base_params:   Frozen base parameters (never modified in-place).
+        lora_params:   LoRA parameter dict from ``make_lora_params``.
+        alpha:         LoRA alpha scaling factor.
+        rank:          LoRA rank (must match the rank used in ``make_lora_params``).
+        obs:           ``[B, obs_dim]`` observations.
+        z_t:           ``[B, H]`` noisy action tokens.
+        t:             ``[B]`` diffusion times.
+        rng:           Optional PRNG key for dropout.
+
+    Returns:
+        ``[B, H, num_actions]`` logits.
+    """
+    scale = alpha / max(rank, 1)
+
+    def inject(path: tuple, param: jnp.ndarray) -> jnp.ndarray:
+        path_str = "/".join(str(k.key) if hasattr(k, "key") else str(k) for k in path)
+        if path_str in lora_params:
+            ab = lora_params[path_str]
+            # A: [d_in, rank], B: [rank, d_out] → delta: [d_in, d_out]
+            return param + scale * (ab["A"] @ ab["B"])
+        return param
+
+    effective_params = jax.tree_util.tree_map_with_path(inject, base_params)
+    return base_apply_fn(effective_params, obs, z_t, t, rng)
+
+
+def make_optimizer_lora_only(
+    config: dict,
+    base_params: Any,
+    lora_params: dict[str, dict[str, jax.Array]],
+) -> optax.GradientTransformation:
+    """Adam that only updates LoRA parameters; base params receive zero gradient.
+
+    The combined parameter tree passed to the TrainState is expected to be
+    ``{"base": base_params, "lora": lora_params}``.
+
+    Args:
+        config:      UPPERCASE config dict.
+        base_params: Frozen base parameters.
+        lora_params: Trainable LoRA parameters.
+
+    Returns:
+        Optax transformation for the combined ``{"base": ..., "lora": ...}`` tree.
+    """
+    lr = config.get("LR", 3e-4)
+    max_grad_norm = config.get("MAX_GRAD_NORM", 1.0)
+
+    mask_tree = {
+        "base": jax.tree.map(lambda _: False, base_params),
+        "lora": jax.tree.map(lambda _: True, lora_params),
+    }
+
+    return optax.chain(
+        optax.clip_by_global_norm(max_grad_norm),
+        optax.masked(optax.adam(lr, eps=1e-5), mask_tree),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Gradient surgery (PCGrad) — applied to gradients, not a full optimizer
+# ---------------------------------------------------------------------------
+
+
+def gradient_surgery(g_rl: Any, g_bc: Any) -> Any:
+    """Project RL gradients onto the plane orthogonal to conflicting BC gradients.
+
+    For each parameter leaf: if dot(g_rl_i, g_bc_i) < 0, projects the RL
+    gradient to remove the component pointing against g_bc_i.
+    Otherwise, keeps g_rl_i unchanged.
+
+    This is the PCGrad operation applied per-parameter-tensor.
+
+    Args:
+        g_rl: RL gradient pytree.
+        g_bc: BC gradient pytree (reference direction).
+
+    Returns:
+        Projected RL gradient pytree.
+    """
+    def _project(g_r: jnp.ndarray, g_b: jnp.ndarray) -> jnp.ndarray:
+        dot = jnp.sum(g_r * g_b)
+        norm_sq = jnp.sum(g_b * g_b) + 1e-10
+        projected = g_r - (dot / norm_sq) * g_b
+        return jnp.where(dot < 0, projected, g_r)
+
+    return jax.tree.map(_project, g_rl, g_bc)

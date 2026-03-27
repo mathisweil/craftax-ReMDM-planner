@@ -1,0 +1,28 @@
+# =============================================================================
+# ReMDM RL Fine-Tuning Ablation Suite — Fast Configuration
+# Override keys for quick CI / smoke testing. Inherits all other values
+# from ablations_default.yaml when loaded via --ablations_config.
+# =============================================================================
+
+# ── Training loop ─────────────────────────────────────────────────────────────
+max_iter: 50
+num_envs: 16
+num_steps: 64
+batch_size: 128
+
+# ── Evaluation ────────────────────────────────────────────────────────────────
+eval_every: 10
+eval_steps: 128
+eval_replan: 8
+
+# ── Diagnostic frequencies ────────────────────────────────────────────────────
+grad_align_every: 10
+repr_drift_every: 10
+t_analysis_every: 10
+cka_every: 25
+per_layer_every: 10
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+ewc_fisher_batches: 5
+reward_model_train_steps: 10
+mixed_replay_buffer_size: 500
