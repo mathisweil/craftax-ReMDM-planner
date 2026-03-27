@@ -23,6 +23,13 @@ from src.diffusion.schedules import ScheduleFn
 # Loss signature: (params, acts, obs, valid, rng, advantages) -> scalar
 LossFn = Callable[[Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array, jnp.ndarray], jnp.ndarray]
 
+# Extended loss signature with step_idx for t-curriculum (JIT-compatible)
+# (params, acts, obs, valid, rng, advantages, step_idx) -> scalar
+LossFnWithStep = Callable[
+    [Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array, jnp.ndarray, jax.Array],
+    jnp.ndarray,
+]
+
 _EPS: float = 1e-5
 _MAX_WEIGHT: float = 1000.0
 
@@ -61,8 +68,8 @@ def _core_loss(
     obs: jnp.ndarray,
     valid: jnp.ndarray,
     advantages: jnp.ndarray | None,
-    t_min: float = _EPS,
-    t_max: float = 1.0,
+    t_min: float | jax.Array = _EPS,
+    t_max: float | jax.Array = 1.0,
 ) -> jnp.ndarray:
     """Call ``compute_loss`` with context-provided schedule and config.
 
@@ -394,6 +401,59 @@ def make_loss_t_curriculum(ctx: LossContext, current_iter: list[int]) -> LossFn:
         t_min = float(jnp.clip(t_min, _EPS, 0.95))
         t_max = float(jnp.clip(t_max, t_min + 0.05, 1.0))
         return _core_loss(ctx, params, rng, acts, obs, valid, advantages, t_min=t_min, t_max=t_max)
+
+    return loss_fn
+
+
+def make_loss_t_curriculum_jit(ctx: LossContext) -> LossFnWithStep:
+    """JIT-compatible t-curriculum loss that takes ``step_idx`` as a JAX array.
+
+    Unlike ``make_loss_t_curriculum``, this version does not use a mutable
+    Python container — ``step_idx`` is passed explicitly, making it safe
+    for use inside ``jax.lax.scan``.
+
+    Args:
+        ctx: Shared loss context.
+
+    Returns:
+        ``LossFnWithStep(params, acts, obs, valid, rng, advantages, step_idx) -> scalar``.
+    """
+    t_start = ctx.config.get("T_CURRICULUM_START", 0.8)
+    t_end = ctx.config.get("T_CURRICULUM_END", 0.2)
+    steps = ctx.config.get("T_CURRICULUM_STEPS", 200)
+
+    def loss_fn(
+        params: Any,
+        acts: jnp.ndarray,
+        obs: jnp.ndarray,
+        valid: jnp.ndarray,
+        rng: jax.Array,
+        advantages: jnp.ndarray,
+        step_idx: jax.Array,
+    ) -> jnp.ndarray:
+        """Compute t-curriculum loss with step-dependent t range.
+
+        Args:
+            params:     Model parameters.
+            acts:       ``[B, H]`` action sequences.
+            obs:        ``[B, obs_dim]`` observations.
+            valid:      ``[B]`` validity mask.
+            rng:        PRNG key.
+            advantages: ``[B]`` advantage weights.
+            step_idx:   Current training iteration (JAX scalar).
+
+        Returns:
+            Scalar loss value.
+        """
+        frac = jnp.minimum(step_idx / jnp.maximum(steps, 1), 1.0)
+        t_min = t_start - frac * (t_start - _EPS)
+        t_max = 1.0 - frac * (1.0 - t_end)
+        t_min = jnp.clip(t_min, _EPS, 0.95)
+        t_max = jnp.clip(t_max, t_min + 0.05, 1.0)
+        return _core_loss(
+            ctx, params, rng, acts, obs, valid, advantages,
+            t_min=t_min, t_max=t_max,
+        )
 
     return loss_fn
 
