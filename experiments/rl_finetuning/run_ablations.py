@@ -492,10 +492,18 @@ def main(argv: list[str] | None = None) -> None:
             "all_scores": seed_scores,
         }
 
-    # ── Save results ───────────────────────────────────────────────────────
-    results_path = output_dir / "results.json"
-    results_path.write_bytes(_results_to_json(results, pretrained_score, merged, pretrained_ach_rates))
-    logger.info("Saved results to %s", results_path)
+        # ── Incremental save after each ablation ───────────────────────────
+        # Written after every ablation so a crash mid-run doesn't lose
+        # already-completed results.  The file is valid JSON at all times
+        # and is directly loadable by --analyze_only --results_path.
+        results_path = output_dir / "results.json"
+        results_path.write_bytes(
+            _results_to_json(results, pretrained_score, merged, pretrained_ach_rates)
+        )
+        logger.info(
+            "Saved partial results (%d/%d ablations) to %s",
+            len(results), len(selected_names), results_path,
+        )
 
     # ── Save checkpoints ───────────────────────────────────────────────────
     # (params not saved here to keep the results JSON small;

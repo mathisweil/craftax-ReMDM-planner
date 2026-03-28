@@ -1,3 +1,0 @@
-Method,First_Collapse_Iter,Min_Score,Recovery_Score,Recovered
-baseline_rl,never,8.5833,6.7666,N/A
-kl_penalty,never,6.05,6.45,N/A

@@ -1,13 +1,13 @@
 """Timestep (t) distribution diagnostics for RL fine-tuning analysis.
 
 Analyses how gradient contributions vary across the continuous diffusion
-time t ∈ [0, 1], partitioned into N_BINS equal bins.  Also checks whether
-the t distribution of training data is uniform as expected.
+time t in [0, 1], partitioned into N_BINS equal bins.
+
+All functions return JAX arrays and are fully JIT-compatible.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import jax
@@ -20,40 +20,7 @@ N_BINS: int = 10  # number of t bins for analysis
 
 
 # ---------------------------------------------------------------------------
-# Result types
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class TBinGradNorms:
-    """Per-t-bin gradient norms for a single diagnostic step.
-
-    Args:
-        bin_norms:     Dict mapping bin label (e.g., "t_0.0-0.1") to gradient L2 norm.
-        low_high_cos:  Cosine similarity between gradients from the lowest and highest bins.
-        norm_low_t:    L2 norm of gradients from t ∈ [0, 0.2].
-        norm_high_t:   L2 norm of gradients from t ∈ [0.8, 1.0].
-    """
-
-    bin_norms: dict[str, float] = field(default_factory=dict)
-    low_high_cos: float = 0.0
-    norm_low_t: float = 0.0
-    norm_high_t: float = 0.0
-
-
-@dataclass
-class TBinLoss:
-    """Per-t-bin mean loss values.
-
-    Args:
-        bin_losses: Dict mapping bin label to mean loss in that bin.
-    """
-
-    bin_losses: dict[str, float] = field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
-# t-bin gradient norm analysis
+# t-bin gradient norm analysis (pure JAX, vmapped over bins)
 # ---------------------------------------------------------------------------
 
 
@@ -65,10 +32,11 @@ def make_t_analysis_fn(
     sigma_t: float = 0.0,
     n_bins: int = N_BINS,
 ) -> Callable:
-    """Build a JIT-compatible t-analysis function.
+    """Build a JIT-compiled t-analysis function.
 
-    The returned function computes gradient norms separately for each t bin
-    and also measures alignment between low-t and high-t gradients.
+    The returned function computes per-bin gradient norms via ``jax.vmap``
+    and measures alignment between low-t and high-t gradients.  All
+    outputs are JAX arrays, safe for use inside ``jax.lax.scan``.
 
     Args:
         apply_fn:          Training apply fn.
@@ -79,30 +47,65 @@ def make_t_analysis_fn(
         n_bins:            Number of equal t bins to analyse.
 
     Returns:
-        fn(params, acts, obs, valid, advantages, rng) -> TBinGradNorms.
+        JIT-compiled fn(params, acts, obs, valid, advantages, rng)
+        -> (bin_norms, low_high_cos, norm_low_t, norm_high_t).
     """
     _EPS = 1e-5
     bin_edges = jnp.linspace(0.0, 1.0, n_bins + 1)
+    # Pre-compute bin boundaries as arrays: [n_bins, 2]
+    bin_lo = jnp.maximum(bin_edges[:-1], _EPS)  # [n_bins]
+    bin_hi = bin_edges[1:]                       # [n_bins]
 
-    def _grad_norm_at_range(params, acts, obs, valid, advantages, rng, t_lo, t_hi):
-        def loss_in_range(p):
-            lo = float(jnp.maximum(t_lo, _EPS))
-            hi = float(jnp.minimum(t_hi, 1.0))
-            if lo >= hi:
-                return jnp.array(0.0)
+    def _grad_flat_at_range(
+        params: Any,
+        acts: jax.Array,
+        obs: jax.Array,
+        valid: jax.Array,
+        advantages: jax.Array,
+        rng: jax.Array,
+        t_lo: jax.Array,
+        t_hi: jax.Array,
+    ) -> jax.Array:
+        """Compute flattened gradient for a single t-range.
+
+        Args:
+            params:     Model parameters.
+            acts:       ``[B, H]`` action sequences.
+            obs:        ``[B, obs_dim]`` observations.
+            valid:      ``[B]`` validity mask.
+            advantages: ``[B]`` advantage weights.
+            rng:        PRNG key.
+            t_lo:       Lower t bound (scalar).
+            t_hi:       Upper t bound (scalar).
+
+        Returns:
+            Flattened gradient vector ``[D_total]``.
+        """
+        def loss_in_range(p: Any) -> jax.Array:
+            # Use jnp.where to handle degenerate ranges without Python branching
+            safe_lo = jnp.maximum(t_lo, _EPS)
+            safe_hi = jnp.maximum(t_hi, safe_lo + _EPS)
             loss_val, _ = compute_loss(
                 apply_fn, p, rng, acts, obs, valid,
                 num_actions, schedule_fn, schedule_deriv_fn,
                 sigma_t=sigma_t, advantages=advantages,
-                t_min=lo, t_max=hi,
+                t_min=safe_lo, t_max=safe_hi,
             )
             return loss_val
 
         g = jax.grad(loss_in_range)(params)
         flat = jnp.concatenate([leaf.ravel() for leaf in jax.tree.leaves(g)])
-        return flat
+        return flat  # [D_total]
 
-    def compute_t_analysis(params, acts, obs, valid, advantages, rng) -> TBinGradNorms:
+    @jax.jit
+    def t_analysis(
+        params: Any,
+        acts: jax.Array,
+        obs: jax.Array,
+        valid: jax.Array,
+        advantages: jax.Array,
+        rng: jax.Array,
+    ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
         """Compute per-t-bin gradient norms and low/high-t alignment.
 
         Args:
@@ -114,75 +117,62 @@ def make_t_analysis_fn(
             rng:        PRNG key.
 
         Returns:
-            ``TBinGradNorms`` with per-bin norms and alignment metrics.
+            Tuple of:
+            - bin_norms:    ``[n_bins]`` per-bin gradient L2 norms.
+            - low_high_cos: Scalar cosine similarity between low-t and high-t gradients.
+            - norm_low_t:   Scalar L2 norm of low-t gradient.
+            - norm_high_t:  Scalar L2 norm of high-t gradient.
         """
-        bin_norms: dict[str, float] = {}
         all_rngs = jax.random.split(rng, n_bins + 2)
 
-        all_flats = []
-        for i in range(n_bins):
-            t_lo = float(bin_edges[i])
-            t_hi = float(bin_edges[i + 1])
-            label = f"t_{t_lo:.1f}-{t_hi:.1f}"
-            flat = _grad_norm_at_range(
-                params, acts, obs, valid, advantages, all_rngs[i], t_lo, t_hi
+        # Compute per-bin gradient norms by scanning over bins
+        # (vmap over bin index doesn't work cleanly with grad; use scan instead)
+        def _bin_step(carry: None, bin_idx: jax.Array) -> tuple[None, jax.Array]:
+            flat = _grad_flat_at_range(
+                params, acts, obs, valid, advantages,
+                all_rngs[bin_idx], bin_lo[bin_idx], bin_hi[bin_idx],
             )
-            norm = float(jnp.linalg.norm(flat))
-            bin_norms[label] = norm
-            all_flats.append(flat)
+            return None, jnp.linalg.norm(flat)
 
-        # Low-t and high-t gradient norms and alignment
-        flat_low = _grad_norm_at_range(
-            params, acts, obs, valid, advantages, all_rngs[-2], _EPS, 0.2
-        )
-        flat_high = _grad_norm_at_range(
-            params, acts, obs, valid, advantages, all_rngs[-1], 0.8, 1.0
-        )
-        norm_low = float(jnp.linalg.norm(flat_low))
-        norm_high = float(jnp.linalg.norm(flat_high))
-        cos = float(
-            jnp.dot(flat_low, flat_high) / (norm_low * norm_high + 1e-10)
-        )
+        _, bin_norms = jax.lax.scan(
+            _bin_step, None, jnp.arange(n_bins)
+        )  # [n_bins]
 
-        return TBinGradNorms(
-            bin_norms=bin_norms,
-            low_high_cos=cos,
-            norm_low_t=norm_low,
-            norm_high_t=norm_high,
+        # Low-t and high-t gradient vectors
+        flat_low = _grad_flat_at_range(
+            params, acts, obs, valid, advantages,
+            all_rngs[n_bins], jnp.array(_EPS), jnp.array(0.2),
         )
+        flat_high = _grad_flat_at_range(
+            params, acts, obs, valid, advantages,
+            all_rngs[n_bins + 1], jnp.array(0.8), jnp.array(1.0),
+        )
+        norm_low = jnp.linalg.norm(flat_low)
+        norm_high = jnp.linalg.norm(flat_high)
+        cos = jnp.dot(flat_low, flat_high) / (norm_low * norm_high + 1e-10)
 
-    return compute_t_analysis
+        return bin_norms, cos, norm_low, norm_high
+
+    return t_analysis
 
 
 # ---------------------------------------------------------------------------
-# Per-t-bin loss decomposition
+# Per-t-bin loss decomposition (pure JAX)
 # ---------------------------------------------------------------------------
 
 
-def compute_t_bin_losses(
+def make_t_bin_loss_fn(
     apply_fn: Callable,
-    params: Any,
-    acts: jnp.ndarray,
-    obs: jnp.ndarray,
-    valid: jnp.ndarray,
-    rng: jax.Array,
     schedule_fn: ScheduleFn,
     schedule_deriv_fn: ScheduleFn,
     num_actions: int,
     sigma_t: float = 0.0,
     n_bins: int = N_BINS,
-) -> TBinLoss:
-    """Compute mean loss separately in each t bin.
-
-    Reveals which noise-level regime contributes most to the total loss.
+) -> Callable:
+    """Build a JIT-compiled per-t-bin loss function.
 
     Args:
         apply_fn:          Training apply fn.
-        params:            Current model parameters.
-        acts:              ``[B, H]`` int32 action sequences.
-        obs:               ``[B, obs_dim]`` float32 observations.
-        valid:             ``[B]`` validity mask.
-        rng:               PRNG key.
         schedule_fn:       alpha(t) schedule.
         schedule_deriv_fn: d(alpha)/dt analytic derivative.
         num_actions:       Action vocabulary size.
@@ -190,25 +180,46 @@ def compute_t_bin_losses(
         n_bins:            Number of t bins.
 
     Returns:
-        ``TBinLoss`` with per-bin mean loss values.
+        JIT-compiled fn(params, acts, obs, valid, rng) -> bin_losses ``[n_bins]``.
     """
     _EPS = 1e-5
     bin_edges = jnp.linspace(0.0, 1.0, n_bins + 1)
-    bin_losses: dict[str, float] = {}
-    rngs = jax.random.split(rng, n_bins)
+    bin_lo = jnp.maximum(bin_edges[:-1], _EPS)
+    bin_hi = bin_edges[1:]
 
-    for i in range(n_bins):
-        t_lo = float(jnp.maximum(bin_edges[i], _EPS))
-        t_hi = float(bin_edges[i + 1])
-        label = f"t_{float(bin_edges[i]):.1f}-{t_hi:.1f}"
-        if t_lo >= t_hi:
-            bin_losses[label] = 0.0
-            continue
-        loss_val, _ = compute_loss(
-            apply_fn, params, rngs[i], acts, obs, valid,
-            num_actions, schedule_fn, schedule_deriv_fn,
-            sigma_t=sigma_t, t_min=t_lo, t_max=t_hi,
-        )
-        bin_losses[label] = float(loss_val)
+    @jax.jit
+    def t_bin_losses(
+        params: Any,
+        acts: jax.Array,
+        obs: jax.Array,
+        valid: jax.Array,
+        rng: jax.Array,
+    ) -> jax.Array:
+        """Compute mean loss separately in each t bin.
 
-    return TBinLoss(bin_losses=bin_losses)
+        Args:
+            params: Current model parameters.
+            acts:   ``[B, H]`` int32 action sequences.
+            obs:    ``[B, obs_dim]`` float32 observations.
+            valid:  ``[B]`` validity mask.
+            rng:    PRNG key.
+
+        Returns:
+            ``[n_bins]`` per-bin mean loss values.
+        """
+        rngs = jax.random.split(rng, n_bins)
+
+        def _bin_loss(carry: None, bin_idx: jax.Array) -> tuple[None, jax.Array]:
+            safe_lo = jnp.maximum(bin_lo[bin_idx], _EPS)
+            safe_hi = jnp.maximum(bin_hi[bin_idx], safe_lo + _EPS)
+            loss_val, _ = compute_loss(
+                apply_fn, params, rngs[bin_idx], acts, obs, valid,
+                num_actions, schedule_fn, schedule_deriv_fn,
+                sigma_t=sigma_t, t_min=safe_lo, t_max=safe_hi,
+            )
+            return None, loss_val
+
+        _, losses = jax.lax.scan(_bin_loss, None, jnp.arange(n_bins))
+        return losses  # [n_bins]
+
+    return t_bin_losses

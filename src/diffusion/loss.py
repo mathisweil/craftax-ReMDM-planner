@@ -30,8 +30,8 @@ def compute_loss(
     sigma_t: float = 0.0,
     label_smoothing: float = 0.0,
     advantages: Optional[jnp.ndarray] = None,
-    t_min: float = _EPS,
-    t_max: float = 1.0,
+    t_min: float | jax.Array = _EPS,
+    t_max: float | jax.Array = 1.0,
 ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
     """Continuous-time ELBO loss on masked positions only.
 
