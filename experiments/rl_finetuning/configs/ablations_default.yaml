@@ -19,7 +19,7 @@ obs_encoder_width: 512
 dropout_rate: 0.1
 
 # ── Diffusion ─────────────────────────────────────────────────────────────────
-plan_horizon: 32
+plan_horizon: 40
 diffusion_schedule: "cosine"
 train_sigma: 0.0
 label_smoothing: 0.0
@@ -35,10 +35,10 @@ temperature: 0.5
 top_p: 0.95
 
 # ── Training loop ─────────────────────────────────────────────────────────────
-max_iter: 1500                 # training iterations per ablation
+max_iter: 1000                 # training iterations per ablation
 num_envs: 64                  # parallel environments for rollouts
 num_steps: 128                # PPO steps per rollout
-batch_size: 1024               # gradient batch size
+batch_size: 512               # gradient batch size
 lr: 3.0e-4
 max_grad_norm: 1.0
 collect_temp: 1.0             # PPO sampling temperature during collection
