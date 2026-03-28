@@ -147,7 +147,7 @@ def _plot_decision_tree(
     fig.patch.set_facecolor("white")
     ax.set_title("Hypothesis Attribution Decision Tree", fontsize=14, fontweight="bold")
 
-    cmap = plt.get_cmap("RdYlGn")
+    cmap = matplotlib.colormaps["RdYlGn"]
     for i, hyp in enumerate(scored_hypotheses):
         y = len(scored_hypotheses) - i
         ev = hyp["evidence_score"]
@@ -167,7 +167,7 @@ def _plot_decision_tree(
                 wrap=True)
 
     # Colour bar legend
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(0, 1))
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=matplotlib.colors.Normalize(0, 1))
     sm.set_array([])
     cbar = plt.colorbar(sm, ax=ax, orientation="vertical", fraction=0.02, pad=0.01)
     cbar.set_label("Evidence strength (0=no support, 1=full support)", fontsize=8)

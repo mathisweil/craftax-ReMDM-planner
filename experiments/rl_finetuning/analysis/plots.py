@@ -515,7 +515,7 @@ def plot_t_bin_grad_norms(
 
     bins = sorted({k for d in history.t_bin_norms for k in d})
     iters = history.t_analysis_iters or list(range(len(history.t_bin_norms)))
-    cmap = plt.cm.get_cmap("plasma", len(bins))
+    cmap = matplotlib.colormaps["plasma"].resampled(len(bins))
 
     with plt.rc_context(_STYLE):
         fig, ax = plt.subplots(figsize=(12, 5))
@@ -615,7 +615,7 @@ def plot_achievement_breakdown(
     n_ablations = len(valid)
     n_ach = len(all_keys)
     # Colour each achievement with a distinct pastel colour.
-    cmap = plt.get_cmap("tab20", n_ach)
+    cmap = matplotlib.colormaps["tab20"].resampled(n_ach)
 
     with plt.rc_context(_STYLE):
         # Two bars per ablation (start, end) + one pair for pretrained baseline.

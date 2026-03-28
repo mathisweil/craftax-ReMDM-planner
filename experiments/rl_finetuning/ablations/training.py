@@ -242,6 +242,7 @@ class StepMetrics(NamedTuple):
 
 def _build_reward_model(
     obs_dim: int,
+    rng: jax.Array,
     width: int = 64,
     depth: int = 2,
     lr: float = 1e-3,
@@ -250,6 +251,7 @@ def _build_reward_model(
 
     Args:
         obs_dim: Input observation dimensionality.
+        rng:     PRNG key for parameter initialisation.
         width:   Hidden layer width.
         depth:   Number of hidden layers.
         lr:      Learning rate.
@@ -281,7 +283,6 @@ def _build_reward_model(
             return nn.Dense(1)(x).squeeze(-1)
 
     net = RewardMLP(width=width, depth=depth)
-    rng = jax.random.PRNGKey(42)
     dummy_params = net.init(rng, jnp.zeros((1, obs_dim)))
     tx = optax.adam(lr)
     rm_state = TrainState.create(
@@ -759,15 +760,23 @@ def make_run_ablation(
         config=config,
     )
 
-    # Loss function — define both; only the relevant one is used in the scan body
+    # Loss function — t_curriculum uses the JIT-compatible variant;
+    # all others use the spec's factory.  Both are always defined so the
+    # scan body (which branches on a Python bool) can reference either.
     extra_kwargs: dict = {}
     if spec.name == "ewc" and fisher is not None:
         extra_kwargs["fisher"] = fisher
-    loss_fn = spec.loss_factory(
-        ctx,
-        **{k: v for k, v in extra_kwargs.items() if k in spec.extra_loss_kwargs},
-    )
-    t_curriculum_loss_fn = make_loss_t_curriculum_jit(ctx) if spec.t_curriculum else None
+    if spec.t_curriculum:
+        # Use the JIT-compatible version that takes step_idx
+        t_curriculum_loss_fn = make_loss_t_curriculum_jit(ctx)
+        # Provide a baseline as the standard loss_fn (unused in scan body)
+        loss_fn = make_loss_baseline(ctx)
+    else:
+        t_curriculum_loss_fn = None
+        loss_fn = spec.loss_factory(
+            ctx,
+            **{k: v for k, v in extra_kwargs.items() if k in spec.extra_loss_kwargs},
+        )
 
     # BC loss (for gradient surgery and alignment)
     bc_loss_fn = make_loss_baseline(ctx)
@@ -814,7 +823,7 @@ def make_run_ablation(
         Returns:
             Tuple of (final_carry, stacked_metrics).
         """
-        rng, init_rng, env_rng, lora_rng = jax.random.split(rng, 4)
+        rng, init_rng, env_rng, lora_rng, rm_rng = jax.random.split(rng, 5)
 
         # Initialise parameters
         init_params = jax.tree.map(jnp.array, pretrained_params)
@@ -841,10 +850,10 @@ def make_run_ablation(
 
         # Reward model
         if use_reward_model:
-            _, rm_state = _build_reward_model(obs_dim, rm_width, rm_depth, rm_lr)
+            _, rm_state = _build_reward_model(obs_dim, rm_rng, rm_width, rm_depth, rm_lr)
         else:
             # Dummy: needs same pytree structure for scan carry
-            _, rm_state = _build_reward_model(obs_dim, 4, 1, 1e-4)
+            _, rm_state = _build_reward_model(obs_dim, rm_rng, 4, 1, 1e-4)
 
         carry_init = AblationCarry(
             state=state,
@@ -1330,6 +1339,13 @@ def run_ablation(
     logger.info("  Compiling training loop...")
     jitted_run = jax.jit(run_fn)
 
+    # TODO: within-ablation checkpoint chunking.  To support mid-training crash
+    # recovery, `run_fn` could be restructured so initialisation (model, env,
+    # replay buffer) is separated from the scan body, allowing the scan to be
+    # broken into `chunk_size`-step segments in a Python loop with intermediate
+    # `metrics_to_history` calls and JSON writes.  This requires pulling
+    # `carry_init` out of the compiled `run()` function and restructuring the
+    # JIT boundary — non-trivial, deferred to avoid breaking working code.
     logger.info("  Running %d iterations...", config["MAX_ITER"])
     final_carry, all_metrics = jitted_run(rng)
 
@@ -1354,8 +1370,7 @@ def run_ablation(
     eval_policy = build_eval_fn(env, env_params, active_eval, config_with_eval)
     final_params = jax.device_get(final_carry.state.params)
 
-    rng_final = jax.random.PRNGKey(42)
-    final_info = eval_policy(final_carry.state.params, rng_final)
+    final_info = eval_policy(final_carry.state.params, final_carry.rng)
     final_score = float(final_info.get("returned_episode_returns", jnp.array(0.0)))
 
     # Extract per-achievement unlock rates from final eval
