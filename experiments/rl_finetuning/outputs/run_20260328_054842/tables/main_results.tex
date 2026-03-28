@@ -1,0 +1,36 @@
+\begin{table}[htbp]
+\centering
+\caption{Main ablation results.}
+\label{tab:main_results}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Method} & \textbf{Group} & \textbf{Final_Score} & \textbf{Delta_vs_Pretrained} & \textbf{Delta_vs_Baseline_RL} & \textbf{Verdict} \\
+\midrule
+llrd & A & 12.9572 & 0.9079 & 0.1032 & IMPROVEMENT \\
+bc_wins & B & 12.8671 & 0.8178 & 0.0131 & IMPROVEMENT \\
+baseline_rl & Baseline & 12.8540 & 0.8047 & 0.0000 & IMPROVEMENT \\
+reward_filtering & D & 12.7864 & 0.7371 & -0.0676 & IMPROVEMENT \\
+ewc & A & 12.6798 & 0.6306 & -0.1741 & IMPROVEMENT \\
+action_diversity & D & 12.6593 & 0.6101 & -0.1946 & IMPROVEMENT \\
+running_stats & D & 12.6333 & 0.5840 & -0.2207 & IMPROVEMENT \\
+trust_region_kl & A & 12.4493 & 0.4000 & -0.4047 & IMPROVEMENT \\
+kl_penalty & A & 12.4189 & 0.3696 & -0.4351 & IMPROVEMENT \\
+advantage_clip & B & 12.4117 & 0.3624 & -0.4423 & IMPROVEMENT \\
+gradient_surgery & B & 12.3924 & 0.3432 & -0.4615 & IMPROVEMENT \\
+mixed_replay & A & 12.3638 & 0.3146 & -0.4901 & IMPROVEMENT \\
+entropy_bonus & B & 12.3347 & 0.2854 & -0.5193 & IMPROVEMENT \\
+reward_model & D & 12.2380 & 0.1887 & -0.6160 & IMPROVEMENT \\
+t_curriculum & B & 11.8874 & -0.1619 & -0.9666 & COLLAPSE \\
+low_t & B & 11.7222 & -0.3271 & -1.1318 & COLLAPSE \\
+normalized_adv & B & 7.7800 & -4.2692 & -5.0739 & COLLAPSE \\
+lora & A & -0.0911 & -12.1404 & -12.9451 & COLLAPSE \\
+layer_ablation_top2 & C & -0.3468 & -12.3960 & -13.2007 & COLLAPSE \\
+ffn_only & C & -0.3507 & -12.3999 & -13.2046 & COLLAPSE \\
+frozen_backbone & C & -0.3750 & -12.4243 & -13.2289 & COLLAPSE \\
+head_only & C & -0.3750 & -12.4243 & -13.2289 & COLLAPSE \\
+attention_only & C & -0.3750 & -12.4243 & -13.2289 & COLLAPSE \\
+layer_ablation_top3 & C & -0.9034 & -12.9527 & -13.7574 & COLLAPSE \\
+layer_ablation_top1 & C & -0.9098 & -12.9591 & -13.7638 & COLLAPSE \\
+\bottomrule
+\end{tabular}
+\end{table}
