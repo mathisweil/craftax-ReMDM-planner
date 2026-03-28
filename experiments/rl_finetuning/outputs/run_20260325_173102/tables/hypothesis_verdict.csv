@@ -1,3 +1,0 @@
-Ablation,Group,Hypothesis,Result,Conclusion
-baseline_rl,Baseline,Diagnoses whether the RL signal alone causes collapse,IMPROVEMENT,Hypothesis SUPPORTED — this intervention helps
-kl_penalty,A,If this helps: catastrophic forgetting is the primary cause; soft regularisation...,COLLAPSE,Hypothesis REFUTED — intervention did not prevent collapse

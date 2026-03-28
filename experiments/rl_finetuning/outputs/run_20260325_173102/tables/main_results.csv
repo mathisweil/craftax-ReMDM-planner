@@ -1,3 +1,0 @@
-Method,Group,Final_Score,Delta_vs_Pretrained,Delta_vs_Baseline_RL,Verdict
-baseline_rl,Baseline,6.7666,0.1667,0.0,IMPROVEMENT
-kl_penalty,A,6.45,-0.15,-0.3167,COLLAPSE

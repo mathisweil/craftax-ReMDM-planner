@@ -1,3 +1,0 @@
-Method,Mean_Grad_Align,Final_Grad_Align,Trend,Mean_KL_Drift,Final_KL_Drift
-kl_penalty,0.106,0.0799,up,0.019957,0.030736
-baseline_rl,0.0961,0.0662,up,0.018023,0.020102

@@ -1,3 +1,0 @@
-Method,HighLow_Ratio,LowHigh_Cos_Sim,Dominant_Regime
-baseline_rl,0.155,0.0518,low-t
-kl_penalty,0.106,0.1504,low-t
