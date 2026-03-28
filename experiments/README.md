@@ -8,7 +8,7 @@ These scripts are **standalone research code** — they import from `src/` but d
 ## `rl_finetuning/` — RL Fine-Tuning Ablation Suite
 
 Diagnoses why RL fine-tuning of the diffusion model collapses and which interventions fix it.
-Implements **22 ablations** across four groups, plus a comprehensive diagnostic and analysis pipeline.
+Implements **25 ablations** across four groups, plus a comprehensive diagnostic and analysis pipeline.
 
 ### Directory structure
 
@@ -17,9 +17,9 @@ rl_finetuning/
 ├── run_ablations.py          # CLI entry point
 ├── ablations/
 │   ├── losses.py             # All loss/objective variants as factory functions
-│   ├── optimizers.py         # LLRD, LoRA, EWC, gradient surgery, param masking
-│   ├── registry.py           # AblationSpec dataclass + REGISTRY (22 ablations)
-│   └── training.py           # run_ablation() loop + AblationHistory dataclass
+│   ├── optimizers.py         # LLRD, LoRA, gradient surgery, param masking
+│   ├── registry.py           # AblationSpec dataclass + REGISTRY (25 ablations)
+│   └── training.py           # make_run_ablation() factory + AblationHistory dataclass
 ├── diagnostics/
 │   ├── gradient.py           # Grad alignment, per-layer norms, surgery metrics
 │   ├── representation.py     # KL drift, CKA similarity, activation norms
@@ -29,7 +29,7 @@ rl_finetuning/
 │   ├── tables.py             # Summary tables as polars DataFrames + LaTeX export
 │   └── report.py             # diagnosis.md + decision tree figure
 └── configs/
-    ├── ablations_default.yaml   # Full-run hyperparameters
+    ├── ablations_default.yaml   # Full-run hyperparameters (self-contained)
     └── ablations_fast.yaml      # Smoke-test overrides (50 iterations, 16 envs)
 ```
 
@@ -44,7 +44,7 @@ python experiments/rl_finetuning/run_ablations.py \
     --ppo_checkpoint_path $PPO_CKPT
 ```
 
-**Full suite (all 22 ablations):**
+**Full suite (all 25 ablations):**
 ```bash
 python experiments/rl_finetuning/run_ablations.py \
     --config configs/defaults.yaml \
@@ -98,7 +98,9 @@ python experiments/rl_finetuning/run_ablations.py --list
 | | `head_only` | Only train the final linear projection |
 | | `attention_only` | Only train attention weights (Q/K/V/O) |
 | | `ffn_only` | Only train FFN layers |
-| | `layer_ablation_top1/2/3` | Only train top-N transformer blocks |
+| | `layer_ablation_top1` | Only train top-1 transformer block |
+| | `layer_ablation_top2` | Only train top-2 transformer blocks |
+| | `layer_ablation_top3` | Only train top-3 transformer blocks |
 | **D: Data Quality** | `reward_filtering` | Top-75th-percentile return windows only |
 | | `running_stats` | EMA running mean/std for advantage normalisation |
 | | `action_diversity` | Discard degenerate (all-same-action) plans |
@@ -108,10 +110,10 @@ python experiments/rl_finetuning/run_ablations.py --list
 
 ```
 experiments/rl_finetuning/outputs/{run_id}/
-├── results.json               # All histories + final scores (machine-readable)
+├── results.json               # All histories + final scores (machine-readable; see schema below)
 ├── diagnosis.md               # Human-readable verdict + evidence + recommendations
 ├── figures/
-│   ├── curves_{name}.png      # Per-ablation training curves (2×3 grid)
+│   ├── curves_{name}.png                  # Per-ablation training curves (2×3 grid)
 │   ├── final_score_comparison.png
 │   ├── eval_scores_over_training.png
 │   ├── score_delta_over_baseline_rl.png
@@ -123,14 +125,37 @@ experiments/rl_finetuning/outputs/{run_id}/
 │   ├── t_distribution_analysis.png
 │   ├── t_bin_grad_norms_{name}.png
 │   ├── win_rate_and_effective_batch_size.png
+│   ├── achievement_breakdown.png          # Start vs end achievement rates (stacked bars)
+│   ├── achievement_collapse_{name}.png    # Per-ablation achievement heatmap over time
 │   └── diagnosis_decision_tree.png
 └── tables/
     ├── main_results.{csv,tex}
     ├── gradient_analysis.{csv,tex}
     ├── t_distribution.{csv,tex}
     ├── forgetting_analysis.{csv,tex}
-    └── hypothesis_verdict.{csv,tex}
+    ├── hypothesis_verdict.{csv,tex}
+    └── achievement_summary.{csv,tex}      # Per-achievement final unlock rates
 ```
+
+**`results.json` schema:**
+```json
+{
+  "pretrained_score": 0.1234,
+  "pretrained_ach_rates": {"achievement_collect_wood": 0.42, ...},
+  "config": {"MAX_ITER": 1000, ...},
+  "ablations": {
+    "kl_penalty": {
+      "score": 0.1456,        // mean across seeds
+      "score_std": 0.008,     // std across seeds (0.0 if num_seeds=1)
+      "all_scores": [0.1456], // per-seed scores
+      "history": { ... }      // AblationHistory serialised
+    }
+  }
+}
+```
+
+`results.json` is written incrementally after each ablation completes — a partial file with
+N of 25 ablations is fully valid and loadable by `--analyze_only --results_path`.
 
 ### Diagnostic metrics collected
 
