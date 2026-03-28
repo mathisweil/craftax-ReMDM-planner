@@ -189,8 +189,12 @@ def make_cka_fn(
 
         Returns:
             Scalar CKA value.
+
+        Note:
+            Caller must ensure ``obs.shape[0] >= cka_batch_size``.  In
+            practice ``batch_size`` (typically 128) should exceed the
+            default ``cka_batch_size`` (64).
         """
-        B = jnp.minimum(obs.shape[0], cka_batch_size)
         obs_b = jax.lax.dynamic_slice(obs, (0, 0), (cka_batch_size, obs.shape[1]))
         acts_b = jax.lax.dynamic_slice(acts, (0, 0), (cka_batch_size, acts.shape[1]))
 
