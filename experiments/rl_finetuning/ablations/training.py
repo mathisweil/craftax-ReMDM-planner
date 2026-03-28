@@ -1339,13 +1339,6 @@ def run_ablation(
     logger.info("  Compiling training loop...")
     jitted_run = jax.jit(run_fn)
 
-    # TODO: within-ablation checkpoint chunking.  To support mid-training crash
-    # recovery, `run_fn` could be restructured so initialisation (model, env,
-    # replay buffer) is separated from the scan body, allowing the scan to be
-    # broken into `chunk_size`-step segments in a Python loop with intermediate
-    # `metrics_to_history` calls and JSON writes.  This requires pulling
-    # `carry_init` out of the compiled `run()` function and restructuring the
-    # JIT boundary — non-trivial, deferred to avoid breaking working code.
     logger.info("  Running %d iterations...", config["MAX_ITER"])
     final_carry, all_metrics = jitted_run(rng)
 
