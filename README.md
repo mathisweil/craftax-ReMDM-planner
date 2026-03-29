@@ -369,9 +369,9 @@ craftax-ReMDM-planner/
 │       ├── inference.py           # --mode inference: MPC evaluation with inpainting
 │       ├── logging.py             # Centralised W&B logging utilities
 │       ├── model.py               # Diffusion model lifecycle
+│       ├── offline.py               # --mode offline: make_train (live PPO rollouts)
 │       ├── online.py              # --mode online: GRPO fine-tuning
-│       ├── ppo.py                 # PPO agent adapter and checkpoint loading utilities            
-│       └── train.py               # --mode offline: make_train (live PPO rollouts)
+│       └── ppo.py                 # PPO agent adapter and checkpoint loading utilities            
 ├── main.py                        # CLI entry point
 ├── environment.yaml               # Conda environment specification
 └── requirements.txt               # pip requirements

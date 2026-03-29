@@ -1,23 +1,3 @@
-"""Unified entrypoint for the ReMDM discrete diffusion planner on Craftax.
-
-Modes
------
-collect       Collect offline trajectories from a trained PPO agent.
-offline       Train diffusion model from live PPO rollouts.
-online        GRPO fine-tuning with environment interaction.
-inference     Evaluate a trained diffusion planner via MPC.
-
-Usage
------
-    python main.py --mode offline --ppo_checkpoint_path /path/to/ppo
-    python main.py --mode online --offline_checkpoint_path /path/to/ckpt
-    python main.py --mode inference --checkpoint_path /path/to/ckpt
-    python main.py --mode collect --ppo_checkpoint_path /path/to/ppo
-
-All defaults are loaded from configs/defaults.yaml.  Any value can be
-overridden on the command line (e.g. --lr 1e-4 --num_envs 64).
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -31,7 +11,7 @@ import numpy as np
 import yaml
 
 from src.planners.collect import run_collect
-from src.planners.train import run_offline_diffusion
+from src.planners.offline import run_offline_diffusion
 from src.planners.online import run_online
 from src.planners.inference import run_inference
 
@@ -40,16 +20,18 @@ DIFFUSION_SCHEDULES = ["cosine", "linear"]
 PPO_TYPES = ["ppo", "ppo_rnn", "ppo_rnd"]
 
 
+# =============================================================================
+# Parser
+# =============================================================================
+
 def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="ReMDM discrete diffusion planner for Craftax",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    # Config file
     p.add_argument("--config", default=default_cfg_path)
 
-    # Mode
     p.add_argument(
         "--mode", required=True,
         choices=["collect", "offline", "online", "inference"],
@@ -120,7 +102,7 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
     p.add_argument("--ppo_init_prob", type=float, default=None)
     p.add_argument("--ppo_decay_rate", type=float, default=None)
 
-    # Data collection / PPO
+    # Data collection
     p.add_argument("--collect_num_steps", type=lambda x: int(float(x)), default=None)
     p.add_argument("--collect_num_envs", type=int, default=None)
     p.add_argument("--ppo_model_type", type=str, choices=PPO_TYPES, default=None)
@@ -130,9 +112,6 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
     p.add_argument("--eval_steps", type=lambda x: int(float(x)), default=None)
     p.add_argument("--eval_num_envs", type=int, default=None)
 
-    # Checkpointing
-    p.add_argument("--save_policy", action=argparse.BooleanOptionalAction, default=None)
-
     # Logging
     p.add_argument("--use_wandb", action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--wandb_project", type=str, default=None)
@@ -141,39 +120,14 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
     return p
 
 
-def _validate(mode: str, config: dict[str, Any]) -> None:
-    """Check that required keys are present for the selected mode."""
-    if mode == "collect":
-        assert config.get("PPO_CHECKPOINT_PATH"), "--ppo_checkpoint_path required for --mode collect"
-    elif mode == "offline":
-        assert config.get("PPO_CHECKPOINT_PATH"), (
-            "--mode offline requires --ppo_checkpoint_path"
-        )
-    elif mode == "inference":
-        assert config.get("CHECKPOINT_PATH"), "--checkpoint_path required for --mode inference"
-
-
-DISPATCH = {
-    "collect": run_collect,
-    "offline": run_offline_diffusion,
-    "online": run_online,
-    "inference": run_inference,
-}
-
-
 # =============================================================================
-# Entry point
+# Config
 # =============================================================================
 
-if __name__ == "__main__":
-    backend = jax.default_backend()
-    print(f"JAX backend: {backend} | Devices: {jax.devices()}")
-    if backend != "gpu":
-        import warnings
-        warnings.warn(f"JAX is using '{backend}', not GPU. pip install jax[cuda12]")
-
-    # Two-pass parsing: load YAML first, then override with CLI args
+def build_config() -> dict[str, Any]:
     default_cfg = str(pathlib.Path(__file__).parent / "configs" / "defaults.yaml")
+
+    # Pre-parse config path
     pre = argparse.ArgumentParser(add_help=False)
     pre.add_argument("--config", default=default_cfg)
     pre_args, _ = pre.parse_known_args()
@@ -186,7 +140,6 @@ if __name__ == "__main__":
     if rest:
         raise ValueError(f"Unknown arguments: {rest}")
 
-    # Merge: YAML base (uppercased) -> CLI overrides (non-None only)
     config: dict[str, Any] = {k.upper(): v for k, v in yaml_cfg.items()}
     cli = {k.upper(): v for k, v in vars(args).items() if v is not None and k != "config"}
     config.update(cli)
@@ -194,13 +147,62 @@ if __name__ == "__main__":
     if config.get("SEED") is None:
         config["SEED"] = np.random.randint(2**31)
 
-    mode = config["MODE"]
-    _validate(mode, config)
+    return config
 
-    run = lambda: DISPATCH[mode](config)
+
+# =============================================================================
+# Validation
+# =============================================================================
+
+def validate_config(config: dict[str, Any]) -> None:
+    mode = config["MODE"]
+
+    if mode in {"collect", "offline"} and not config.get("PPO_CHECKPOINT_PATH"):
+        raise ValueError("--ppo_checkpoint_path required for this mode")
+
+    if mode == "inference" and not config.get("CHECKPOINT_PATH"):
+        raise ValueError("--checkpoint_path required for inference mode")
+
+
+# =============================================================================
+# Execution
+# =============================================================================
+
+DISPATCH = {
+    "collect": run_collect,
+    "offline": run_offline_diffusion,
+    "online": run_online,
+    "inference": run_inference,
+}
+
+
+def run(config: dict[str, Any]) -> None:
+    validate_config(config)
+
+    mode = config["MODE"]
 
     if config.get("JIT", True):
-        run()
+        DISPATCH[mode](config)
     else:
         with jax.disable_jit():
-            run()
+            DISPATCH[mode](config)
+
+
+# =============================================================================
+# Entry point
+# =============================================================================
+
+def main() -> None:
+    backend = jax.default_backend()
+    print(f"JAX backend: {backend} | Devices: {jax.devices()}")
+
+    if backend != "gpu":
+        import warnings
+        warnings.warn(f"JAX is using '{backend}', not GPU. pip install jax[cuda12]")
+
+    config = build_config()
+    run(config)
+
+
+if __name__ == "__main__":
+    main()
