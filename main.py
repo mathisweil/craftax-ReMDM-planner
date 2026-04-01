@@ -11,6 +11,7 @@ import numpy as np
 import yaml
 
 from src.planners.collect import run_collect
+from src.planners.model import resolve_checkpoint_path
 from src.planners.offline import run_offline_diffusion
 from src.planners.online import run_online
 from src.planners.inference import run_inference
@@ -116,6 +117,7 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
     p.add_argument("--use_wandb", action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--wandb_project", type=str, default=None)
     p.add_argument("--wandb_entity", type=str, default=None)
+    p.add_argument("--wandb_download_dir", type=str, default=None)
 
     return p
 
@@ -151,6 +153,26 @@ def build_config() -> dict[str, Any]:
 
 
 # =============================================================================
+# W&B artifact resolution
+# =============================================================================
+
+_CHECKPOINT_PATH_KEYS = (
+    "CHECKPOINT_PATH",
+    "OFFLINE_CHECKPOINT_PATH",
+    "PPO_CHECKPOINT_PATH",
+)
+
+
+def _resolve_wandb_paths(config: dict[str, Any]) -> None:
+    """Download W&B artifacts for any checkpoint path prefixed with ``wandb:``."""
+    download_dir = config.get("WANDB_DOWNLOAD_DIR")
+    for key in _CHECKPOINT_PATH_KEYS:
+        val = config.get(key)
+        if val and isinstance(val, str) and val.startswith("wandb:"):
+            config[key] = resolve_checkpoint_path(val, download_dir)
+
+
+# =============================================================================
 # Validation
 # =============================================================================
 
@@ -177,6 +199,7 @@ DISPATCH = {
 
 
 def run(config: dict[str, Any]) -> None:
+    _resolve_wandb_paths(config)
     validate_config(config)
 
     mode = config["MODE"]

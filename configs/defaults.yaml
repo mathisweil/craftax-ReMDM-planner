@@ -80,3 +80,4 @@ seed: null                          # random if not set
 use_wandb: true
 wandb_project: "remdm-craftax"
 wandb_entity: "mathis-weil-university-college-london-ucl-"
+wandb_download_dir: null              # download directory for W&B artifacts (null = wandb default ./artifacts/)

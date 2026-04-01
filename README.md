@@ -31,25 +31,36 @@ Training follows a four-stage pipeline:
 
 ## Installation
 
-### 1. Create the conda environment
+### Prerequisites (system-level)
+
+`uv` manages Python packages only. The following must be installed at the OS level before
+running on a GPU node — they are **not** in `pyproject.toml`:
+
+- **CUDA 12** driver and toolkit (`libcuda.so`, `libcudnn`)
+- A C/C++ build toolchain (needed by NLE/MiniHack compiled extensions, if used)
+
+On HPC clusters these are typically loaded via `module load cuda/12.x`.
+
+### 1. Create the virtual environment
 
 ```bash
-conda env create -f environment.yaml
-conda activate craftax
+# CPU-only (local development / macOS)
+uv sync
+
+# NVIDIA CUDA 12 (GPU node — Linux only)
+uv sync --extra cuda
+
+# Activate
+source .venv/bin/activate
 ```
+
+`uv sync` reads `pyproject.toml`, resolves a fully-reproducible lockfile (`uv.lock`),
+and installs into `.venv/`. Commit `uv.lock` to pin the exact dependency graph.
 
 ### 2. Initialise the submodule
 
 ```bash
 git submodule update --init --recursive
-```
-
-### 3. GPU support (optional)
-
-By default JAX runs on CPU. For NVIDIA CUDA 12:
-
-```bash
-pip install -U "jax[cuda12]"
 ```
 
 ---
@@ -68,7 +79,7 @@ pip install -U "jax[cuda12]"
 | `wandb` | 0.25.0 | Experiment logging |
 | `pyyaml` | 6.0.3 | Config file parsing |
 
-Full specification in `environment.yaml` and `requirements.txt`.
+Full specification in `pyproject.toml`. Exact transitive pins are in `uv.lock`.
 
 ---
 
@@ -160,6 +171,26 @@ python main.py --mode inference \
 ```
 
 Prints mean episode return, completed episodes, steps per second, and per-achievement unlock counts. Uses historical inpainting: the first `hist_len` plan positions are locked to observed history.
+
+### Loading checkpoints from W&B artifacts
+
+Any checkpoint path argument (`--checkpoint_path`, `--offline_checkpoint_path`, `--ppo_checkpoint_path`) accepts a W&B artifact reference prefixed with `wandb:`. The artifact is downloaded automatically before training or evaluation begins.
+
+```bash
+# Fully qualified: entity/project/artifact_name:version_or_alias
+python main.py --mode inference \
+    --checkpoint_path wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy:latest
+
+# Online fine-tuning from a W&B offline checkpoint
+python main.py --mode online \
+    --offline_checkpoint_path wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy:v3
+
+# PPO checkpoint from W&B
+python main.py --mode offline \
+    --ppo_checkpoint_path wandb:my-team/ppo-craftax/ppo-rnn-policy:best
+```
+
+Control the download location with `--wandb_download_dir` (defaults to `./artifacts/`).
 
 
 ---
@@ -290,6 +321,7 @@ Preset configs for larger runs are provided in `configs/`:
 | `use_wandb` | `true` | Enable Weights & Biases logging |
 | `wandb_project` | `remdm-craftax` | W&B project name |
 | `wandb_entity` | `""` | W&B entity (team or username); empty = personal account |
+| `wandb_download_dir` | `null` | Download directory for W&B artifacts; null = `./artifacts/` |
 | `seed` | `null` | RNG seed (random if null) |
 
 ---
@@ -373,8 +405,8 @@ craftax-ReMDM-planner/
 │       ├── online.py              # --mode online: GRPO fine-tuning
 │       └── ppo.py                 # PPO agent adapter and checkpoint loading utilities            
 ├── main.py                        # CLI entry point
-├── environment.yaml               # Conda environment specification
-└── requirements.txt               # pip requirements
+├── pyproject.toml                 # uv project — direct deps + tool config
+└── uv.lock                        # Reproducible lockfile (commit this)
 ```
 
 ---

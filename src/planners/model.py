@@ -61,6 +61,40 @@ def init_params(
     )
 
 
+def resolve_checkpoint_path(
+    path: str,
+    download_dir: str | None = None,
+) -> str:
+    """Resolve a checkpoint path, downloading from W&B if it is an artifact reference.
+
+    Paths prefixed with ``wandb:`` are treated as W&B artifact references
+    (e.g. ``wandb:entity/project/name:version``) and downloaded locally
+    before returning the filesystem path.
+
+    Args:
+        path:         Local filesystem path or ``wandb:``-prefixed artifact
+                      reference.
+        download_dir: Root directory for downloaded artifacts.  When ``None``,
+                      falls back to the wandb default (``./artifacts/``).
+
+    Returns:
+        Local filesystem path to the checkpoint directory.
+    """
+    if not path.startswith("wandb:"):
+        return path
+
+    import wandb
+
+    artifact_ref = path.removeprefix("wandb:")
+    api = wandb.Api()
+    artifact = api.artifact(artifact_ref)
+    local_path = (
+        artifact.download(root=download_dir) if download_dir else artifact.download()
+    )
+    print(f"Downloaded W&B artifact '{artifact_ref}' -> '{local_path}'")
+    return local_path
+
+
 def load_checkpoint(
     model: DenoisingTransformer,
     rng: jax.Array,

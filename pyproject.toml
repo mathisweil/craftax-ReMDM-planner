@@ -1,0 +1,66 @@
+[project]
+name = "craftax-remdm-planner"
+version = "0.1.0"
+description = "ReMDM: Remasking Discrete Diffusion Model for action-sequence planning on Craftax"
+requires-python = ">=3.12"
+dependencies = [
+    # JAX ecosystem
+    "jax>=0.9.2",
+    "flax>=0.12.6",
+    "optax>=0.2.8",
+    "chex>=0.1.91",
+    "distrax>=0.1.7",
+    "orbax-checkpoint>=0.11.33",
+    # Environments
+    "craftax>=1.5.0",
+    "gymnax>=0.0.9",
+    "gymnasium>=1.2.3",
+    # Data and numerics
+    "numpy>=2.4.3",
+    "scipy>=1.17.1",
+    "pandas>=3.0.1",
+    # Experiment tooling
+    "wandb>=0.25.1",
+    "pyyaml>=6.0.3",
+    "orjson>=3.9",
+    "tqdm>=4.66",
+    "rich>=14.3.3",
+    # Visualisation
+    "matplotlib>=3.10.8",
+    "seaborn>=0.13.2",
+]
+
+[project.optional-dependencies]
+# Install JAX with CUDA 12 support on Linux GPU nodes:
+#   uv sync --extra cuda
+cuda = ["jax[cuda12]>=0.9.2"]
+
+[dependency-groups]
+# Development-only tools — not shipped as project requirements.
+# ipykernel/ipywidgets: Jupyter notebook compatibility.
+dev = [
+    "ipykernel",
+    "ipywidgets",
+    "pytest>=8.0",
+    "mypy>=1.11",
+    "ruff>=0.9",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501"]  # line length enforced by formatter, not linter
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+# JAX arrays are typed via jax.Array; avoid false positives on stubs.
+plugins = []
