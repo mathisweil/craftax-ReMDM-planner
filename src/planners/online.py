@@ -286,7 +286,7 @@ def make_train_dagger(config: dict[str, Any]):
 # Entry point
 # ---------------------------------------------------------------------------
 
-def run_dagger(config: dict[str, Any]) -> None:
+def run_online(config: dict[str, Any]) -> None:
     config = {k.upper(): v for k, v in config.items()}
 
     if config.get("USE_WANDB"):
