@@ -43,6 +43,12 @@ def make_train_dagger(config: dict[str, Any]):
     num_minibatches = config["NUM_MINIBATCHES"]
     diffusion_steps = config["DIFFUSION_STEPS"]
 
+    # Validation config
+    val_interval = config.get("VAL_INTERVAL", 50)
+    val_replan_every = config.get("VAL_REPLAN_EVERY", 4)
+    val_steps = config.get("VAL_STEPS", 128)
+    n_val_cycles = val_steps // val_replan_every
+
     # Environment ----------------------------------------------------------
     env, env_params = make_env(config, num_envs)
     num_actions = env.action_space(env_params).n
@@ -92,12 +98,11 @@ def make_train_dagger(config: dict[str, Any]):
     beta_decay = config.get("DAGGER_BETA_DECAY", 0.95)
 
     # Wandb ----------------------------------------------------------------
-    _val_interval = num_updates + 1
     _wandb_log = (
         make_wandb_callback(
             config,
             steps_per_update=num_envs * config["NUM_STEPS"],
-            val_interval=_val_interval,
+            val_interval=val_interval,
             is_online=True,
         )
         if config.get("USE_WANDB") else None
@@ -114,6 +119,54 @@ def make_train_dagger(config: dict[str, Any]):
 
         obs, env_state = env.reset(env_rng, env_params)
         init_ppo_hstate = ppo.init_hidden(num_envs)
+
+        # --------------------------------------------------------------
+        # Validation (matches train.py)
+        # --------------------------------------------------------------
+        def _validate(state, rng):
+            rng, val_rng = jax.random.split(rng)
+            val_obs, val_env_state = env.reset(val_rng, env_params)
+
+            def _val_cycle(carry, _):
+                vs, vo, rng = carry
+                rng, p_rng = jax.random.split(rng)
+                plan = sample_plan(
+                    apply_eval, state.params, p_rng, vo,
+                    num_actions, plan_horizon,
+                    num_steps=config.get("VAL_DIFFUSION_STEPS", 50),
+                    schedule_fn=schedule_fn,
+                    remask_strategy=config.get("REMASK_STRATEGY", "rescale"),
+                    eta=config.get("ETA", 0.5),
+                    use_loop=config.get("USE_LOOP", True),
+                    t_on=config.get("T_ON", 0.7),
+                    t_off=config.get("T_OFF", 0.3),
+                    temperature=config.get("TEMPERATURE", 0.5),
+                    top_p=config.get("TOP_P", 0.95),
+                )  # [num_envs, plan_horizon]
+
+                def _exec_step(inner_carry, step_i):
+                    vs_i, vo_i, r = inner_carry
+                    r, s_rng = jax.random.split(r)
+                    vo_next, vs_next, _, _, info = env.step(
+                        s_rng, vs_i, plan[:, step_i], env_params,
+                    )
+                    return (vs_next, vo_next, r), info
+
+                (vs, vo, rng), step_infos = jax.lax.scan(
+                    _exec_step, (vs, vo, rng), jnp.arange(val_replan_every),
+                )
+                return (vs, vo, rng), step_infos
+
+            _, cycle_infos = jax.lax.scan(
+                _val_cycle, (val_env_state, val_obs, rng), None, n_val_cycles,
+            )
+            # cycle_infos: {key: [n_val_cycles, val_replan_every, num_envs, ...]}
+            infos = jax.tree.map(lambda x: x.reshape(-1, *x.shape[2:]), cycle_infos)
+            returned = infos["returned_episode"]
+            metrics = jax.tree.map(
+                lambda x: (x * returned).sum() / (returned.sum() + 1e-8), infos,
+            )
+            return {f"val/{k}": v for k, v in metrics.items()}
 
         # --------------------------------------------------------------
         # _update_step
@@ -174,8 +227,6 @@ def make_train_dagger(config: dict[str, Any]):
                     (es, cur_obs, sim_rng, ppo_hs),
                     jnp.arange(replan_every),
                 )
-                # visited_obs:  [steps, E, obs_dim]
-                # expert_acts:  [steps, E]
 
                 es_next, obs_next, rng_next, ppo_hs_next = final_c
 
@@ -190,43 +241,21 @@ def make_train_dagger(config: dict[str, Any]):
                 n_cycles,
             )
             traj_obs, traj_expert_acts, traj_rew, all_infos = traj
-            # traj_obs:         [C, steps, E, obs_dim]
-            # traj_expert_acts: [C, steps, E]
-            # traj_rew:         [C, steps, E]
 
-            # Build expert plan targets:
-            # For each cycle, the expert actions over replan_every steps form
-            # the target plan.  Pad to plan_horizon if needed.
-            # traj_expert_acts: [C, steps, E] -> [C, E, steps]
-            expert_plans = jnp.transpose(traj_expert_acts, (0, 2, 1))
+            # Build expert plan targets
+            expert_plans = jnp.transpose(traj_expert_acts, (0, 2, 1))  # [C, E, steps]
             if replan_every < plan_horizon:
                 pad_width = plan_horizon - replan_every
-                # Pad with zeros (masked out during loss via valid mask)
-                expert_plans = jnp.pad(
-                    expert_plans,
-                    ((0, 0), (0, 0), (0, pad_width)),
-                    constant_values=0,
-                )
-            # expert_plans: [C, E, plan_horizon]
+                last_act = expert_plans[:, :, -1:]
+                padding = jnp.broadcast_to(last_act, (n_cycles, num_envs, pad_width))
+                expert_plans = jnp.concatenate([expert_plans, padding], axis=-1)
 
-            # Obs at the start of each cycle (the conditioning observation)
-            # traj_obs[:, 0, :, :] gives [C, E, obs_dim]
             cycle_obs = traj_obs[:, 0, :, :]
 
-            # Valid mask: only first replan_every positions are real
-            valid_per_step = jnp.concatenate([
-                jnp.ones(replan_every),
-                jnp.zeros(max(plan_horizon - replan_every, 0)),
-            ])  # [plan_horizon]
+            flat_obs = cycle_obs.reshape(-1, obs_dim)
+            flat_plans = expert_plans.reshape(-1, plan_horizon)
+            flat_valid = jnp.ones(flat_obs.shape[0])
 
-            # Flatten across cycles and envs
-            flat_obs = cycle_obs.reshape(-1, obs_dim)           # [C*E, D]
-            flat_plans = expert_plans.reshape(-1, plan_horizon)  # [C*E, H]
-            flat_valid = jnp.broadcast_to(
-                valid_per_step, (flat_obs.shape[0], plan_horizon),
-            )  # [C*E, H]
-
-            # Minibatch SGD (standard BC, no advantage weighting)
             dataset = (flat_obs, flat_plans, flat_valid)
 
             def _epoch(epoch_state, _):
@@ -243,8 +272,8 @@ def make_train_dagger(config: dict[str, Any]):
                     st, rng = carry
                     rng, loss_rng = jax.random.split(rng)
                     obs_b, act_b, val_b = batch
-                    # Standard BC loss — no advantages
-                    st, metrics = grad_step(st, act_b, obs_b, val_b, loss_rng)
+                    adv_b = jnp.ones(act_b.shape[0])
+                    st, metrics = grad_step(st, act_b, obs_b, val_b, loss_rng, advantages=adv_b)
                     return (st, rng), metrics
 
                 (state, rng), metrics = jax.lax.scan(_mb, (state, rng), batches)
@@ -264,6 +293,18 @@ def make_train_dagger(config: dict[str, Any]):
             metric.update(env_metrics)
             metric["beta"] = beta
             metric["reward_mean"] = jnp.mean(traj_rew)
+
+            # --- Periodic validation ---
+            rng, val_rng = jax.random.split(rng)
+            dummy = jax.tree.map(
+                jnp.zeros_like, {f"val/{k}": v for k, v in env_metrics.items()},
+            )
+            val_metrics = jax.lax.cond(
+                step_idx % val_interval == 0,
+                lambda: _validate(state, val_rng),
+                lambda: dummy,
+            )
+            metric.update(val_metrics)
 
             if _wandb_log is not None:
                 jax.debug.callback(_wandb_log, metric, step_idx)
