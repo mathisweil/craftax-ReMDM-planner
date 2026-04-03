@@ -165,7 +165,7 @@ class PPOAgent:
         done: jnp.ndarray | None = None,
         hidden: jnp.ndarray | None = None,
     ) -> tuple[Any, jnp.ndarray | None]:
-        """Return the policy distribution (used in GRPO simulation).
+        """Return the policy distribution (used in DAgger expert labelling).
 
         Args:
             obs:    Observation array ``[B, obs_dim]``.

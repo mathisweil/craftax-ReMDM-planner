@@ -144,18 +144,20 @@ python main.py --mode offline \
     --save_policy
 ```
 
-### Stage 3 — Online GRPO fine-tuning
+### Stage 3 — Online DAgger fine-tuning
 
-The diffusion model acts as its own policy: it generates groups of plans, executes them in the environment, and trains on the resulting `(obs, plan)` pairs weighted by group-relative advantages.
+The diffusion model (learner) is fine-tuned via DAgger (Dataset Aggregation). At each iteration a mixed policy blends the PPO expert and the diffusion learner (controlled by an exponentially decaying `beta`). The mixed policy rolls out trajectories; the expert labels every visited state with the action it would take. These `(obs, expert_plan)` pairs are appended to a growing circular replay buffer, and the diffusion model is retrained on the full buffer with the standard MDLM ELBO loss (pure behavioural cloning — no reward weighting).
 
 ```bash
-# From scratch
+# From scratch (requires PPO expert checkpoint)
 python main.py --mode online \
+    --ppo_checkpoint_path /path/to/ppo_checkpoint \
     --num_updates 1000 \
     --save_policy
 
 # Warm-start from an offline checkpoint
 python main.py --mode online \
+    --ppo_checkpoint_path /path/to/ppo_checkpoint \
     --offline_checkpoint_path /path/to/offline_checkpoint \
     --num_updates 1000 \
     --save_policy
@@ -278,15 +280,15 @@ Preset configs for larger runs are provided in `configs/`:
 | `val_replan_every` | 4 | Environment steps executed per diffusion plan during validation |
 | `val_steps` | 128 | Total environment steps per validation rollout |
 
-**Online GRPO training**
+**Online DAgger training**
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `num_updates` | 1000 | Outer update iterations |
-| `replan_every` | 4 | Environment steps executed per plan before replanning |
-| `grpo_group_size` | 4 | Plans sampled per state for group advantage |
-| `ppo_init_prob` | 0.1 | Initial probability of injecting PPO expert actions |
-| `ppo_decay_rate` | 0.99 | Exponential decay of PPO injection probability per update |
+| `num_updates` | 1000 | Outer DAgger iterations |
+| `replan_every` | 4 | Environment steps per diffusion plan during validation |
+| `dagger_beta_init` | 1.0 | Initial expert mixing probability `beta_1` (1.0 = pure expert first iteration) |
+| `dagger_beta_decay` | 0.95 | Exponential decay: `beta_i = beta_1 * decay^i` |
+| `dagger_buffer_max` | 100000 | Max samples in the DAgger replay buffer (circular eviction when full) |
 
 **Data collection**
 
@@ -402,7 +404,7 @@ craftax-ReMDM-planner/
 │       ├── logging.py             # Centralised W&B logging utilities
 │       ├── model.py               # Diffusion model lifecycle
 │       ├── offline.py               # --mode offline: make_train (live PPO rollouts)
-│       ├── online.py              # --mode online: GRPO fine-tuning
+│       ├── online.py              # --mode online: DAgger fine-tuning
 │       └── ppo.py                 # PPO agent adapter and checkpoint loading utilities            
 ├── main.py                        # CLI entry point
 ├── pyproject.toml                 # uv project — direct deps + tool config
@@ -427,7 +429,9 @@ craftax-ReMDM-planner/
 
 **Validation rollouts**: during offline training, a held-out rollout runs every `val_interval` steps. It uses the same sampling parameters as inference (`remask_strategy`, `eta`, `use_loop`, `t_on`, `t_off`, `temperature`, `top_p`) with `val_diffusion_steps` denoising steps and `val_replan_every` env steps per plan, for a total of `val_steps` environment steps.
 
-**W&B logging**: all metric aggregation is centralised in `src/planners/logging.py`. Metric namespaces: `diffusion/` (loss, accuracy), `train/` (data quality, throughput), `env/` (episode returns, achievements), `val/` (validation rollouts, emitted every `val_interval` steps), `grpo/` (online training only). `train/sps` (environment frames/sec) is only logged in modes that perform live environment interaction.
+**W&B logging**: all metric aggregation is centralised in `src/planners/logging.py`. Metric namespaces: `diffusion/` (loss, accuracy), `train/` (data quality, throughput), `env/` (episode returns, achievements), `val/` (validation rollouts, emitted every `val_interval` steps), `dagger/` (online DAgger training: beta, buffer fill, reward mean, valid fraction). `train/sps` (environment frames/sec) is only logged in modes that perform live environment interaction.
+
+**DAgger dataset aggregation**: online training (`--mode online`) implements DAgger (Ross et al., 2011). A circular replay buffer accumulates `(obs, expert_plan)` pairs across all iterations. Each update samples uniformly from the full buffer, not just the latest batch. Training samples that cross episode boundaries (any `done` within the plan-horizon window) are marked invalid. The expert (PPO agent) receives correct `done` flags so its RNN hidden state resets on episode boundaries.
 
 **Denoising step indexing**: the reverse scan runs from `step_idx = 0` to `T-1`, mapping to diffusion time `t = (T - step_idx) / T` (high noise to low noise).
 

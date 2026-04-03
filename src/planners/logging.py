@@ -16,7 +16,7 @@ Metric namespacing
 ``env/``        — episode returns and per-achievement unlock rates (training envs).
 ``val/``        — same as ``env/`` but from the held-out validation rollout
                   (only emitted when ``step_idx % val_interval == 0``).
-``grpo/``       — GRPO-specific metrics (online training only).
+``dagger/``     — DAgger-specific metrics (online training only).
 """
 
 from __future__ import annotations
@@ -48,14 +48,12 @@ _TRAIN_KEYS: tuple[str, ...] = (
     "mean_return_weight",
 )
 
-# Keys specific to online GRPO training.
-_GRPO_KEYS: tuple[str, ...] = (
-    "ppo_prob",
-    "advantage_mean",
-    "advantage_std",
-    "adv_mean",
-    "adv_std",
+# Keys specific to online DAgger training.
+_DAGGER_KEYS: tuple[str, ...] = (
+    "beta",
     "reward_mean",
+    "buffer_fill",
+    "valid_frac",
 )
 
 
@@ -73,7 +71,7 @@ def build_log_dict(
         metric:       Merged metric dict from the current update step.
         step_idx:     Integer update step index.
         val_interval: How often (in steps) validation runs occur.
-        is_online:    If ``True``, emit GRPO-specific keys under ``grpo/``.
+        is_online:    If ``True``, emit DAgger-specific keys under ``dagger/``.
         sps:          Pre-computed steps-per-second; omitted when ``None``.
 
     Returns:
@@ -91,9 +89,9 @@ def build_log_dict(
             log[f"train/{k}"] = float(metric[k])
 
     if is_online:
-        for k in _GRPO_KEYS:
+        for k in _DAGGER_KEYS:
             if k in metric:
-                log[f"grpo/{k}"] = float(metric[k])
+                log[f"dagger/{k}"] = float(metric[k])
 
     if "returned_episode_returns" in metric:
         log["env/episode_return"] = float(metric["returned_episode_returns"])
@@ -154,7 +152,7 @@ def make_wandb_callback(
                           ``None`` to disable ``train/sps`` logging entirely
                           (e.g. when training from pre-collected data files).
         val_interval:     Frequency (in steps) at which validation runs occur.
-        is_online:        If ``True``, emit GRPO keys under ``grpo/``.
+        is_online:        If ``True``, emit DAgger keys under ``dagger/``.
 
     Returns:
         A callable ``log_fn(metric, step_idx) -> None`` for

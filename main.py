@@ -96,12 +96,12 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
     p.add_argument("--return_weight_cap", type=float, default=None)
     p.add_argument("--lr_warmup_steps", type=int, default=None)
 
-    # Online GRPO
+    # Online DAgger
     p.add_argument("--num_updates", type=lambda x: int(float(x)), default=None)
     p.add_argument("--replan_every", type=int, default=None)
-    p.add_argument("--grpo_group_size", type=int, default=None)
-    p.add_argument("--ppo_init_prob", type=float, default=None)
-    p.add_argument("--ppo_decay_rate", type=float, default=None)
+    p.add_argument("--dagger_beta_init", type=float, default=None)
+    p.add_argument("--dagger_beta_decay", type=float, default=None)
+    p.add_argument("--dagger_buffer_max", type=int, default=None)
 
     # Data collection
     p.add_argument("--collect_num_steps", type=lambda x: int(float(x)), default=None)
@@ -179,7 +179,7 @@ def _resolve_wandb_paths(config: dict[str, Any]) -> None:
 def validate_config(config: dict[str, Any]) -> None:
     mode = config["MODE"]
 
-    if mode in {"collect", "offline"} and not config.get("PPO_CHECKPOINT_PATH"):
+    if mode in {"collect", "offline", "online"} and not config.get("PPO_CHECKPOINT_PATH"):
         raise ValueError("--ppo_checkpoint_path required for this mode")
 
     if mode == "inference" and not config.get("CHECKPOINT_PATH"):
