@@ -15,8 +15,8 @@ num_minibatches: 16        # Slices the 4,096 frames into tiny batches for VRAM 
 offline_checkpoint_path: null                                 # Fresh Brain
 ppo_checkpoint_path: "/home/ak/open-ended/Craftax/craftax-ReMDM-planner/checkpoints/policies"
 ppo_model_type: "ppo_rnn"        # Explicitly telling it to use the RNN teacher
-ppo_init_prob: 0.5               # Start with 50% Teacher guidance since the run is so short
-ppo_decay_rate: 0.95             # Faster decay to let the student take over quickly
+dagger_beta_init: 0.5            # Start with 50% expert guidance since the run is so short
+dagger_beta_decay: 0.95          # Faster decay to let the learner take over quickly
 
 # ── Big Diffusion Architecture ──────────────────────────────────────────────
 plan_horizon: 64           # IMAGINATION DOUBLED
@@ -39,8 +39,7 @@ obs_encoder_layers: 2
 obs_encoder_width: 512
 dropout_rate: 0.1
 
-# ── GRPO & Optimisation ─────────────────────────────────────────────────────
-grpo_group_size: 4         # Lowered from 8 to 4 to save VRAM during multiverse simulation
+# ── DAgger & Optimisation ───────────────────────────────────────────────────
 lr: 3.0e-4
 max_grad_norm: 1.0
 batch_size: 256

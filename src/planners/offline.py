@@ -12,9 +12,8 @@ import optax
 import orbax.checkpoint as ocp
 import wandb
 
-from src.diffusion.sampling import sample_plan
 from src.diffusion.schedules import SCHEDULE_MAP
-from .common import make_grad_step
+from .common import make_grad_step, make_validate
 from .env import Transition, make_env
 from .model import build_model, init_params, create_train_state, make_apply_fns
 from .ppo import PPOAgent, build_ppo_network, load_ppo_params
@@ -126,54 +125,12 @@ def make_train(config: dict[str, Any]):
         obsv, env_state = env.reset(env_rng, env_params)
         init_hstate = ppo.init_hidden(num_envs)
 
-        # ------------------------------------------------------------------
-        # Validation: amortise sampling over val_replan_every env steps per plan.
-        # ------------------------------------------------------------------
-        def _validate(state, rng):
-            rng, val_rng = jax.random.split(rng)
-            val_obs, val_env_state = env.reset(val_rng, env_params)
-
-            def _val_cycle(carry, _):
-                vs, vo, rng = carry
-                rng, p_rng = jax.random.split(rng)
-                plan = sample_plan(
-                    apply_eval, state.params, p_rng, vo,
-                    num_actions, plan_horizon,
-                    num_steps=config.get("VAL_DIFFUSION_STEPS", 50),
-                    schedule_fn=schedule_fn,
-                    remask_strategy=config.get("REMASK_STRATEGY", "rescale"),
-                    eta=config.get("ETA", 0.5),
-                    use_loop=config.get("USE_LOOP", True),
-                    t_on=config.get("T_ON", 0.7),
-                    t_off=config.get("T_OFF", 0.3),
-                    temperature=config.get("TEMPERATURE", 0.5),
-                    top_p=config.get("TOP_P", 0.95),
-                )  # [num_envs, plan_horizon]
-
-                def _exec_step(inner_carry, step_i):
-                    vs_i, vo_i, r = inner_carry
-                    r, s_rng = jax.random.split(r)
-                    vo_next, vs_next, _, _, info = env.step(
-                        s_rng, vs_i, plan[:, step_i], env_params,
-                    )
-                    return (vs_next, vo_next, r), info
-
-                (vs, vo, rng), step_infos = jax.lax.scan(
-                    _exec_step, (vs, vo, rng), jnp.arange(val_replan_every),
-                )
-                return (vs, vo, rng), step_infos
-
-            _, cycle_infos = jax.lax.scan(
-                _val_cycle, (val_env_state, val_obs, rng), None, n_val_cycles,
-            )
-            # cycle_infos: {key: [n_val_cycles, val_replan_every, num_envs, ...]}
-            # Flatten to [val_steps, num_envs, ...] for episode-return aggregation.
-            infos = jax.tree.map(lambda x: x.reshape(-1, *x.shape[2:]), cycle_infos)
-            returned = infos["returned_episode"]
-            metrics = jax.tree.map(
-                lambda x: (x * returned).sum() / (returned.sum() + 1e-8), infos,
-            )
-            return {f"val/{k}": v for k, v in metrics.items()}
+        # Shared validation closure (see common.py)
+        _validate = make_validate(
+            env, env_params, apply_eval, num_actions,
+            plan_horizon, schedule_fn, config,
+            val_replan_every, n_val_cycles,
+        )
 
         # ------------------------------------------------------------------
         # Update step

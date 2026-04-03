@@ -15,8 +15,8 @@ num_minibatches: 64
 offline_checkpoint_path: null                                 # Fresh Brain
 ppo_checkpoint_path: "/home/ak/open-ended/Craftax/craftax-ReMDM-planner/checkpoints/policies"
 ppo_model_type: "ppo_rnn"
-ppo_init_prob: 0.5         # 50% Teacher guidance
-ppo_decay_rate: 0.90       # Fast decay
+dagger_beta_init: 0.5      # 50% expert guidance
+dagger_beta_decay: 0.90    # Fast decay
 
 # ── Big Diffusion Architecture (Must match Offline) ─────────────────────────
 plan_horizon: 64           
@@ -38,8 +38,7 @@ obs_encoder_layers: 2
 obs_encoder_width: 512
 dropout_rate: 0.1
 
-# ── GRPO & Optimisation ─────────────────────────────────────────────────────
-grpo_group_size: 8
+# ── DAgger & Optimisation ───────────────────────────────────────────────────
 lr: 3.0e-4
 max_grad_norm: 1.0
 batch_size: 256

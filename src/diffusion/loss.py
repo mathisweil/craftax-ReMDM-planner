@@ -47,7 +47,7 @@ def compute_loss(
         schedule_deriv_fn: d(alpha)/dt (analytic).
         sigma_t:           Remasking correction for ELBO weight (0 = standard MDLM).
         label_smoothing:   Smoothing epsilon (0 = exact ELBO targets).
-        advantages:        Optional [B] advantage weights (GRPO).
+        advantages:        Optional [B] per-sample weights.
         t_min:             Lower bound for uniform t sampling (default: _EPS).
         t_max:             Upper bound for uniform t sampling (default: 1.0).
 

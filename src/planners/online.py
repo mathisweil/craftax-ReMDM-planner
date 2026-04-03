@@ -1,47 +1,93 @@
-"""Online DAgger training: roll out learner, label with expert, aggregate, update."""
+"""Online DAgger training: roll out learner, label with expert, aggregate, update.
+
+Implements Algorithm 3.1 from Ross et al. (2011) — 'A Reduction of Imitation
+Learning and Structured Prediction to No-Regret Online Learning'.
+
+Each DAgger iteration:
+  1. Roll out the mixed policy (beta * expert + (1-beta) * learner).
+  2. At every visited state, query the expert for target actions.
+  3. Aggregate (obs, expert_plan) pairs into a growing replay buffer.
+  4. Train the diffusion model on the full buffer with BC loss (MDLM ELBO).
+  beta decays exponentially so the learner's own policy dominates rollouts.
+"""
 
 from __future__ import annotations
 
 import os
 import time
-from typing import Any, Optional
+from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
+import optax
 import orbax.checkpoint as ocp
 import wandb
 
 from src.diffusion.sampling import sample_plan
 from src.diffusion.schedules import SCHEDULE_MAP
 
-from .common import make_grad_step
+from .common import make_grad_step, make_validate
 from .env import make_env
-from .model import build_model, init_params, load_checkpoint, create_train_state, make_apply_fns
+from .model import (
+    build_model,
+    init_params,
+    load_checkpoint,
+    create_train_state,
+    make_apply_fns,
+)
 from .ppo import PPOAgent, load_ppo_agent
-
 from .logging import make_wandb_callback
+
+
+# ---------------------------------------------------------------------------
+# Scan carry
+# ---------------------------------------------------------------------------
+
+
+class DAggerCarry(NamedTuple):
+    """Carry state for the outer DAgger update scan."""
+
+    train_state: Any
+    env_state: Any
+    obs: jnp.ndarray          # [E, obs_dim]
+    rng: jax.Array
+    step_idx: int
+    ppo_hs: Any               # [E, layer_size] or None (non-RNN)
+    prev_done: jnp.ndarray    # [E] bool
+    buf_obs: jnp.ndarray      # [max_buf, obs_dim]
+    buf_plans: jnp.ndarray    # [max_buf, plan_horizon] int32
+    buf_valid: jnp.ndarray    # [max_buf] float32
+    buf_write_idx: int
+    buf_fill: int
+    best_params: Any           # copy of params with highest val return
+    best_val_return: jnp.ndarray  # scalar, -inf initially
 
 
 # ---------------------------------------------------------------------------
 # make_train_dagger
 # ---------------------------------------------------------------------------
 
+
 def make_train_dagger(config: dict[str, Any]):
     """Build the DAgger train closure.
 
-    Each update:
-      1. Roll out the current diffusion policy (mixed with expert via β).
-      2. At every visited state, query the expert for target actions.
-      3. Train the diffusion model on (state, expert_action) pairs with BC loss.
-      β decays over updates so the learner's own policy dominates rollouts.
+    All environment construction, model instantiation, and static
+    pre-computation happen here (outside the returned ``train`` closure) so
+    they are not repeated across ``jax.vmap`` replicas or JIT retraces.
+
+    Args:
+        config: Upper-cased hyperparameter dict (see ``configs/defaults.yaml``).
+
+    Returns:
+        A ``train(rng) -> dict`` closure that is safe to JIT and vmap.
     """
     num_envs = config["NUM_ENVS"]
     plan_horizon = config["PLAN_HORIZON"]
-    replan_every = config["REPLAN_EVERY"]
     num_updates = config["NUM_UPDATES"]
     update_epochs = config["UPDATE_EPOCHS"]
     num_minibatches = config["NUM_MINIBATCHES"]
     diffusion_steps = config["DIFFUSION_STEPS"]
+    num_steps = config["NUM_STEPS"]
 
     # Validation config
     val_interval = config.get("VAL_INTERVAL", 50)
@@ -60,10 +106,13 @@ def make_train_dagger(config: dict[str, Any]):
         "DAgger requires an expert policy; set PPO_CHECKPOINT_PATH."
     )
     ppo: PPOAgent = load_ppo_agent(
-        config["PPO_CHECKPOINT_PATH"], num_actions, obs_dim,
+        config["PPO_CHECKPOINT_PATH"],
+        num_actions,
+        obs_dim,
         config.get("LAYER_SIZE", 512),
         config.get("PPO_MODEL_TYPE", "ppo_rnn"),
-        config, num_envs=num_envs,
+        config,
+        num_envs=num_envs,
     )
 
     # Schedule -------------------------------------------------------------
@@ -73,8 +122,12 @@ def make_train_dagger(config: dict[str, Any]):
     model = build_model(config, num_actions)
     apply_eval, apply_train = make_apply_fns(model)
     grad_step = make_grad_step(
-        apply_train, num_actions, schedule_fn, schedule_deriv_fn,
-        config.get("TRAIN_SIGMA", 0.0), config.get("LABEL_SMOOTHING", 0.0),
+        apply_train,
+        num_actions,
+        schedule_fn,
+        schedule_deriv_fn,
+        config.get("TRAIN_SIGMA", 0.0),
+        config.get("LABEL_SMOOTHING", 0.0),
     )
 
     # Pretrained checkpoint ------------------------------------------------
@@ -82,112 +135,154 @@ def make_train_dagger(config: dict[str, Any]):
     if config.get("OFFLINE_CHECKPOINT_PATH"):
         _tmp_rng = jax.random.PRNGKey(0)
         pretrained_params = load_checkpoint(
-            model, _tmp_rng, obs_dim, plan_horizon,
+            model,
+            _tmp_rng,
+            obs_dim,
+            plan_horizon,
             config["OFFLINE_CHECKPOINT_PATH"],
         )
 
-    # Samples per update
-    n_cycles = config["NUM_STEPS"] // replan_every
-    total_samples = n_cycles * num_envs
+    # B3: each cycle runs plan_horizon steps — full expert plan, no padding.
+    assert num_steps % plan_horizon == 0, (
+        f"NUM_STEPS ({num_steps}) must be divisible by"
+        f" PLAN_HORIZON ({plan_horizon})"
+    )
+    n_cycles = num_steps // plan_horizon
+    samples_per_update = n_cycles * num_envs
+
+    # Training batch size per epoch (sampled from the replay buffer).
+    total_samples = samples_per_update
     assert total_samples % num_minibatches == 0, (
-        f"{total_samples} samples not divisible by {num_minibatches} minibatches"
+        f"{total_samples} samples not divisible by"
+        f" {num_minibatches} minibatches"
     )
 
-    # β schedule: probability of using expert for rollout actions
+    # B1: circular replay buffer sizing.
+    # Theoretical max = num_updates * samples_per_update; cap to stay in
+    # GPU memory.  Each sample stores obs (float32) + plan (int32) + valid.
+    max_buffer_size = min(
+        num_updates * samples_per_update,
+        config.get("DAGGER_BUFFER_MAX", 100_000),
+    )
+    assert samples_per_update <= max_buffer_size, (
+        f"samples_per_update ({samples_per_update}) exceeds"
+        f" max_buffer_size ({max_buffer_size})"
+    )
+
+    # Beta schedule: probability of using expert for rollout actions.
+    # beta_i = beta_init * beta_decay^i  ->  0 as i -> inf.
     beta_init = config.get("DAGGER_BETA_INIT", 1.0)
     beta_decay = config.get("DAGGER_BETA_DECAY", 0.95)
 
-    # Wandb ----------------------------------------------------------------
+    # I8: cosine LR schedule matching offline training.
+    total_grad_steps = num_updates * update_epochs * num_minibatches
+    warmup_steps = config.get("LR_WARMUP_STEPS", 0)
+    lr_schedule = (
+        optax.warmup_cosine_decay_schedule(
+            init_value=0.0,
+            peak_value=config["LR"],
+            warmup_steps=warmup_steps,
+            decay_steps=total_grad_steps,
+            end_value=config["LR"] * 0.1,
+        )
+        if warmup_steps > 0
+        else optax.cosine_decay_schedule(
+            init_value=config["LR"],
+            decay_steps=total_grad_steps,
+            alpha=0.1,
+        )
+    )
+
+    # W&B ------------------------------------------------------------------
     _wandb_log = (
         make_wandb_callback(
             config,
-            steps_per_update=num_envs * config["NUM_STEPS"],
+            steps_per_update=num_envs * num_steps,
             val_interval=val_interval,
             is_online=True,
         )
-        if config.get("USE_WANDB") else None
+        if config.get("USE_WANDB")
+        else None
     )
 
+    # ------------------------------------------------------------------
+    # Train closure
+    # ------------------------------------------------------------------
+
     def train(rng: jax.Array) -> dict[str, Any]:
+        """JIT/vmap-compatible DAgger training loop.
+
+        Args:
+            rng: JAX PRNG key (one per vmap replica).
+
+        Returns:
+            Dict with ``runner_state`` (final DAggerCarry) and ``metrics``.
+        """
         rng, init_rng, env_rng = jax.random.split(rng, 3)
 
         if pretrained_params is not None:
             params = pretrained_params
         else:
             params = init_params(model, init_rng, obs_dim, plan_horizon)
-        state = create_train_state(model, params, config["LR"], config["MAX_GRAD_NORM"])
+        state = create_train_state(
+            model, params, lr_schedule, config["MAX_GRAD_NORM"],
+        )
 
         obs, env_state = env.reset(env_rng, env_params)
-        init_ppo_hstate = ppo.init_hidden(num_envs)
 
-        # --------------------------------------------------------------
-        # Validation (matches train.py)
-        # --------------------------------------------------------------
-        def _validate(state, rng):
-            rng, val_rng = jax.random.split(rng)
-            val_obs, val_env_state = env.reset(val_rng, env_params)
+        # Pre-allocate DAgger replay buffer
+        buf_obs = jnp.zeros((max_buffer_size, obs_dim))
+        buf_plans = jnp.zeros(
+            (max_buffer_size, plan_horizon), dtype=jnp.int32,
+        )
+        buf_valid = jnp.zeros(max_buffer_size)
 
-            def _val_cycle(carry, _):
-                vs, vo, rng = carry
-                rng, p_rng = jax.random.split(rng)
-                plan = sample_plan(
-                    apply_eval, state.params, p_rng, vo,
-                    num_actions, plan_horizon,
-                    num_steps=config.get("VAL_DIFFUSION_STEPS", 50),
-                    schedule_fn=schedule_fn,
-                    remask_strategy=config.get("REMASK_STRATEGY", "rescale"),
-                    eta=config.get("ETA", 0.5),
-                    use_loop=config.get("USE_LOOP", True),
-                    t_on=config.get("T_ON", 0.7),
-                    t_off=config.get("T_OFF", 0.3),
-                    temperature=config.get("TEMPERATURE", 0.5),
-                    top_p=config.get("TOP_P", 0.95),
-                )  # [num_envs, plan_horizon]
+        # Shared validation closure (see common.py)
+        _validate = make_validate(
+            env, env_params, apply_eval, num_actions,
+            plan_horizon, schedule_fn, config,
+            val_replan_every, n_val_cycles,
+        )
 
-                def _exec_step(inner_carry, step_i):
-                    vs_i, vo_i, r = inner_carry
-                    r, s_rng = jax.random.split(r)
-                    vo_next, vs_next, _, _, info = env.step(
-                        s_rng, vs_i, plan[:, step_i], env_params,
-                    )
-                    return (vs_next, vo_next, r), info
+        # ----------------------------------------------------------
+        # _update_step  (one DAgger iteration)
+        # ----------------------------------------------------------
+        def _update_step(carry: DAggerCarry, _):
+            (
+                state,
+                env_state,
+                obs,
+                rng,
+                step_idx,
+                ppo_hs,
+                prev_done,
+                buf_obs,
+                buf_plans,
+                buf_valid,
+                buf_write_idx,
+                buf_fill,
+                best_params,
+                best_val_return,
+            ) = carry
 
-                (vs, vo, rng), step_infos = jax.lax.scan(
-                    _exec_step, (vs, vo, rng), jnp.arange(val_replan_every),
-                )
-                return (vs, vo, rng), step_infos
-
-            _, cycle_infos = jax.lax.scan(
-                _val_cycle, (val_env_state, val_obs, rng), None, n_val_cycles,
-            )
-            # cycle_infos: {key: [n_val_cycles, val_replan_every, num_envs, ...]}
-            infos = jax.tree.map(lambda x: x.reshape(-1, *x.shape[2:]), cycle_infos)
-            returned = infos["returned_episode"]
-            metrics = jax.tree.map(
-                lambda x: (x * returned).sum() / (returned.sum() + 1e-8), infos,
-            )
-            return {f"val/{k}": v for k, v in metrics.items()}
-
-        # --------------------------------------------------------------
-        # _update_step
-        # --------------------------------------------------------------
-        def _update_step(runner, _):
-            state, env_state, obs, rng, step_idx = runner
-
-            # β decays each update: expert → learner
+            # Beta decays each update: expert -> learner
             beta = beta_init * jnp.power(beta_decay, step_idx)
 
-            ppo_hs = init_ppo_hstate
-
-            # --- Roll out with mixed policy, collect expert labels -----
-            def _plan_and_execute(carry, _):
-                es, cur_obs, rng, ppo_hs = carry
+            # --- Roll out with mixed policy, collect expert labels -
+            def _plan_and_execute(outer_carry, _):
+                es, cur_obs, rng, hs, p_done = outer_carry
                 rng, plan_rng, sim_rng = jax.random.split(rng, 3)
 
-                # Sample a plan from the current diffusion policy
+                # Learner plan from the current diffusion policy
                 learner_plan = sample_plan(
-                    apply_eval, state.params, plan_rng, cur_obs,
-                    num_actions, plan_horizon, diffusion_steps, schedule_fn,
+                    apply_eval,
+                    state.params,
+                    plan_rng,
+                    cur_obs,
+                    num_actions,
+                    plan_horizon,
+                    diffusion_steps,
+                    schedule_fn,
                     config.get("REMASK_STRATEGY", "rescale"),
                     config.get("ETA", 0.5),
                     config.get("USE_LOOP", True),
@@ -197,107 +292,177 @@ def make_train_dagger(config: dict[str, Any]):
                     config.get("TOP_P", 0.95),
                 )  # [E, H]
 
-                # Simulate replan_every steps, collecting expert labels
-                def _sim_step(c, step_i):
-                    st, o, r, hs = c
-                    r, s_rng, mix_rng, ppo_rng = jax.random.split(r, 4)
+                # Observation at cycle start (training target pair)
+                cycle_start_obs = cur_obs  # [E, obs_dim]
 
-                    # Expert action
-                    pi, new_hs = ppo.get_pi(
-                        o, jnp.zeros(num_envs, dtype=bool), hs,
+                # B3: simulate plan_horizon steps, collecting expert
+                # labels at every visited state.
+                def _sim_step(c, step_i):
+                    st, o, r, hs, p_done = c
+                    r, s_rng, mix_rng, ppo_rng = jax.random.split(
+                        r, 4,
                     )
-                    expert_act = jax.random.categorical(ppo_rng, pi.logits).squeeze(0)
+
+                    # B2: expert action with correct done flag
+                    pi, new_hs = ppo.get_pi(o, p_done, hs)
+                    expert_act = jax.random.categorical(
+                        ppo_rng, pi.logits,
+                    ).squeeze(0)
 
                     # Learner action from the plan
                     learner_act = learner_plan[:, step_i]
 
-                    # Mixed execution: with prob β use expert, else learner
+                    # Mixed execution: prob beta -> expert, else learner
                     use_expert = jax.random.bernoulli(
                         mix_rng, beta, shape=(num_envs,),
                     )
-                    exec_act = jnp.where(use_expert, expert_act, learner_act)
+                    exec_act = jnp.where(
+                        use_expert, expert_act, learner_act,
+                    )
 
                     o_next, st, rew, done, info = env.step(
                         s_rng, st, exec_act, env_params,
                     )
-                    return (st, o_next, r, new_hs), (o, expert_act, rew, info)
+                    return (st, o_next, r, new_hs, done), (
+                        expert_act,
+                        rew,
+                        done,
+                        info,
+                    )
 
-                final_c, (visited_obs, expert_acts, rews, infos) = jax.lax.scan(
-                    _sim_step,
-                    (es, cur_obs, sim_rng, ppo_hs),
-                    jnp.arange(replan_every),
+                final_c, (expert_acts, rews, dones, infos) = (
+                    jax.lax.scan(
+                        _sim_step,
+                        (es, cur_obs, sim_rng, hs, p_done),
+                        jnp.arange(plan_horizon),
+                    )
+                )
+                es_next, obs_next, _, hs_next, done_next = final_c
+
+                return (es_next, obs_next, rng, hs_next, done_next), (
+                    cycle_start_obs,
+                    expert_acts,
+                    rews,
+                    dones,
+                    infos,
                 )
 
-                es_next, obs_next, rng_next, ppo_hs_next = final_c
-
-                return (es_next, obs_next, rng_next, ppo_hs_next), (
-                    visited_obs, expert_acts, rews, infos,
+            # I7: ppo_hs and prev_done persist across cycles and
+            # updates via the scan carry.
+            (env_state, obs, rng, ppo_hs, prev_done), traj = (
+                jax.lax.scan(
+                    _plan_and_execute,
+                    (env_state, obs, rng, ppo_hs, prev_done),
+                    None,
+                    n_cycles,
                 )
-
-            (env_state, obs, rng, _ppo_hs), traj = jax.lax.scan(
-                _plan_and_execute,
-                (env_state, obs, rng, ppo_hs),
-                None,
-                n_cycles,
             )
-            traj_obs, traj_expert_acts, traj_rew, all_infos = traj
+            # traj_obs:         [C, E, obs_dim]
+            # traj_expert_acts: [C, H, E]
+            # traj_dones:       [C, H, E]
+            (
+                traj_obs,
+                traj_expert_acts,
+                traj_rew,
+                traj_dones,
+                all_infos,
+            ) = traj
 
-            # Build expert plan targets
-            expert_plans = jnp.transpose(traj_expert_acts, (0, 2, 1))  # [C, E, steps]
-            if replan_every < plan_horizon:
-                pad_width = plan_horizon - replan_every
-                last_act = expert_plans[:, :, -1:]
-                padding = jnp.broadcast_to(last_act, (n_cycles, num_envs, pad_width))
-                expert_plans = jnp.concatenate([expert_plans, padding], axis=-1)
+            # B3: expert plans are already full plan_horizon length
+            expert_plans = jnp.transpose(
+                traj_expert_acts, (0, 2, 1),
+            )  # [C, E, H]
 
-            cycle_obs = traj_obs[:, 0, :, :]
+            # B4: mark samples invalid if any done occurs in window
+            cycle_valid = ~jnp.any(traj_dones, axis=1)  # [C, E]
 
-            flat_obs = cycle_obs.reshape(-1, obs_dim)
+            flat_obs = traj_obs.reshape(-1, obs_dim)
             flat_plans = expert_plans.reshape(-1, plan_horizon)
-            flat_valid = jnp.ones(flat_obs.shape[0])
+            flat_valid = cycle_valid.reshape(-1).astype(jnp.float32)
 
-            dataset = (flat_obs, flat_plans, flat_valid)
+            # B1: write new samples into circular replay buffer
+            write_indices = (
+                buf_write_idx + jnp.arange(samples_per_update)
+            ) % max_buffer_size
+            buf_obs = buf_obs.at[write_indices].set(flat_obs)
+            buf_plans = buf_plans.at[write_indices].set(flat_plans)
+            buf_valid = buf_valid.at[write_indices].set(flat_valid)
+            buf_write_idx = (
+                buf_write_idx + samples_per_update
+            ) % max_buffer_size
+            buf_fill = jnp.minimum(
+                buf_fill + samples_per_update, max_buffer_size,
+            )
 
+            # B1: sample training batch from the full buffer
+            rng, sample_rng = jax.random.split(rng)
+            buf_indices = jax.random.randint(
+                sample_rng, (total_samples,), 0, buf_fill,
+            )
+            dataset = (
+                buf_obs[buf_indices],
+                buf_plans[buf_indices],
+                buf_valid[buf_indices],
+            )
+
+            # --- Minibatch SGD over update_epochs epochs ----------
             def _epoch(epoch_state, _):
                 state, ds, rng = epoch_state
                 rng, perm_rng = jax.random.split(rng)
                 perm = jax.random.permutation(perm_rng, total_samples)
-                shuffled = jax.tree.map(lambda x: jnp.take(x, perm, axis=0), ds)
+                shuffled = jax.tree.map(
+                    lambda x: jnp.take(x, perm, axis=0), ds,
+                )
                 batches = jax.tree.map(
-                    lambda x: x.reshape(num_minibatches, -1, *x.shape[1:]),
+                    lambda x: x.reshape(
+                        num_minibatches, -1, *x.shape[1:],
+                    ),
                     shuffled,
                 )
 
-                def _mb(carry, batch):
-                    st, rng = carry
+                def _mb(mb_carry, batch):
+                    st, rng = mb_carry
                     rng, loss_rng = jax.random.split(rng)
                     obs_b, act_b, val_b = batch
                     adv_b = jnp.ones(act_b.shape[0])
-                    st, metrics = grad_step(st, act_b, obs_b, val_b, loss_rng, advantages=adv_b)
+                    st, metrics = grad_step(
+                        st,
+                        act_b,
+                        obs_b,
+                        val_b,
+                        loss_rng,
+                        advantages=adv_b,
+                    )
                     return (st, rng), metrics
 
-                (state, rng), metrics = jax.lax.scan(_mb, (state, rng), batches)
+                (state, rng), metrics = jax.lax.scan(
+                    _mb, (state, rng), batches,
+                )
                 return (state, ds, rng), metrics
 
             (state, _, rng), loss_info = jax.lax.scan(
                 _epoch, (state, dataset, rng), None, update_epochs,
             )
 
-            # Metrics
+            # --- Metrics ------------------------------------------
             metric = jax.tree.map(jnp.mean, loss_info)
             returned = all_infos["returned_episode"]
             env_metrics = jax.tree.map(
-                lambda x: (x * returned).sum() / (returned.sum() + 1e-8),
+                lambda x: (x * returned).sum()
+                / (returned.sum() + 1e-8),
                 all_infos,
             )
             metric.update(env_metrics)
             metric["beta"] = beta
             metric["reward_mean"] = jnp.mean(traj_rew)
+            metric["buffer_fill"] = buf_fill.astype(jnp.float32)
+            metric["valid_frac"] = jnp.mean(flat_valid)
 
-            # --- Periodic validation ---
+            # --- Periodic validation ------------------------------
             rng, val_rng = jax.random.split(rng)
             dummy = jax.tree.map(
-                jnp.zeros_like, {f"val/{k}": v for k, v in env_metrics.items()},
+                jnp.zeros_like,
+                {f"val/{k}": v for k, v in env_metrics.items()},
             )
             val_metrics = jax.lax.cond(
                 step_idx % val_interval == 0,
@@ -306,19 +471,70 @@ def make_train_dagger(config: dict[str, Any]):
             )
             metric.update(val_metrics)
 
+            # Best-model tracking: update when validation improves.
+            val_ret = val_metrics.get(
+                "val/returned_episode_returns",
+                jnp.array(-jnp.inf),
+            )
+            is_val_step = step_idx % val_interval == 0
+            improved = is_val_step & (val_ret > best_val_return)
+            best_params = jax.tree.map(
+                lambda b, c: jnp.where(improved, c, b),
+                best_params,
+                state.params,
+            )
+            best_val_return = jnp.where(
+                improved, val_ret, best_val_return,
+            )
+            metric["best_val_return"] = best_val_return
+
             if _wandb_log is not None:
                 jax.debug.callback(_wandb_log, metric, step_idx)
 
-            runner = (state, env_state, obs, rng, step_idx + 1)
-            return runner, metric
+            new_carry = DAggerCarry(
+                train_state=state,
+                env_state=env_state,
+                obs=obs,
+                rng=rng,
+                step_idx=step_idx + 1,
+                ppo_hs=ppo_hs,
+                prev_done=prev_done,
+                buf_obs=buf_obs,
+                buf_plans=buf_plans,
+                buf_valid=buf_valid,
+                buf_write_idx=buf_write_idx,
+                buf_fill=buf_fill,
+                best_params=best_params,
+                best_val_return=best_val_return,
+            )
+            return new_carry, metric
 
-        # Outer scan
+        # --- Outer scan -------------------------------------------
         rng, run_rng = jax.random.split(rng)
-        runner_init = (state, env_state, obs, run_rng, 0)
+        runner_init = DAggerCarry(
+            train_state=state,
+            env_state=env_state,
+            obs=obs,
+            rng=run_rng,
+            step_idx=0,
+            ppo_hs=ppo.init_hidden(num_envs),
+            prev_done=jnp.zeros(num_envs, dtype=bool),
+            buf_obs=buf_obs,
+            buf_plans=buf_plans,
+            buf_valid=buf_valid,
+            buf_write_idx=jnp.int32(0),
+            buf_fill=jnp.int32(0),
+            best_params=params,
+            best_val_return=jnp.array(-jnp.inf),
+        )
         runner_final, metrics = jax.lax.scan(
             _update_step, runner_init, None, num_updates,
         )
-        return {"runner_state": runner_final, "metrics": metrics}
+        return {
+            "runner_state": runner_final,
+            "metrics": metrics,
+            "best_params": runner_final.best_params,
+        }
 
     return train
 
@@ -327,7 +543,13 @@ def make_train_dagger(config: dict[str, Any]):
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def run_online(config: dict[str, Any]) -> None:
+    """Configure, compile, and run DAgger online training.
+
+    Args:
+        config: Mixed-case hyperparameter dict from ``defaults.yaml`` / CLI.
+    """
     config = {k.upper(): v for k, v in config.items()}
 
     if config.get("USE_WANDB"):
@@ -346,21 +568,25 @@ def run_online(config: dict[str, Any]) -> None:
     out = train_fn(rngs)
     elapsed = time.time() - t0
 
-    total_frames = config["NUM_UPDATES"] * config["NUM_ENVS"] * config["NUM_STEPS"]
+    total_frames = (
+        config["NUM_UPDATES"] * config["NUM_ENVS"] * config["NUM_STEPS"]
+    )
     print(f"Time: {elapsed:.1f}s  SPS: {total_frames / elapsed:.0f}")
 
     if config.get("USE_WANDB") and config.get("SAVE_POLICY"):
-        train_states = out["runner_state"][0]
+        # Final checkpoint (last iteration params)
+        train_states = out["runner_state"].train_state
         train_state = jax.tree.map(lambda x: x[0], train_states)
         path = os.path.join(wandb.run.dir, "policies")
         with ocp.CheckpointManager(
-            path, options=ocp.CheckpointManagerOptions(max_to_keep=1),
+            path,
+            options=ocp.CheckpointManagerOptions(max_to_keep=1),
         ) as mgr:
             mgr.save(
                 int(config["NUM_UPDATES"]),
                 args=ocp.args.StandardSave(train_state),
             )
-        print(f"Saved policy to {path}")
+        print(f"Saved final policy to {path}")
 
         artifact = wandb.Artifact(
             name=f"{config['ENV_NAME']}-policy",
@@ -370,4 +596,24 @@ def run_online(config: dict[str, Any]) -> None:
         artifact.add_dir(path)
         wandb.log_artifact(artifact)
 
-        print("Uploaded policy artifact to wandb")
+        # Best checkpoint (highest validation return)
+        best_params = jax.tree.map(
+            lambda x: x[0], out["best_params"],
+        )
+        best_path = os.path.join(wandb.run.dir, "policies_best")
+        with ocp.CheckpointManager(
+            best_path,
+            options=ocp.CheckpointManagerOptions(max_to_keep=1),
+        ) as mgr:
+            mgr.save(0, args=ocp.args.StandardSave(best_params))
+        print(f"Saved best policy to {best_path}")
+
+        best_artifact = wandb.Artifact(
+            name=f"{config['ENV_NAME']}-policy-best",
+            type="model",
+            metadata=config,
+        )
+        best_artifact.add_dir(best_path)
+        wandb.log_artifact(best_artifact)
+
+        print("Uploaded final + best policy artifacts to wandb")

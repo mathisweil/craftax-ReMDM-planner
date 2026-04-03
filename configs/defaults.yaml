@@ -53,12 +53,12 @@ val_diffusion_steps: 50
 val_replan_every: 4                 # env steps executed per diffusion plan during validation
 val_steps: 128                      # total env steps per validation rollout
 
-# ── Online GRPO training (--mode online) ─────────────────────────────────────
+# ── Online DAgger training (--mode online) ───────────────────────────────────
 num_updates: 1000
-replan_every: 4
-grpo_group_size: 4
-ppo_init_prob: 0.1
-ppo_decay_rate: 0.99
+replan_every: 4                     # env steps per diffusion plan during validation
+dagger_beta_init: 1.0              # initial expert mixing probability beta_1
+dagger_beta_decay: 0.95            # exponential decay: beta_i = beta_1 * decay^i
+dagger_buffer_max: 100000          # max samples in DAgger replay buffer (circular eviction)
 
 # ── Data collection (--mode collect) ─────────────────────────────────────────
 collect_num_steps: 10000000
