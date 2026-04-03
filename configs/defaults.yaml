@@ -73,6 +73,8 @@ diffusion_steps_eval: 10
 
 # ── Checkpointing ───────────────────────────────────────────────────────────
 checkpoint_dir: "checkpoints_online"
+checkpoint_interval: 500              # save a checkpoint every N update steps (not yet consumed by code)
+max_checkpoints: 3                    # maximum number of periodic checkpoints to retain
 save_policy: true
 
 # ── Logging ──────────────────────────────────────────────────────────────────
