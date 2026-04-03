@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="$USER_HOME$/miniforge3/envs/craftax" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="$USER_HOME$/miniforge3/envs/craftax" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="uv (craftax-ReMDM-planner)" project-jdk-type="Python SDK" />
 </project>
