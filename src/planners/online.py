@@ -555,6 +555,7 @@ def run_online(config: dict[str, Any]) -> None:
     if config.get("USE_WANDB"):
         wandb.init(
             project=config.get("WANDB_PROJECT", "remdm-craftax"),
+            entity=config.get("WANDB_ENTITY"),
             config=config,
             name=f"DAgger-{config['ENV_NAME']}",
         )

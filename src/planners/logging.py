@@ -54,6 +54,7 @@ _DAGGER_KEYS: tuple[str, ...] = (
     "reward_mean",
     "buffer_fill",
     "valid_frac",
+    "best_val_return",
 )
 
 

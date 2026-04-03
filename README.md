@@ -415,7 +415,7 @@ craftax-ReMDM-planner/
 
 ## Implementation Notes
 
-**JAX functional purity**: training closures (`make_train`, `make_train_online`) are fully JIT-compatible. Environment construction and checkpoint I/O happen outside `jax.jit`.
+**JAX functional purity**: training closures (`make_train`, `make_train_dagger`) are fully JIT-compatible. Environment construction and checkpoint I/O happen outside `jax.jit`.
 
 **Offline training**: `--mode offline` rolls out the PPO agent live at each update step via `make_train`. Use `--mode collect` to save a trajectory `.npz` for inspection or analysis; re-feeding it to `--mode offline` is not supported — pass `--ppo_checkpoint_path` instead.
 
