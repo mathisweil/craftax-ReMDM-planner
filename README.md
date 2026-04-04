@@ -194,6 +194,54 @@ python main.py --mode offline \
 
 Control the download location with `--wandb_download_dir` (defaults to `./artifacts/`).
 
+### Resuming a Training Run
+
+A completed training checkpoint can be used as the starting point for a new run that continues where the previous one left off. This is useful when extending the training budget or when a preempted job needs to be restarted.
+
+**Offline resume:**
+
+```bash
+# Auto-detect step and wandb run ID from checkpoint metadata
+python main.py --mode offline \
+    --ppo_checkpoint_path /path/to/ppo_checkpoint \
+    --resume_checkpoint_path /path/to/completed_offline_checkpoint \
+    --total_timesteps 200000000 \
+    --save_policy
+
+# Explicit step and wandb run ID override
+python main.py --mode offline \
+    --ppo_checkpoint_path /path/to/ppo_checkpoint \
+    --resume_checkpoint_path /path/to/completed_offline_checkpoint \
+    --resume_step 1525 \
+    --resume_wandb_run_id abc123xyz \
+    --total_timesteps 200000000 \
+    --save_policy
+
+# Resume from a W&B artifact
+python main.py --mode offline \
+    --ppo_checkpoint_path /path/to/ppo_checkpoint \
+    --resume_checkpoint_path wandb:my-team/remdm-craftax/policy:latest \
+    --total_timesteps 200000000 \
+    --save_policy
+```
+
+**Online resume:**
+
+```bash
+python main.py --mode online \
+    --ppo_checkpoint_path /path/to/ppo_checkpoint \
+    --resume_checkpoint_path /path/to/completed_online_checkpoint \
+    --num_updates 2000 \
+    --save_policy
+```
+
+**Notes:**
+- The DAgger replay buffer is **not** persisted across resumes. It starts empty and refills within the first few iterations.
+- JIT compilation is fully preserved. Resume only affects initialisation outside `jax.jit` (loading checkpoint, setting the optimizer step counter, adjusting scan length).
+- The cosine LR schedule is constructed for the full `num_updates` range. The optimizer step counter is set to the resume offset so the learning rate picks up exactly where the previous run stopped.
+- When `resume_checkpoint_path` points to a checkpoint with a metadata sidecar, `resume_step` and `resume_wandb_run_id` are auto-detected. Explicit CLI flags override the metadata values.
+- Checkpoints without a metadata sidecar (created before this feature) still load; provide `--resume_step` explicitly.
+
 
 ---
 
@@ -315,6 +363,14 @@ Preset configs for larger runs are provided in `configs/`:
 | `checkpoint_interval` | 500 | Save a checkpoint every N update steps |
 | `max_checkpoints` | 3 | Maximum number of checkpoints to retain |
 | `save_policy` | `true` | Save final checkpoint at end of training |
+
+**Resume**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `resume_checkpoint_path` | `null` | Path to a completed checkpoint to resume from (accepts `wandb:` refs) |
+| `resume_wandb_run_id` | `null` | W&B run ID to resume logging into (auto-read from checkpoint metadata) |
+| `resume_step` | `null` | Update step the checkpoint was saved at (auto-read from checkpoint metadata) |
 
 **Logging**
 

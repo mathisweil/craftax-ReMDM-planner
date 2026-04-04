@@ -27,6 +27,36 @@ from typing import Any
 import wandb
 
 
+def init_wandb(
+    config: dict[str, Any],
+    name: str,
+    *,
+    resume_run_id: str | None = None,
+) -> None:
+    """Initialise a W&B run, optionally resuming an existing one.
+
+    Args:
+        config:        Training config dict (used for ``project``, ``entity``,
+                       and logged as run config).
+        name:          Human-readable run name.
+        resume_run_id: If provided, attaches to an existing W&B run via
+                       ``wandb.init(id=..., resume="must")``.  The run must
+                       already exist.
+    """
+    kwargs: dict[str, Any] = {
+        "project": config.get("WANDB_PROJECT", "remdm-craftax"),
+        "entity": config.get("WANDB_ENTITY"),
+        "config": config,
+    }
+    if resume_run_id is not None:
+        kwargs["id"] = resume_run_id
+        kwargs["resume"] = "must"
+    else:
+        kwargs["name"] = name
+
+    wandb.init(**kwargs)
+
+
 # Keys emitted by ``src.diffusion.loss.compute_loss`` info dict.
 _DIFFUSION_KEYS: tuple[str, ...] = (
     "loss",

@@ -11,7 +11,7 @@ import numpy as np
 import yaml
 
 from src.planners.collect import run_collect
-from src.planners.model import resolve_checkpoint_path
+from src.planners.model import load_checkpoint_metadata, resolve_checkpoint_path
 from src.planners.offline import run_offline_diffusion
 from src.planners.online import run_online
 from src.planners.inference import run_inference
@@ -118,6 +118,11 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
     p.add_argument("--checkpoint_interval", type=int, default=None)
     p.add_argument("--max_checkpoints", type=int, default=None)
 
+    # Resume
+    p.add_argument("--resume_checkpoint_path", type=str, default=None)
+    p.add_argument("--resume_wandb_run_id", type=str, default=None)
+    p.add_argument("--resume_step", type=int, default=None)
+
     # Logging
     p.add_argument("--use_wandb", action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--wandb_project", type=str, default=None)
@@ -165,6 +170,7 @@ _CHECKPOINT_PATH_KEYS = (
     "CHECKPOINT_PATH",
     "OFFLINE_CHECKPOINT_PATH",
     "PPO_CHECKPOINT_PATH",
+    "RESUME_CHECKPOINT_PATH",
 )
 
 
@@ -178,10 +184,87 @@ def _resolve_wandb_paths(config: dict[str, Any]) -> None:
 
 
 # =============================================================================
+# Resume resolution
+# =============================================================================
+
+def _resolve_resume(config: dict[str, Any]) -> None:
+    """Read checkpoint metadata sidecar and fill missing resume params.
+
+    Modifies *config* in-place.  If ``RESUME_CHECKPOINT_PATH`` is not set
+    this is a no-op.
+
+    Args:
+        config: Upper-cased config dict.
+
+    Raises:
+        ValueError: If ``resume_step`` cannot be determined or is invalid.
+    """
+    resume_path = config.get("RESUME_CHECKPOINT_PATH")
+    if not resume_path:
+        return
+
+    mode = config["MODE"]
+    if mode not in {"offline", "online"}:
+        raise ValueError(
+            f"--resume_checkpoint_path is only supported for offline/online "
+            f"modes, got '{mode}'"
+        )
+
+    # Attempt to read metadata sidecar for auto-population.
+    metadata = load_checkpoint_metadata(resume_path)
+
+    if config.get("RESUME_STEP") is None and metadata is not None:
+        config["RESUME_STEP"] = metadata["update_step"]
+        print(f"Auto-detected resume_step={config['RESUME_STEP']} from checkpoint metadata")
+
+    if config.get("RESUME_WANDB_RUN_ID") is None and metadata is not None:
+        wandb_id = metadata.get("wandb_run_id")
+        if wandb_id:
+            config["RESUME_WANDB_RUN_ID"] = wandb_id
+            print(f"Auto-detected resume_wandb_run_id={wandb_id} from checkpoint metadata")
+
+    if config.get("RESUME_STEP") is None:
+        raise ValueError(
+            "Cannot determine resume_step: no metadata sidecar found at "
+            f"'{resume_path}'. Provide --resume_step explicitly."
+        )
+
+    resume_step = config["RESUME_STEP"]
+
+    # Validate step is in range.
+    if mode == "offline":
+        num_updates = (
+            int(config["TOTAL_TIMESTEPS"])
+            // config["NUM_STEPS"]
+            // config["NUM_ENVS"]
+        )
+        if resume_step >= num_updates:
+            raise ValueError(
+                f"resume_step ({resume_step}) >= num_updates ({num_updates}). "
+                f"Increase --total_timesteps to extend training."
+            )
+    elif mode == "online":
+        num_updates = config["NUM_UPDATES"]
+        if resume_step >= num_updates:
+            raise ValueError(
+                f"resume_step ({resume_step}) >= num_updates ({num_updates}). "
+                f"Increase --num_updates to extend training."
+            )
+
+
+# =============================================================================
 # Validation
 # =============================================================================
 
 def validate_config(config: dict[str, Any]) -> None:
+    """Validate required config keys for the selected mode.
+
+    Args:
+        config: Upper-cased config dict.
+
+    Raises:
+        ValueError: If a required key is missing.
+    """
     mode = config["MODE"]
 
     if mode in {"collect", "offline", "online"} and not config.get("PPO_CHECKPOINT_PATH"):
@@ -204,8 +287,14 @@ DISPATCH = {
 
 
 def run(config: dict[str, Any]) -> None:
+    """Resolve paths, validate, and dispatch to the selected mode.
+
+    Args:
+        config: Upper-cased config dict.
+    """
     _resolve_wandb_paths(config)
     validate_config(config)
+    _resolve_resume(config)
 
     mode = config["MODE"]
 
