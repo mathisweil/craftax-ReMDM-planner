@@ -141,7 +141,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # Checkpoints
     p.add_argument("--offline_checkpoint_path", type=str, default=None,
-                   help="Path to pretrained offline diffusion checkpoint.")
+                   help="Path to pretrained diffusion checkpoint (offline or DAgger).")
+    p.add_argument("--checkpoint_path", type=str, default=None,
+                   help="Alias for --offline_checkpoint_path (accepts any diffusion ckpt).")
     p.add_argument("--ppo_checkpoint_path", type=str, default=None,
                    help="Path to PPO checkpoint used for rollout collection.")
 
@@ -347,6 +349,16 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     # ── Training mode: load configs ────────────────────────────────────────
+
+    # Resolve --checkpoint_path alias
+    if args.checkpoint_path and args.offline_checkpoint_path:
+        parser.error(
+            "Cannot specify both --checkpoint_path and"
+            " --offline_checkpoint_path. Use one or the other."
+        )
+    if args.checkpoint_path:
+        args.offline_checkpoint_path = args.checkpoint_path
+
     main_cfg = _load_yaml(args.config)
     abl_cfg = _load_yaml(args.ablations_config)
     merged = _to_upper(_merge_configs(main_cfg, abl_cfg))
@@ -358,9 +370,21 @@ def main(argv: list[str] | None = None) -> None:
 
     # Validate required paths
     if not merged.get("OFFLINE_CHECKPOINT_PATH"):
-        parser.error("--offline_checkpoint_path is required for training mode.")
+        parser.error(
+            "--offline_checkpoint_path (or --checkpoint_path)"
+            " is required for training mode."
+        )
     if not merged.get("PPO_CHECKPOINT_PATH"):
         parser.error("--ppo_checkpoint_path is required for training mode.")
+
+    # Resolve wandb: artifact paths before any checkpoint loading
+    from src.planners.model import resolve_checkpoint_path
+
+    download_dir = merged.get("WANDB_DOWNLOAD_DIR")
+    for key in ("OFFLINE_CHECKPOINT_PATH", "PPO_CHECKPOINT_PATH"):
+        val = merged.get(key)
+        if val and isinstance(val, str) and val.startswith("wandb:"):
+            merged[key] = resolve_checkpoint_path(val, download_dir)
 
     # ── Select ablations ───────────────────────────────────────────────────
     if args.all:

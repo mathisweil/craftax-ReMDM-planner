@@ -35,12 +35,16 @@ rl_finetuning/
 
 ### Usage
 
+The pretrained diffusion checkpoint can come from either offline training (`--mode offline`) or DAgger online training (`--mode online`) — the checkpoint format is identical. Use `--checkpoint_path` (or its alias `--offline_checkpoint_path`) to point to it.
+
+Checkpoint paths accept `wandb:` prefixed artifact references (e.g., `wandb:team/project/artifact:latest`), which are downloaded automatically before training begins.
+
 **Smoke test (2 ablations, fast config):**
 ```bash
 python experiments/rl_finetuning/run_ablations.py \
     --ablations baseline_rl kl_penalty \
     --fast \
-    --offline_checkpoint_path $OFFLINE_CKPT \
+    --checkpoint_path $PRETRAINED_CKPT \
     --ppo_checkpoint_path $PPO_CKPT
 ```
 
@@ -51,7 +55,7 @@ python experiments/rl_finetuning/run_ablations.py \
     --ablations_config experiments/rl_finetuning/configs/ablations_default.yaml \
     --all \
     --num_seeds 3 \
-    --offline_checkpoint_path $OFFLINE_CKPT \
+    --checkpoint_path $PRETRAINED_CKPT \
     --ppo_checkpoint_path $PPO_CKPT \
     --use_wandb
 ```
@@ -60,8 +64,16 @@ python experiments/rl_finetuning/run_ablations.py \
 ```bash
 python experiments/rl_finetuning/run_ablations.py \
     --ablations ewc lora gradient_surgery trust_region_kl \
-    --offline_checkpoint_path $OFFLINE_CKPT \
+    --checkpoint_path $PRETRAINED_CKPT \
     --ppo_checkpoint_path $PPO_CKPT
+```
+
+**From a W&B artifact:**
+```bash
+python experiments/rl_finetuning/run_ablations.py \
+    --ablations baseline_rl \
+    --checkpoint_path wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy:latest \
+    --ppo_checkpoint_path wandb:my-team/ppo-craftax/ppo-rnn-policy:best
 ```
 
 **Re-plot from saved results (no training):**
@@ -91,7 +103,7 @@ python experiments/rl_finetuning/run_ablations.py --list
 | | `entropy_bonus` | Entropy regularisation for action diversity |
 | | `gradient_surgery` | PCGrad: project conflicting RL/BC gradients |
 | | `advantage_clip` | PPO-style advantage clipping [1-ε, 1+ε] |
-| | `normalized_adv` | Std-normalised advantages (GRPO-style) |
+| | `normalized_adv` | Std-normalised advantages |
 | | `bc_wins` | Uniform ELBO on win windows (no advantage weighting) |
 | | `low_t` | ELBO restricted to low-t (fine-detail) regime |
 | **C: Architecture** | `frozen_backbone` | Only train the output head |
