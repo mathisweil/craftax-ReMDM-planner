@@ -221,7 +221,7 @@ def main() -> None:
 
     if backend != "gpu":
         import warnings
-        warnings.warn(f"JAX is using '{backend}', not GPU. pip install jax[cuda12]")
+        warnings.warn(f"JAX is using '{backend}', not GPU. uv sync --extra cuda")
 
     config = build_config()
     run(config)
