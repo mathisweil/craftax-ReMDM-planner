@@ -113,6 +113,9 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
     p.add_argument("--eval_steps", type=lambda x: int(float(x)), default=None)
     p.add_argument("--eval_num_envs", type=int, default=None)
 
+    # Checkpointing
+    p.add_argument("--save_policy", action=argparse.BooleanOptionalAction, default=None)
+
     # Logging
     p.add_argument("--use_wandb", action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--wandb_project", type=str, default=None)
