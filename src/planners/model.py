@@ -82,7 +82,7 @@ def resolve_checkpoint_path(
         Local filesystem path to the checkpoint directory.
     """
     if not path.startswith("wandb:"):
-        return path
+        return str(Path(path).resolve())
 
     import wandb
 
