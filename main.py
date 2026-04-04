@@ -115,6 +115,8 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
 
     # Checkpointing
     p.add_argument("--save_policy", action=argparse.BooleanOptionalAction, default=None)
+    p.add_argument("--checkpoint_interval", type=int, default=None)
+    p.add_argument("--max_checkpoints", type=int, default=None)
 
     # Logging
     p.add_argument("--use_wandb", action=argparse.BooleanOptionalAction, default=None)
