@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from pathlib import Path
 from typing import Any, Callable, Union
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import optax
 import orbax.checkpoint as ocp
 from flax.training.train_state import TrainState
 
 from src.models.denoiser import DenoisingTransformer
+
+logger = logging.getLogger(__name__)
+
+_METADATA_FILENAME = "resume_metadata.json"
 
 
 def build_model(config: dict, num_actions: int) -> DenoisingTransformer:
@@ -181,3 +188,138 @@ def make_apply_fns(
         )
 
     return apply_eval, apply_train
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint metadata sidecar
+# ---------------------------------------------------------------------------
+
+
+class _NumpyEncoder(json.JSONEncoder):
+    """JSON encoder that handles numpy scalar types."""
+
+    def default(self, o: Any) -> Any:
+        """Serialize numpy scalars to native Python types.
+
+        Args:
+            o: Object to serialize.
+
+        Returns:
+            JSON-serializable object.
+        """
+        if isinstance(o, np.integer):
+            return int(o)
+        if isinstance(o, np.floating):
+            return float(o)
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+        return super().default(o)
+
+
+def save_checkpoint_metadata(
+    checkpoint_dir: str,
+    mode: str,
+    update_step: int,
+    total_gradient_steps: int,
+    wandb_run_id: str | None,
+    config: dict[str, Any],
+) -> None:
+    """Write a JSON metadata sidecar alongside an Orbax checkpoint.
+
+    Args:
+        checkpoint_dir: Root directory of the Orbax checkpoint manager.
+        mode:           Training mode (``"offline"`` or ``"online"``).
+        update_step:    Final update step index.
+        total_gradient_steps: Total gradient steps completed.
+        wandb_run_id:   Current W&B run ID, or ``None``.
+        config:         Full training config snapshot.
+    """
+    metadata = {
+        "mode": mode,
+        "update_step": int(update_step),
+        "total_gradient_steps_completed": int(total_gradient_steps),
+        "wandb_run_id": wandb_run_id,
+        "config_snapshot": config,
+    }
+    path = Path(checkpoint_dir) / _METADATA_FILENAME
+    with open(path, "w") as f:
+        json.dump(metadata, f, indent=2, cls=_NumpyEncoder)
+    print(f"Saved checkpoint metadata to {path}")
+
+
+def load_checkpoint_metadata(
+    checkpoint_dir: str,
+) -> dict[str, Any] | None:
+    """Read the JSON metadata sidecar from a checkpoint directory.
+
+    Args:
+        checkpoint_dir: Root directory of the Orbax checkpoint manager.
+
+    Returns:
+        Parsed metadata dict, or ``None`` if the sidecar does not exist
+        (backward-compatible with checkpoints created before this feature).
+    """
+    path = Path(checkpoint_dir) / _METADATA_FILENAME
+    if not path.exists():
+        return None
+    with open(path) as f:
+        return json.load(f)
+
+
+def load_checkpoint_for_resume(
+    model: DenoisingTransformer,
+    rng: jax.Array,
+    obs_dim: int,
+    plan_horizon: int,
+    path: str,
+    lr_schedule: Union[float, Callable[[int], float]],
+    max_grad_norm: float,
+) -> TrainState:
+    """Load a full ``TrainState`` (params + optimizer state) for resume.
+
+    Unlike :func:`load_checkpoint` which returns only params, this function
+    restores the complete ``TrainState`` including Adam moments so that
+    training can continue seamlessly.
+
+    The ``lr_schedule`` and ``max_grad_norm`` must match the optimizer chain
+    structure used when the checkpoint was saved (same chain composition,
+    possibly different schedule values).
+
+    Args:
+        model:         Flax module (used to build the abstract state).
+        rng:           PRNG key for dummy initialisation.
+        obs_dim:       Observation dimensionality.
+        plan_horizon:  Number of action steps in a plan.
+        path:          Path to the Orbax checkpoint directory.
+        lr_schedule:   Learning rate or schedule matching the current run's
+                       optimizer (must produce the same ``opt_state`` structure).
+        max_grad_norm: Global gradient clipping threshold.
+
+    Returns:
+        Restored ``TrainState`` with params, opt_state, and step from the
+        checkpoint.  The caller should call ``.replace(step=...)`` to set the
+        correct LR offset for the resumed run.
+
+    Raises:
+        FileNotFoundError: If the checkpoint directory contains no saved steps.
+    """
+    path = str(Path(path).resolve())
+    params = init_params(model, rng, obs_dim, plan_horizon)
+    abstract_state = create_train_state(model, params, lr_schedule, max_grad_norm)
+
+    with ocp.CheckpointManager(path) as mgr:
+        step = mgr.latest_step()
+        if step is None:
+            raise FileNotFoundError(
+                f"No checkpoint found at {path}"
+            )
+        restored_state = mgr.restore(
+            step,
+            args=ocp.args.StandardRestore(item=abstract_state),
+        )
+
+    print(
+        f"Loaded full TrainState for resume from '{path}' "
+        f"(step {step}, opt_state step {restored_state.step})"
+    )
+    return restored_state

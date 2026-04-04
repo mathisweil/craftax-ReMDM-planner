@@ -15,9 +15,16 @@ import wandb
 from src.diffusion.schedules import SCHEDULE_MAP
 from .common import make_grad_step, make_validate
 from .env import Transition, make_env
-from .model import build_model, init_params, create_train_state, make_apply_fns
+from .model import (
+    build_model,
+    init_params,
+    create_train_state,
+    load_checkpoint_for_resume,
+    make_apply_fns,
+    save_checkpoint_metadata,
+)
 from .ppo import PPOAgent, build_ppo_network, load_ppo_params
-from .logging import make_wandb_callback
+from .logging import init_wandb, make_wandb_callback
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +106,27 @@ def make_train(config: dict[str, Any]):
         )
     )
 
+    # Resume checkpoint (loaded outside JIT, captured by train closure) ------
+    resume_step = config.get("RESUME_STEP") or 0
+    resume_state = None
+    if config.get("RESUME_CHECKPOINT_PATH"):
+        resume_state = load_checkpoint_for_resume(
+            net,
+            jax.random.PRNGKey(0),
+            obs_dim,
+            plan_horizon,
+            config["RESUME_CHECKPOINT_PATH"],
+            lr_schedule,
+            config["MAX_GRAD_NORM"],
+        )
+        # Set the optimizer step counter so the LR schedule picks up at the
+        # correct position.  The schedule is indexed by gradient step, which
+        # equals update_step * update_epochs * num_minibatches.
+        target_opt_step = resume_step * config["UPDATE_EPOCHS"] * config["NUM_MINIBATCHES"]
+        resume_state = resume_state.replace(step=target_opt_step)
+
+    scan_length = config["NUM_UPDATES"] - resume_step
+
     # W&B callback — one closure shared across vmap replicas (timing is per-call).
     _wandb_log = (
         make_wandb_callback(
@@ -119,8 +147,11 @@ def make_train(config: dict[str, Any]):
             Dict with ``runner_state`` (final scan carry) and ``metrics`` (all update metrics).
         """
         rng, init_rng, env_rng = jax.random.split(rng, 3)
-        params = init_params(net, init_rng, obs_dim, plan_horizon)
-        state = create_train_state(net, params, lr_schedule, config["MAX_GRAD_NORM"])
+        if resume_state is not None:
+            state = resume_state
+        else:
+            params = init_params(net, init_rng, obs_dim, plan_horizon)
+            state = create_train_state(net, params, lr_schedule, config["MAX_GRAD_NORM"])
 
         obsv, env_state = env.reset(env_rng, env_params)
         init_hstate = ppo.init_hidden(num_envs)
@@ -241,9 +272,9 @@ def make_train(config: dict[str, Any]):
         rng, run_rng = jax.random.split(rng)
         runner_init = (
             state, env_state, obsv, jnp.zeros(num_envs, dtype=bool),
-            init_hstate, run_rng, 0,
+            init_hstate, run_rng, resume_step,
         )
-        runner_final, metrics = jax.lax.scan(_update_step, runner_init, None, config["NUM_UPDATES"])
+        runner_final, metrics = jax.lax.scan(_update_step, runner_init, None, scan_length)
         return {"runner_state": runner_final, "metrics": metrics}
 
     return train
@@ -263,10 +294,10 @@ def run_offline_diffusion(config):
     config = {k.upper(): v for k, v in config.items()}
 
     if config["USE_WANDB"]:
-        wandb.init(
-            project=config["WANDB_PROJECT"], entity=config["WANDB_ENTITY"],
-            config=config,
+        init_wandb(
+            config,
             name=f"{config['ENV_NAME']}-OfflineDiffusion-{int(config['TOTAL_TIMESTEPS'] // 1e6)}M",
+            resume_run_id=config.get("RESUME_WANDB_RUN_ID"),
         )
 
     rng = jax.random.PRNGKey(config["SEED"])
@@ -286,6 +317,16 @@ def run_offline_diffusion(config):
         with ocp.CheckpointManager(path, options=ocp.CheckpointManagerOptions(max_to_keep=1)) as mgr:
             mgr.save(int(config["TOTAL_TIMESTEPS"]), args=ocp.args.StandardSave(train_state))
         print(f"Saved policy to {path}")
+
+        num_updates = config["NUM_UPDATES"]
+        save_checkpoint_metadata(
+            path,
+            mode="offline",
+            update_step=num_updates,
+            total_gradient_steps=num_updates * config["UPDATE_EPOCHS"] * config["NUM_MINIBATCHES"],
+            wandb_run_id=wandb.run.id if wandb.run else None,
+            config=config,
+        )
 
         artifact = wandb.Artifact(
             name=f"{config['ENV_NAME']}-policy",

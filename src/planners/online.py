@@ -33,11 +33,13 @@ from .model import (
     build_model,
     init_params,
     load_checkpoint,
+    load_checkpoint_for_resume,
     create_train_state,
     make_apply_fns,
+    save_checkpoint_metadata,
 )
 from .ppo import PPOAgent, load_ppo_agent
-from .logging import make_wandb_callback
+from .logging import init_wandb, make_wandb_callback
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +196,24 @@ def make_train_dagger(config: dict[str, Any]):
         )
     )
 
+    # Resume checkpoint (loaded outside JIT, captured by train closure) ------
+    resume_step = config.get("RESUME_STEP") or 0
+    resume_state = None
+    if config.get("RESUME_CHECKPOINT_PATH"):
+        resume_state = load_checkpoint_for_resume(
+            model,
+            jax.random.PRNGKey(0),
+            obs_dim,
+            plan_horizon,
+            config["RESUME_CHECKPOINT_PATH"],
+            lr_schedule,
+            config["MAX_GRAD_NORM"],
+        )
+        target_opt_step = resume_step * update_epochs * num_minibatches
+        resume_state = resume_state.replace(step=target_opt_step)
+
+    scan_length = num_updates - resume_step
+
     # W&B ------------------------------------------------------------------
     _wandb_log = (
         make_wandb_callback(
@@ -221,13 +241,19 @@ def make_train_dagger(config: dict[str, Any]):
         """
         rng, init_rng, env_rng = jax.random.split(rng, 3)
 
-        if pretrained_params is not None:
+        if resume_state is not None:
+            state = resume_state
+            params = resume_state.params
+        elif pretrained_params is not None:
             params = pretrained_params
+            state = create_train_state(
+                model, params, lr_schedule, config["MAX_GRAD_NORM"],
+            )
         else:
             params = init_params(model, init_rng, obs_dim, plan_horizon)
-        state = create_train_state(
-            model, params, lr_schedule, config["MAX_GRAD_NORM"],
-        )
+            state = create_train_state(
+                model, params, lr_schedule, config["MAX_GRAD_NORM"],
+            )
 
         obs, env_state = env.reset(env_rng, env_params)
 
@@ -517,7 +543,7 @@ def make_train_dagger(config: dict[str, Any]):
             env_state=env_state,
             obs=obs,
             rng=run_rng,
-            step_idx=0,
+            step_idx=resume_step,
             ppo_hs=ppo.init_hidden(num_envs),
             prev_done=jnp.zeros(num_envs, dtype=bool),
             buf_obs=buf_obs,
@@ -529,7 +555,7 @@ def make_train_dagger(config: dict[str, Any]):
             best_val_return=jnp.array(-jnp.inf),
         )
         runner_final, metrics = jax.lax.scan(
-            _update_step, runner_init, None, num_updates,
+            _update_step, runner_init, None, scan_length,
         )
         return {
             "runner_state": runner_final,
@@ -554,11 +580,10 @@ def run_online(config: dict[str, Any]) -> None:
     config = {k.upper(): v for k, v in config.items()}
 
     if config.get("USE_WANDB"):
-        wandb.init(
-            project=config.get("WANDB_PROJECT", "remdm-craftax"),
-            entity=config.get("WANDB_ENTITY"),
-            config=config,
+        init_wandb(
+            config,
             name=f"DAgger-{config['ENV_NAME']}",
+            resume_run_id=config.get("RESUME_WANDB_RUN_ID"),
         )
 
     rng = jax.random.PRNGKey(config["SEED"])
@@ -589,6 +614,16 @@ def run_online(config: dict[str, Any]) -> None:
                 args=ocp.args.StandardSave(train_state),
             )
         print(f"Saved final policy to {path}")
+
+        num_updates = config["NUM_UPDATES"]
+        save_checkpoint_metadata(
+            path,
+            mode="online",
+            update_step=num_updates,
+            total_gradient_steps=num_updates * config["UPDATE_EPOCHS"] * config["NUM_MINIBATCHES"],
+            wandb_run_id=wandb.run.id if wandb.run else None,
+            config=config,
+        )
 
         artifact = wandb.Artifact(
             name=f"{config['ENV_NAME']}-policy",

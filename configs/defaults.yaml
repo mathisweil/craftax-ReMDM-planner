@@ -73,9 +73,12 @@ diffusion_steps_eval: 10
 
 # ── Checkpointing ───────────────────────────────────────────────────────────
 checkpoint_dir: "checkpoints_online"
-checkpoint_interval: 500              # save a checkpoint every N update steps (not yet consumed by code)
-max_checkpoints: 3                    # maximum number of periodic checkpoints to retain
 save_policy: true
+
+# ── Resume ───────────────────────────────────────────────────────────────────
+resume_checkpoint_path: null      # path to a completed checkpoint to resume from (accepts wandb: refs)
+resume_wandb_run_id: null         # W&B run ID to resume logging into (auto-read from checkpoint metadata if null)
+resume_step: null                 # update step the checkpoint was saved at (auto-read from checkpoint metadata if null)
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 seed: null                          # random if not set

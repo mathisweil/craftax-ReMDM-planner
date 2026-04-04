@@ -47,8 +47,6 @@ batch_size: 256
 use_wandb: true
 wandb_project: "craftax-remdm-3060-tests"
 wandb_entity: "mathis-weil-university-college-london-ucl-"
-checkpoint_interval: 10
-max_checkpoints: 1
 checkpoint_dir: "checkpoints_3060_hyper"
 save_policy: true        # Save the model checkpoint at the end of training
 num_repeats: 1            # Number of independent training runs (vmapped)
