@@ -36,10 +36,9 @@ Training follows a four-stage pipeline:
 `uv` manages Python packages only. The following must be installed at the OS level before
 running on a GPU node — they are **not** in `pyproject.toml`:
 
-- **CUDA 12** driver and toolkit (`libcuda.so`, `libcudnn`)
-- A C/C++ build toolchain (needed by NLE/MiniHack compiled extensions, if used)
+- **CUDA 13** driver and toolkit (`libcuda.so`, `libcudnn`)
 
-On HPC clusters these are typically loaded via `module load cuda/12.x`.
+On HPC clusters these are typically loaded via `module load cuda/13.x`.
 
 ### 1. Create the virtual environment
 
@@ -47,7 +46,7 @@ On HPC clusters these are typically loaded via `module load cuda/12.x`.
 # CPU-only (local development / macOS)
 uv sync
 
-# NVIDIA CUDA 12 (GPU node — Linux only)
+# NVIDIA CUDA 13 (GPU node — Linux only)
 uv sync --extra cuda
 
 # Activate
@@ -69,15 +68,19 @@ git submodule update --init --recursive
 
 | Package | Version | Role |
 |---------|---------|------|
-| `jax` | 0.9.1 | JIT compilation and functional arrays |
-| `flax` | 0.12.2 | Neural network definitions |
-| `optax` | 0.2.7 | Adam optimiser and gradient clipping |
-| `craftax` | 1.5.0 | Procedurally-generated Minecraft-like environment |
-| `gymnax` | 0.0.9 | Batched environment interface |
-| `distrax` | 0.1.7 | Probability distributions |
-| `orbax-checkpoint` | 0.5+ | Model checkpointing |
-| `wandb` | 0.25.0 | Experiment logging |
-| `pyyaml` | 6.0.3 | Config file parsing |
+| `jax` | >=0.9.2 | JIT compilation and functional arrays |
+| `flax` | >=0.12.6 | Neural network definitions |
+| `optax` | >=0.2.8 | Adam optimiser and gradient clipping |
+| `craftax` | >=1.5.0 | Procedurally-generated Minecraft-like environment |
+| `chex` | >=0.1.91 | JAX testing and assertion utilities |
+| `distrax` | >=0.1.7 | Probability distributions |
+| `orbax` | >=0.1.9 | Model checkpointing |
+| `wandb` | >=0.25.1 | Experiment logging |
+| `numpy` | >=2.4.4 | Array operations |
+| `matplotlib` | >=3.10.8 | Plotting |
+| `polars` | >=1.39.3 | DataFrame analysis |
+| `orjson` | >=3.11.8 | Fast JSON serialisation |
+| `pyyaml` | >=6.0.3 | Config file parsing |
 
 Full specification in `pyproject.toml`. Exact transitive pins are in `uv.lock`.
 
@@ -268,6 +271,11 @@ Preset configs for larger runs are provided in `configs/`:
 | `configs/big_diffusion_online.yaml` | Larger model for online training |
 | `configs/A100_diffusion_offline.yaml` | A100-tuned offline config |
 | `configs/A100_diffusion_online.yaml` | A100-tuned online config |
+| `configs/ucl_4090_3090.yaml` | UCL RTX 4090/3090 preset |
+| `configs/ucl_4070.yaml` | UCL RTX 4070 preset |
+| `configs/ali_gpu.yaml` | Ali GPU preset |
+| `configs/qmul_h200.yaml` | QMUL H200 preset |
+| `configs/ablations.yaml` | RL fine-tuning ablation hyperparameters (loaded by `experiments/`, not `main.py`) |
 
 ### Key hyperparameters
 
@@ -320,7 +328,7 @@ Preset configs for larger runs are provided in `configs/`:
 | `lr` | 3e-4 | Adam learning rate (cosine-decayed to 10% over all gradient steps) |
 | `lr_warmup_steps` | 0 | Linear warm-up steps before cosine decay (0 = disabled) |
 | `max_grad_norm` | 1.0 | Global gradient clipping norm |
-| `batch_size` | 256 | Minibatch size |
+| `batch_size` | 768 | Minibatch size |
 | `return_weight_cap` | 5.0 | Clip ceiling for per-window return weights |
 | `collect_temperature` | 1.0 | Softmax temperature on PPO logits during live data collection |
 | `val_interval` | 50 | Validation frequency in update steps |
@@ -360,8 +368,6 @@ Preset configs for larger runs are provided in `configs/`:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `checkpoint_dir` | `checkpoints_online` | Directory for periodic checkpoints |
-| `checkpoint_interval` | 500 | Save a checkpoint every N update steps |
-| `max_checkpoints` | 3 | Maximum number of checkpoints to retain |
 | `save_policy` | `true` | Save final checkpoint at end of training |
 
 **Resume**
@@ -378,7 +384,7 @@ Preset configs for larger runs are provided in `configs/`:
 |-----------|---------|-------------|
 | `use_wandb` | `true` | Enable Weights & Biases logging |
 | `wandb_project` | `remdm-craftax` | W&B project name |
-| `wandb_entity` | `""` | W&B entity (team or username); empty = personal account |
+| `wandb_entity` | `"mathis-weil-university-college-london-ucl-"` | W&B entity (team or username) |
 | `wandb_download_dir` | `null` | Download directory for W&B artifacts; null = `./artifacts/` |
 | `seed` | `null` | RNG seed (random if null) |
 
@@ -413,6 +419,8 @@ Controlled by `--remask_strategy`. All strategies operate on top of the three-ph
 |---------|---------|
 | `SequenceHistoryWrapper` | Maintains a sliding window of past observations and actions in the env state |
 | `DiscreteTokenizationWrapper` | Quantizes continuous observations into discrete token indices |
+| `PlannerWrapper` | Manages the plan/replan cycle for the diffusion planner |
+| `OfflineTrajectoryWrapper` | Accumulates transitions into a fixed-size circular replay buffer |
 
 **Wrapper stacks:**
 
@@ -441,7 +449,12 @@ craftax-ReMDM-planner/
 │   ├── big_diffusion_offline.yaml
 │   ├── big_diffusion_online.yaml
 │   ├── A100_diffusion_offline.yaml
-│   └── A100_diffusion_online.yaml
+│   ├── A100_diffusion_online.yaml
+│   ├── ucl_4090_3090.yaml         # UCL RTX 4090/3090 preset
+│   ├── ucl_4070.yaml              # UCL RTX 4070 preset
+│   ├── ali_gpu.yaml               # Ali GPU preset
+│   ├── qmul_h200.yaml            # QMUL H200 preset
+│   └── ablations.yaml             # RL fine-tuning ablation hyperparameters
 ├── src/
 │   ├── diffusion/
 │   │   ├── forward.py             # Forward masking process q(z_t | x_0)
@@ -451,7 +464,7 @@ craftax-ReMDM-planner/
 │   ├── models/
 │   │   └── denoiser.py            # DenoisingTransformer (obs encoder + transformer)
 │   ├── envs/
-│   │   └── wrappers.py            # SequenceHistoryWrapper, DiscreteTokenizationWrapper
+│   │   └── wrappers.py            # Sequence, tokenization, planner, and trajectory wrappers
 │   └── planners/
 │       ├── collect.py             # --mode collect: PPO rollouts -> .npz
 │       ├── common.py              # Shared utilities
@@ -459,9 +472,16 @@ craftax-ReMDM-planner/
 │       ├── inference.py           # --mode inference: MPC evaluation with inpainting
 │       ├── logging.py             # Centralised W&B logging utilities
 │       ├── model.py               # Diffusion model lifecycle
-│       ├── offline.py               # --mode offline: make_train (live PPO rollouts)
+│       ├── offline.py             # --mode offline: make_train (live PPO rollouts)
 │       ├── online.py              # --mode online: DAgger fine-tuning
 │       └── ppo.py                 # PPO agent adapter and checkpoint loading utilities            
+├── experiments/
+│   └── rl_finetuning/             # RL fine-tuning ablation suite (see experiments/README.md)
+│       ├── run_ablations.py       # CLI entry point
+│       ├── ablations/             # Loss, optimizer, and registry modules
+│       ├── diagnostics/           # Gradient, representation, and timestep diagnostics
+│       ├── analysis/              # Plots, tables, and report generation
+│       └── configs/               # ablations_default.yaml, ablations_fast.yaml
 ├── main.py                        # CLI entry point
 ├── pyproject.toml                 # uv project — direct deps + tool config
 └── uv.lock                        # Reproducible lockfile (commit this)
