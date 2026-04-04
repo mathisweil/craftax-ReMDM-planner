@@ -42,7 +42,7 @@ batch_size: 1024
 
 # ── Offline training (--mode offline) ────────────────────────────────────────
 total_timesteps: 1.0e+8
-num_envs: 1024
+num_envs: 1024                      # doubled from 1024 — 4090 has 2x VRAM vs 4070
 num_steps: 64
 num_minibatches: 8
 update_epochs: 4
@@ -50,17 +50,17 @@ num_repeats: 1
 collect_temperature: 1.0
 lr_warmup_steps: 0                  # linear warm-up steps before cosine LR decay (0 = disabled)
 return_weight_cap: 5.0              # clip ceiling for per-window return weights
-val_interval: 500
+val_interval: 100                   # validate more often for 5000 updates
 val_diffusion_steps: 50
 val_replan_every: 4                 # env steps executed per diffusion plan during validation
 val_steps: 128                      # total env steps per validation rollout
 
 # ── Online DAgger training (--mode online) ───────────────────────────────────
-num_updates: 1000
+num_updates: 5000                   # ~4h per run on 4090 (run two sequentially overnight)
 replan_every: 4
 dagger_beta_init: 1.0
-dagger_beta_decay: 0.95
-dagger_buffer_max: 200000
+dagger_beta_decay: 0.995            # slower decay for 5x more updates (beta still > 0.01 at step 1000)
+dagger_buffer_max: 400000           # 2x buffer -- more replay diversity for longer runs
 
 # ── Data collection (--mode collect) ─────────────────────────────────────────
 collect_num_steps: 10000000
@@ -75,8 +75,8 @@ diffusion_steps_eval: 10
 
 # ── Checkpointing ───────────────────────────────────────────────────────────
 checkpoint_dir: "checkpoints_online"
-checkpoint_interval: 500
-max_checkpoints: 3
+checkpoint_interval: 250            # more frequent saves for overnight runs
+max_checkpoints: 5
 save_policy: true
 
 # ── Logging ──────────────────────────────────────────────────────────────────
