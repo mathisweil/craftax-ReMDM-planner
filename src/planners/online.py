@@ -22,6 +22,7 @@ import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
 import wandb
+from flax.training.train_state import TrainState
 
 from src.diffusion.sampling import sample_plan
 from src.diffusion.schedules import SCHEDULE_MAP
@@ -597,16 +598,27 @@ def run_online(config: dict[str, Any]) -> None:
         artifact.add_dir(path)
         wandb.log_artifact(artifact)
 
-        # Best checkpoint (highest validation return)
+        # Best checkpoint (highest validation return).
+        # Wrap in a dummy TrainState so the Orbax structure matches
+        # the final checkpoint — load_checkpoint expects TrainState.
         best_params = jax.tree.map(
             lambda x: x[0], out["best_params"],
+        )
+        tx = optax.chain(
+            optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
+            optax.adam(config["LR"], eps=1e-5),
+        )
+        best_state = TrainState.create(
+            apply_fn=lambda *a: None,
+            params=best_params,
+            tx=tx,
         )
         best_path = os.path.join(wandb.run.dir, "policies_best")
         with ocp.CheckpointManager(
             best_path,
             options=ocp.CheckpointManagerOptions(max_to_keep=1),
         ) as mgr:
-            mgr.save(0, args=ocp.args.StandardSave(best_params))
+            mgr.save(0, args=ocp.args.StandardSave(best_state))
         print(f"Saved best policy to {best_path}")
 
         best_artifact = wandb.Artifact(
