@@ -42,7 +42,7 @@ batch_size: 1024
 
 # ── Offline training (--mode offline) ────────────────────────────────────────
 total_timesteps: 1.0e+8
-num_envs: 4096                      # 6x fewer envs -> 6x more DAgger iterations in same wall time
+num_envs: 3072                      # 6x fewer envs -> 6x more DAgger iterations in same wall time
 num_steps: 128                      # 4 plan cycles/update
 num_minibatches: 16                 # minibatch = 4*4096/16 = 1024 samples
 update_epochs: 8                    # 2x -- extract more from each batch (compute, not VRAM)
