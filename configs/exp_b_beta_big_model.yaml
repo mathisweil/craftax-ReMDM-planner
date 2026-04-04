@@ -1,0 +1,101 @@
+# =============================================================================
+# Experiment B — Beta fix + bigger model (isolate model capacity)
+# Target hardware: NVIDIA RTX 3090 Ti (24 GB)
+# Baseline: configs/ucl_4090_3090.yaml
+# -----------------------------------------------------------------------------
+# CHANGES vs baseline (cumulative with Experiment A):
+#   dagger_beta_decay:  0.998 -> 0.9993  (from Exp A)
+#   num_updates:        2500 -> 1500     (from Exp A)
+#   val_interval:       50 -> 30         (from Exp A)
+#   d_model:            256 -> 384       (NEW: ~3.5x params)
+#   n_heads:            4 -> 8           (NEW: 384/8 = 48 per head)
+#   n_layers:           4 -> 6           (NEW: acc curves show capacity left)
+#   d_ff:               512 -> 768       (NEW: 2x d_model)
+#   obs_encoder_width:  512 -> 768       (NEW: match d_ff)
+#   num_minibatches:    16 -> 8          (NEW: doubles minibatch to 2048)
+#   seed:               null -> 42       (fixed for cross-experiment comparison)
+# Estimated VRAM: ~18 GB
+# =============================================================================
+
+# ── Environment ──────────────────────────────────────────────────────────────
+env_name: "Craftax-Classic-Symbolic-v1"
+use_optimistic_resets: false
+optimistic_reset_ratio: 16
+
+# ── Transformer architecture (CHANGED) ──────────────────────────────────────
+d_model: 384                        # CHANGED: 256 -> 384
+n_heads: 8                          # CHANGED: 4 -> 8
+n_layers: 6                         # CHANGED: 4 -> 6
+d_ff: 768                           # CHANGED: 512 -> 768
+obs_encoder_layers: 2
+obs_encoder_width: 768              # CHANGED: 512 -> 768
+dropout_rate: 0.1
+
+# ── Diffusion ────────────────────────────────────────────────────────────────
+plan_horizon: 32
+diffusion_schedule: "cosine"
+train_sigma: 0.0
+label_smoothing: 0.0
+
+# ── Reverse sampling (UNCHANGED) ────────────────────────────────────────────
+diffusion_steps: 15
+remask_strategy: "rescale"
+eta: 0.5
+use_loop: true
+t_on: 0.7
+t_off: 0.3
+temperature: 0.5
+top_p: 0.95
+
+# ── Optimisation (UNCHANGED) ────────────────────────────────────────────────
+lr: 3.0e-4
+max_grad_norm: 1.0
+batch_size: 1024
+
+# ── Offline training ────────────────────────────────────────────────────────
+total_timesteps: 1.0e+8
+num_envs: 4096
+num_steps: 128
+num_minibatches: 8                  # CHANGED: 16 -> 8 (minibatch 2048, better gradients)
+update_epochs: 8
+num_repeats: 1
+collect_temperature: 1.0
+lr_warmup_steps: 200
+return_weight_cap: 5.0
+val_interval: 30                    # CHANGED: 50 -> 30
+val_diffusion_steps: 50
+val_replan_every: 4
+val_steps: 256
+
+# ── Online DAgger training ──────────────────────────────────────────────────
+num_updates: 1500                   # CHANGED: 2500 -> 1500
+replan_every: 4
+dagger_beta_init: 1.0
+dagger_beta_decay: 0.9993           # CHANGED: 0.998 -> 0.9993
+dagger_buffer_max: 1000000
+
+# ── Data collection ─────────────────────────────────────────────────────────
+collect_num_steps: 10000000
+collect_num_envs: 128
+ppo_model_type: "ppo_rnn"
+layer_size: 512
+
+# ── Inference ────────────────────────────────────────────────────────────────
+eval_steps: 10000
+eval_num_envs: 32
+diffusion_steps_eval: 10
+
+# ── Checkpointing ───────────────────────────────────────────────────────────
+checkpoint_dir: "checkpoints_exp_b"
+save_policy: true
+
+# ── Resume ───────────────────────────────────────────────────────────────────
+resume_checkpoint_path: null
+resume_wandb_run_id: null
+resume_step: null
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+seed: 42                            # CHANGED: fixed for cross-experiment comparison
+use_wandb: true
+wandb_project: "remdm-craftax"
+wandb_entity: "mathis-weil-university-college-london-ucl-"

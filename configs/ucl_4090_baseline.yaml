@@ -11,7 +11,7 @@ use_optimistic_resets: false
 optimistic_reset_ratio: 16
 
 # ── Transformer architecture ─────────────────────────────────────────────────
-d_model: 256
+d_model: 384
 n_heads: 4
 n_layers: 4
 d_ff: 512
