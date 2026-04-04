@@ -1,5 +1,7 @@
 # =============================================================================
-# ReMDM default configuration
+# UCL 4090/3090 preset
+# Target hardware: NVIDIA RTX 4090 / 3090
+# CUDA toolkit: 13.2 (install via: uv sync --extra cuda)
 # Override any value via CLI: python main.py --mode offline --lr 1e-4
 # =============================================================================
 
