@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable, Union
 
 import jax
@@ -117,6 +118,7 @@ def load_checkpoint(
     Raises:
         FileNotFoundError: If the checkpoint directory contains no saved steps.
     """
+    path = str(Path(path).resolve())
     params = init_params(model, rng, obs_dim, plan_horizon)
     abstract_state = create_train_state(model=model, params=params, lr=1e-4, max_grad_norm=1.0)
 

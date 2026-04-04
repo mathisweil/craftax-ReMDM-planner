@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import jax
@@ -35,6 +36,7 @@ def load_ppo_params(
     Returns:
         Restored parameter pytree.
     """
+    path = str(Path(path).resolve())
     rng = jax.random.PRNGKey(0)
     if model_type == "ppo_rnn":
         init_x = (jnp.zeros((1, num_envs, *obs_shape)), jnp.zeros((1, num_envs)))
