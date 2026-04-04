@@ -42,24 +42,24 @@ batch_size: 1024
 
 # ── Offline training (--mode offline) ────────────────────────────────────────
 total_timesteps: 1.0e+8
-num_envs: 4096                      # 4x default -- fill 4090 24GB (~20GB target)
-num_steps: 128                      # 2x default -- 4 plan cycles/update, 8x more samples/update
-num_minibatches: 16                 # minibatch = 4*4096/16 = 1024 samples
+num_envs: 12288                     # 12x default -- target ~20GB on 4090 (24GB)
+num_steps: 128                      # 2x default -- 4 plan cycles/update
+num_minibatches: 32                 # minibatch = 4*12288/32 = 1536 samples
 update_epochs: 4
 num_repeats: 1
 collect_temperature: 1.0
 lr_warmup_steps: 200                # stabilise early training with large effective batch
 return_weight_cap: 5.0              # clip ceiling for per-window return weights
-val_interval: 50                    # ~50 validation points across full run
+val_interval: 25                    # ~32 validation points across 800 updates
 val_diffusion_steps: 50
 val_replan_every: 4                 # env steps executed per diffusion plan during validation
 val_steps: 128                      # total env steps per validation rollout
 
 # ── Online DAgger training (--mode online) ───────────────────────────────────
-num_updates: 2500                   # ~4h per run on 4090 (heavier updates, run two sequentially)
+num_updates: 800                    # ~4h per run (3x heavier updates vs 2500 @ 4096 envs)
 replan_every: 4
 dagger_beta_init: 1.0
-dagger_beta_decay: 0.998            # beta < 0.5 at step ~347, < 0.01 at step ~2300
+dagger_beta_decay: 0.994            # beta < 0.5 at step ~115, < 0.01 at step ~766
 dagger_buffer_max: 1000000          # 1M entries -- full DAgger aggregation for long run
 
 # ── Data collection (--mode collect) ─────────────────────────────────────────
@@ -75,7 +75,7 @@ diffusion_steps_eval: 10
 
 # ── Checkpointing ───────────────────────────────────────────────────────────
 checkpoint_dir: "checkpoints_online"
-checkpoint_interval: 125            # ~20 saves across 2500 updates
+checkpoint_interval: 40             # ~20 saves across 800 updates
 max_checkpoints: 5
 save_policy: true
 
