@@ -1,0 +1,96 @@
+# =============================================================================
+# Experiment C-Full — Full recipe on Full Craftax
+# Target hardware: NVIDIA RTX 3090 Ti / 4090 (24 GB)
+# Based on: exp_c_full_recipe.yaml, adapted for Craftax-Symbolic-v1
+# -----------------------------------------------------------------------------
+# CHANGES vs exp_c (Classic):
+#   env_name:           Classic -> Full Craftax (obs_dim 8268, actions 43)
+#   num_envs:           4096 -> 2048        (larger obs -> more VRAM per env)
+#   dagger_buffer_max:  1000000 -> 200000   (8268 obs -> 6.6 GB at 200k)
+#   num_updates:        1500 -> 2000        (harder task, more room to learn)
+#   checkpoint_dir:     separate
+# Estimated VRAM: ~18-20 GB
+# =============================================================================
+
+# ── Environment ──────────────────────────────────────────────────────────────
+env_name: "Craftax-Symbolic-v1"
+use_optimistic_resets: false
+optimistic_reset_ratio: 16
+
+# ── Transformer architecture (big model, same as Exp C) ─────────────────────
+d_model: 384
+n_heads: 8
+n_layers: 6
+d_ff: 768
+obs_encoder_layers: 2
+obs_encoder_width: 768
+dropout_rate: 0.1
+
+# ── Diffusion ────────────────────────────────────────────────────────────────
+plan_horizon: 32
+diffusion_schedule: "cosine"
+train_sigma: 0.0
+label_smoothing: 0.0
+
+# ── Reverse sampling (full recipe) ──────────────────────────────────────────
+diffusion_steps: 25
+remask_strategy: "rescale"
+eta: 0.5
+use_loop: true
+t_on: 0.7
+t_off: 0.3
+temperature: 0.3
+top_p: 0.95
+
+# ── Optimisation (full recipe) ──────────────────────────────────────────────
+lr: 5.0e-4
+max_grad_norm: 1.0
+batch_size: 1024
+
+# ── Offline training ────────────────────────────────────────────────────────
+total_timesteps: 1.0e+8
+num_envs: 2048                      # ADAPTED: 4096 -> 2048 (larger obs per env)
+num_steps: 128
+num_minibatches: 8                  # (128/32)*2048 / 8 = 1024 per minibatch
+update_epochs: 8
+num_repeats: 1
+collect_temperature: 1.0
+lr_warmup_steps: 300
+return_weight_cap: 5.0
+val_interval: 30
+val_diffusion_steps: 25
+val_replan_every: 2
+val_steps: 256
+
+# ── Online DAgger training (full recipe) ────────────────────────────────────
+num_updates: 2000                   # ADAPTED: harder task, more room
+replan_every: 2
+dagger_beta_init: 1.0
+dagger_beta_decay: 0.9993
+dagger_buffer_max: 200000           # ADAPTED: 1M -> 200k (obs 8268 -> 6.6 GB)
+
+# ── Data collection ─────────────────────────────────────────────────────────
+collect_num_steps: 10000000
+collect_num_envs: 128
+ppo_model_type: "ppo_rnn"
+layer_size: 512
+
+# ── Inference ────────────────────────────────────────────────────────────────
+eval_steps: 10000
+eval_num_envs: 32
+diffusion_steps_eval: 10
+
+# ── Checkpointing ───────────────────────────────────────────────────────────
+checkpoint_dir: "checkpoints_exp_c_full"
+save_policy: true
+
+# ── Resume ───────────────────────────────────────────────────────────────────
+resume_checkpoint_path: null
+resume_wandb_run_id: null
+resume_step: null
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+seed: 42
+use_wandb: true
+wandb_project: "remdm-craftax"
+wandb_entity: "mathis-weil-university-college-london-ucl-"
