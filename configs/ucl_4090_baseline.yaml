@@ -60,7 +60,7 @@ num_updates: 2500                   # 6x more DAgger iterations -- model converg
 replan_every: 4
 dagger_beta_init: 1.0
 dagger_beta_decay: 0.998            # beta > 0.5 until step ~347, > 0.1 until step ~1152
-dagger_buffer_max: 1000000          # 1M entries -- full DAgger aggregation
+dagger_buffer_max: 400000          # 1M entries -- full DAgger aggregation
 
 # ── Data collection (--mode collect) ─────────────────────────────────────────
 collect_num_steps: 10000000
