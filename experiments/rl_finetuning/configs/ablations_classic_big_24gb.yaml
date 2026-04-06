@@ -35,11 +35,11 @@ t_off: 0.3
 temperature: 0.5
 top_p: 0.95
 
-# ── Training loop (24 GB VRAM — 64 envs / 512 batch uses ~5 GB) ──────────────
+# ── Training loop (24 GB VRAM — 192/2048 OOM'd on EWC at 19.4 GiB) ──────────
 max_iter: 500
-num_envs: 192                 # 4x more rollout diversity
+num_envs: 192                 # 3x default; keeps rollout diversity high
 num_steps: 128
-batch_size: 2048              # 4x better gradient estimates
+batch_size: 1024              # halved; EWC/LoRA carry extra param-sized buffers
 lr: 3.0e-4
 weight_decay: 1.0e-4
 max_grad_norm: 1.0
