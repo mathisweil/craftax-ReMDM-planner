@@ -37,7 +37,7 @@ top_p: 0.95
 
 # ── Training loop (24 GB VRAM — 64 envs / 512 batch uses ~5 GB) ──────────────
 max_iter: 500
-num_envs: 256                 # 4x more rollout diversity
+num_envs: 192                 # 4x more rollout diversity
 num_steps: 128
 batch_size: 2048              # 4x better gradient estimates
 lr: 3.0e-4
