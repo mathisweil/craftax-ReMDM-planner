@@ -24,6 +24,22 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _latex_escape(text: str) -> str:
+    """Escape LaTeX special characters in a string.
+
+    Args:
+        text: Raw string that may contain LaTeX-special characters.
+
+    Returns:
+        String safe for inclusion in a LaTeX document.
+    """
+    for ch in ("&", "%", "$", "#", "_", "{", "}"):
+        text = text.replace(ch, f"\\{ch}")
+    text = text.replace("~", "\\textasciitilde{}")
+    text = text.replace("^", "\\textasciicircum{}")
+    return text
+
+
 def _df_to_latex(df: pl.DataFrame, caption: str = "", label: str = "") -> str:
     """Convert a polars DataFrame to a LaTeX tabular string.
 
@@ -40,11 +56,11 @@ def _df_to_latex(df: pl.DataFrame, caption: str = "", label: str = "") -> str:
     lines = [
         "\\begin{table}[htbp]",
         "\\centering",
-        f"\\caption{{{caption}}}",
+        f"\\caption{{{_latex_escape(caption)}}}",
         f"\\label{{{label}}}",
         f"\\begin{{tabular}}{{{col_spec}}}",
         "\\toprule",
-        " & ".join(f"\\textbf{{{c}}}" for c in cols) + " \\\\",
+        " & ".join(f"\\textbf{{{_latex_escape(c)}}}" for c in cols) + " \\\\",
         "\\midrule",
     ]
     for row in df.iter_rows():
@@ -53,7 +69,7 @@ def _df_to_latex(df: pl.DataFrame, caption: str = "", label: str = "") -> str:
             if isinstance(val, float):
                 cells.append(f"{val:.4f}")
             else:
-                cells.append(str(val))
+                cells.append(_latex_escape(str(val)))
         lines.append(" & ".join(cells) + " \\\\")
     lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}"]
     return "\n".join(lines)
@@ -100,9 +116,9 @@ def make_main_results_table(
         score = res["score"]
         delta_pretrained = score - pretrained_score
         delta_baseline = score - baseline_rl_score
-        if delta_pretrained > 0.005:
+        if delta_pretrained > 0.05:
             verdict = "IMPROVEMENT"
-        elif score < pretrained_score - 0.005:
+        elif score < pretrained_score - 0.1:
             verdict = "COLLAPSE"
         else:
             verdict = "NEUTRAL"
@@ -243,6 +259,112 @@ def make_forgetting_analysis_table(
     return pl.DataFrame(rows)
 
 
+def make_group_summary_table(
+    results: dict[str, dict],
+) -> pl.DataFrame:
+    """Group summary table: Group | N | Mean | Best | Worst | StdDev.
+
+    Args:
+        results: Dict mapping ablation_name -> {"score": float}.
+
+    Returns:
+        Polars DataFrame with one row per group.
+    """
+    group_scores: dict[str, list[float]] = {}
+    for name, res in results.items():
+        spec = REGISTRY.get(name)
+        group = spec.group if spec else "?"
+        group_scores.setdefault(group, []).append(res["score"])
+
+    rows = []
+    for group in ("Baseline", "A", "B", "C", "D"):
+        scores = group_scores.get(group, [])
+        if not scores:
+            continue
+        arr = np.array(scores)
+        rows.append({
+            "Group": group,
+            "N": len(scores),
+            "Mean": round(float(arr.mean()), 4),
+            "Best": round(float(arr.max()), 4),
+            "Worst": round(float(arr.min()), 4),
+            "StdDev": round(float(arr.std()), 4),
+        })
+    return pl.DataFrame(rows)
+
+
+def make_repr_drift_table(
+    results: dict[str, dict],
+) -> pl.DataFrame:
+    """Repr drift table: Method | KL_mean | KL_low_t | KL_mid_t | KL_high_t (final).
+
+    Args:
+        results: Dict mapping name -> {"history": AblationHistory}.
+
+    Returns:
+        Polars DataFrame.
+    """
+    rows = []
+    for name, res in results.items():
+        history: AblationHistory = res["history"]
+        kl_mean = round(history.repr_drift_kl[-1], 6) if history.repr_drift_kl else float("nan")
+        kl_low = round(history.repr_drift_kl_low_t[-1], 6) if history.repr_drift_kl_low_t else float("nan")
+        kl_mid = round(history.repr_drift_kl_mid_t[-1], 6) if history.repr_drift_kl_mid_t else float("nan")
+        kl_high = round(history.repr_drift_kl_high_t[-1], 6) if history.repr_drift_kl_high_t else float("nan")
+        rows.append({
+            "Method": name,
+            "KL_mean": kl_mean,
+            "KL_low_t": kl_low,
+            "KL_mid_t": kl_mid,
+            "KL_high_t": kl_high,
+        })
+    rows.sort(key=lambda r: (float("inf") if np.isnan(r["KL_mean"]) else r["KL_mean"]))
+    return pl.DataFrame(rows)
+
+
+def make_per_env_table(
+    results: dict[str, dict],
+    pretrained_ach_rates: dict[str, float],
+) -> pl.DataFrame:
+    """Per-environment (per-achievement) table: Method + final rates.
+
+    Rows = ablation methods, columns = achievement names.
+
+    Args:
+        results:              Dict mapping name -> {"history": AblationHistory}.
+        pretrained_ach_rates: Per-achievement unlock rates for the pretrained
+                              baseline (keys = achievement name, values in [0, 1]).
+
+    Returns:
+        Polars DataFrame.
+    """
+    ablation_finals: dict[str, dict[str, float]] = {}
+    for name, res in results.items():
+        rates = res["history"].per_achievement_rates
+        ablation_finals[name] = rates[-1] if rates else {}
+
+    all_keys: list[str] = sorted(
+        set(pretrained_ach_rates) | {k for d in ablation_finals.values() for k in d}
+    )
+    if not all_keys:
+        return pl.DataFrame()
+
+    rows = []
+    # Pretrained baseline row
+    pt_row: dict[str, object] = {"Method": "pretrained"}
+    for key in all_keys:
+        pt_row[key] = round(pretrained_ach_rates.get(key, 0.0), 4)
+    rows.append(pt_row)
+
+    for name in sorted(ablation_finals):
+        row: dict[str, object] = {"Method": name}
+        for key in all_keys:
+            row[key] = round(ablation_finals[name].get(key, 0.0), 4)
+        rows.append(row)
+
+    return pl.DataFrame(rows)
+
+
 def make_hypothesis_verdict_table(
     results: dict[str, dict],
     pretrained_score: float,
@@ -264,10 +386,10 @@ def make_hypothesis_verdict_table(
             continue
 
         delta = score - pretrained_score
-        if delta > 0.005:
+        if delta > 0.05:
             result = "IMPROVEMENT"
             conclusion = "Hypothesis SUPPORTED — this intervention helps"
-        elif score < pretrained_score - 0.005:
+        elif score < pretrained_score - 0.1:
             result = "COLLAPSE"
             conclusion = "Hypothesis REFUTED — intervention did not prevent collapse"
         else:
@@ -390,6 +512,19 @@ def generate_summary_tables(
         caption="Catastrophic forgetting timeline.", label="tab:forgetting"
     )
 
+    tables["group_summary"] = make_group_summary_table(results)
+    _save_table(
+        tables["group_summary"], tables_dir / "group_summary",
+        caption="Group summary statistics.", label="tab:group_summary"
+    )
+
+    tables["repr_drift"] = make_repr_drift_table(results)
+    _save_table(
+        tables["repr_drift"], tables_dir / "repr_drift",
+        caption="Representation drift (KL divergence) at final iteration.",
+        label="tab:repr_drift"
+    )
+
     tables["hypothesis_verdict"] = make_hypothesis_verdict_table(results, pretrained_score)
     _save_table(
         tables["hypothesis_verdict"], tables_dir / "hypothesis_verdict",
@@ -404,6 +539,15 @@ def generate_summary_tables(
                 ach_df, tables_dir / "achievement_summary",
                 caption="Per-achievement final unlock rates and delta vs pretrained.",
                 label="tab:achievements",
+            )
+
+        per_env_df = make_per_env_table(results, pretrained_ach_rates)
+        if per_env_df.height > 0:
+            tables["per_env"] = per_env_df
+            _save_table(
+                per_env_df, tables_dir / "per_env",
+                caption="Per-environment (per-achievement) win rates at final eval.",
+                label="tab:per_env",
             )
 
     logger.info("All tables saved to %s", tables_dir)

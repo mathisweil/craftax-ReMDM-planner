@@ -35,16 +35,18 @@ temperature: 0.5
 top_p: 0.95
 
 # ── Training loop ─────────────────────────────────────────────────────────────
-max_iter: 1000                 # training iterations per ablation
+max_iter: 500                  # training iterations per ablation
 num_envs: 64                  # parallel environments for rollouts
 num_steps: 128                # PPO steps per rollout
 batch_size: 512               # gradient batch size
 lr: 3.0e-4
+weight_decay: 1.0e-4          # AdamW weight decay
 max_grad_norm: 1.0
 collect_temp: 1.0             # PPO sampling temperature during collection
+ema_decay: 0.999              # EMA decay for eval model weights
 
 # ── Evaluation ────────────────────────────────────────────────────────────────
-eval_every: 50                # evaluate every N iterations
+eval_every: 25                # evaluate every N iterations
 eval_steps: 512               # env steps per eval rollout
 eval_replan: 8                # env steps per diffusion plan during eval
 
@@ -58,9 +60,11 @@ repr_drift_every: 25          # representation drift frequency
 t_analysis_every: 25          # timestep analysis frequency
 cka_every: 50                 # CKA computation frequency (expensive)
 per_layer_every: 25           # per-layer gradient norm frequency
+t_analysis_n_bins: 10         # number of t-bins for timestep analysis
+cka_batch_size: 64            # batch size for CKA computation
 
 # ── Return / advantage weighting ─────────────────────────────────────────────
-win_threshold: 0.1            # minimum return to be counted as a "win"
+win_threshold: 0.5            # minimum return to be counted as a "win"
 return_weight_floor: 0.1      # clip floor for return weights
 return_weight_cap: 5.0        # clip ceiling for return weights
 

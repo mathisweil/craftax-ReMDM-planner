@@ -146,7 +146,7 @@ def _ffn_only_opt(config: dict, params: Any) -> Any:
 
 
 def _layer_ablation_top_n_opt(n: int) -> OptimizerFactory:
-    """Factory: freeze all transformer blocks except the top n."""
+    """Factory: freeze all transformer blocks except the top n + head."""
     def _opt(config: dict, params: Any) -> Any:
         n_layers = config.get("N_LAYERS", 4)
         # Top n blocks have the highest indices
@@ -156,8 +156,10 @@ def _layer_ablation_top_n_opt(n: int) -> OptimizerFactory:
         for i in range(n_layers):
             if i not in trainable_block_indices:
                 frozen.append(f"TransformerBlock_{i}")
-        # Always freeze obs encoder and head for this ablation
+        # Freeze obs encoder but keep head trainable
         frozen += ["Dense_0", "Dense_1", "SinusoidalPosEmbed_", "Embed_"]
+        # Note: the final output Dense (head) is NOT frozen; it has a
+        # higher index than Dense_0/Dense_1 and is therefore not matched.
         return make_optimizer_frozen_paths(config, params, frozen)
     return _opt
 

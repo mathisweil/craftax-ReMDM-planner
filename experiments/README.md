@@ -25,6 +25,7 @@ rl_finetuning/
 │   ├── representation.py     # KL drift, CKA similarity, activation norms
 │   └── timestep.py           # t-bin gradient norms, per-t loss decomposition
 ├── analysis/
+│   ├── action_distribution.py # Pre- vs post-finetuning action dist divergences + plots
 │   ├── plots.py              # All matplotlib figure generators
 │   ├── tables.py             # Summary tables as polars DataFrames + LaTeX export
 │   └── report.py             # diagnosis.md + decision tree figure
@@ -83,6 +84,13 @@ python experiments/rl_finetuning/run_ablations.py \
     --results_path experiments/rl_finetuning/outputs/run_20250101_120000/results.json
 ```
 
+**Merge multi-GPU results:**
+```bash
+python experiments/rl_finetuning/run_ablations.py \
+    --merge outputs/gpu0/results.json outputs/gpu1/results.json \
+    --output_dir experiments/rl_finetuning/outputs/merged/
+```
+
 **List all ablations:**
 ```bash
 python experiments/rl_finetuning/run_ablations.py --list
@@ -139,7 +147,12 @@ experiments/rl_finetuning/outputs/{run_id}/
 │   ├── win_rate_and_effective_batch_size.png
 │   ├── achievement_breakdown.png          # Start vs end achievement rates (stacked bars)
 │   ├── achievement_collapse_{name}.png    # Per-ablation achievement heatmap over time
-│   └── diagnosis_decision_tree.png
+│   ├── diagnosis_decision_tree.png
+│   └── action_dist/
+│       ├── action_freq_{name}.png         # Side-by-side pre/post action frequency bars
+│       ├── transition_matrix_{name}.png   # 3-panel heatmap (pre, post, difference)
+│       ├── action_metrics_{name}.png      # 2x2 dashboard (entropy, effective, Gini, divergences)
+│       └── js_divergence_comparison.png   # Cross-ablation JS divergence bar chart
 └── tables/
     ├── main_results.{csv,tex}
     ├── gradient_analysis.{csv,tex}
@@ -184,6 +197,9 @@ N of 25 ablations is fully valid and loadable by `--analyze_only --results_path`
 | Win rate | every 10 iters | Signal sparsity |
 | Effective batch size | every 10 iters | Gradient concentration |
 | Gradient surgery fraction | every `grad_align_every` | PCGrad projected mass |
+| Action dist JS divergence | post-training | Mode collapse vs drift? |
+| Action dist KL / TV | post-training | Magnitude of behavioural shift |
+| Action transition matrix | post-training | Bigram structure change |
 
 ### W&B namespace
 

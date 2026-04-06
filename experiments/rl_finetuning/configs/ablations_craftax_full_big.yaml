@@ -1,0 +1,109 @@
+# =============================================================================
+# RL Fine-Tuning Ablation Suite — Full Craftax (big model, 384/8/6)
+# Matches checkpoint: final_craftax_full_expc_v2.yaml (Exp C-Full v2 DAgger)
+# Target hardware: QMUL H200 (8 GB VRAM budget)
+# Self-contained — does NOT require defaults.yaml.
+# =============================================================================
+
+# ── Environment ───────────────────────────────────────────────────────────────
+env_name: "Craftax-Symbolic-v1"
+use_optimistic_resets: false
+optimistic_reset_ratio: 16
+
+# ── Transformer architecture (must match pretrained checkpoint) ───────────────
+d_model: 384
+n_heads: 8
+n_layers: 6
+d_ff: 768
+obs_encoder_layers: 2
+obs_encoder_width: 768
+dropout_rate: 0.1
+
+# ── Diffusion (must match pretrained checkpoint) ─────────────────────────────
+plan_horizon: 32
+diffusion_schedule: "cosine"
+train_sigma: 0.0
+label_smoothing: 0.0
+
+# ── Reverse sampling (eval) ──────────────────────────────────────────────────
+val_diffusion_steps: 25
+remask_strategy: "rescale"
+eta: 0.5
+use_loop: true
+t_on: 0.7
+t_off: 0.3
+temperature: 0.3
+top_p: 0.95
+
+# ── Training loop (sized for 8 GB VRAM with obs_dim=8268) ────────────────────
+max_iter: 500
+num_envs: 32                  # conservative for large obs (8 GB budget)
+num_steps: 128
+batch_size: 256               # conservative (8 GB budget)
+lr: 3.0e-4
+weight_decay: 1.0e-4
+max_grad_norm: 1.0
+collect_temp: 1.0
+ema_decay: 0.999
+
+# ── Evaluation ────────────────────────────────────────────────────────────────
+eval_every: 25
+eval_steps: 512
+eval_replan: 8
+
+# ── PPO collector ─────────────────────────────────────────────────────────────
+ppo_model_type: "ppo_rnn"
+layer_size: 512
+
+# ── Diagnostic frequencies ────────────────────────────────────────────────────
+grad_align_every: 25
+repr_drift_every: 25
+t_analysis_every: 25
+cka_every: 50
+per_layer_every: 25
+t_analysis_n_bins: 10
+cka_batch_size: 32            # reduced for 8 GB
+
+# ── Return / advantage weighting ─────────────────────────────────────────────
+win_threshold: 0.5
+return_weight_floor: 0.1
+return_weight_cap: 5.0
+
+# ── Group A: Regularisation / Constraint Methods ─────────────────────────────
+ewc_lambda: 100.0
+ewc_fisher_batches: 20
+llrd_decay: 0.9
+lora_rank: 8
+lora_alpha: 16.0
+mixed_replay_ratio: 0.25
+mixed_replay_buffer_size: 5000  # smaller: each entry has obs_dim=8268
+trust_region_kl: 0.05
+kl_coef: 0.1
+
+# ── Group B: Training Signal Modifications ────────────────────────────────────
+t_curriculum_start: 0.8
+t_curriculum_end: 0.2
+t_curriculum_steps: 200
+t_max_low: 0.2
+entropy_coef: 0.01
+adv_clip_eps: 0.2
+
+# ── Group C: Architecture / Parameter Isolation ───────────────────────────────
+layer_ablation_top_n: 1
+
+# ── Group D: Reward / Data Quality ───────────────────────────────────────────
+reward_filter_percentile: 75
+running_stats_ema_decay: 0.99
+reward_model_width: 64
+reward_model_depth: 2
+reward_model_lr: 1.0e-3
+reward_model_train_steps: 50
+
+# ── Output / Logging ──────────────────────────────────────────────────────────
+use_wandb: true
+wandb_project: "remdm-craftax-ablations"
+wandb_entity: "mathis-weil-university-college-london-ucl-"
+save_checkpoints: false
+
+# ── Multi-seed ────────────────────────────────────────────────────────────────
+num_seeds: 3

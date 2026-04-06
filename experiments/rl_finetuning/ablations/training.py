@@ -165,6 +165,7 @@ class AblationCarry(NamedTuple):
 
     Fields:
         state:       Flax TrainState.
+        ema_params:  Exponential moving average of model parameters (for eval).
         env_state:   Gymnax environment state.
         obs:         ``[num_envs, obs_dim]`` current observations.
         done:        ``[num_envs]`` episode-done flags.
@@ -178,6 +179,7 @@ class AblationCarry(NamedTuple):
     """
 
     state: TrainState
+    ema_params: Any
     env_state: Any
     obs: jax.Array
     done: jax.Array
@@ -724,6 +726,9 @@ def make_run_ablation(
     rm_depth = config.get("REWARD_MODEL_DEPTH", 2)
     rm_lr = config.get("REWARD_MODEL_LR", 1e-3)
 
+    # EMA decay for eval model
+    ema_decay = config.get("EMA_DECAY", 0.999)
+
     # LoRA setup
     is_lora = spec.name == "lora"
     lora_rank = config.get("LORA_RANK", 8)
@@ -793,7 +798,10 @@ def make_run_ablation(
         apply_train, schedule_fn, schedule_deriv_fn, num_actions, sigma_t,
     )
     repr_drift_fn = make_repr_drift_fn(apply_eval, schedule_fn, num_actions)
-    cka_fn = make_cka_fn(apply_eval, schedule_fn, num_actions)
+    cka_fn = make_cka_fn(
+        apply_eval, schedule_fn, num_actions,
+        cka_batch_size=config.get("CKA_BATCH_SIZE", 64),
+    )
     t_analysis_fn = make_t_analysis_fn(
         apply_train, schedule_fn, schedule_deriv_fn, num_actions, sigma_t, n_t_bins,
     )
@@ -855,8 +863,12 @@ def make_run_ablation(
             # Dummy: needs same pytree structure for scan carry
             _, rm_state = _build_reward_model(obs_dim, rm_rng, 4, 1, 1e-4)
 
+        # EMA params initialised as a copy of the initial params
+        ema_params_init = jax.tree.map(jnp.array, state.params)
+
         carry_init = AblationCarry(
             state=state,
+            ema_params=ema_params_init,
             env_state=env_state,
             obs=obs,
             done=done,
@@ -1002,6 +1014,13 @@ def make_run_ablation(
                 surgery_frac = jnp.array(0.0)
                 surgery_n = jnp.array(0, dtype=jnp.int32)
 
+            # -- EMA update --
+            ema_params_new = jax.tree.map(
+                lambda ema, p: ema_decay * ema + (1.0 - ema_decay) * p,
+                carry.ema_params,
+                state.params,
+            )
+
             # -- Win rate and effective batch size --
             win_rate_val = jnp.mean((flat_returns > win_thresh).astype(jnp.float32))
             eff_bs = _effective_batch_size(adv_b)
@@ -1067,9 +1086,9 @@ def make_run_ablation(
                 lambda: jnp.zeros(num_param_leaves),
             )
 
-            # -- Eval (conditional) --
+            # -- Eval (conditional, uses EMA params) --
             def _do_eval() -> jax.Array:
-                eval_info = eval_policy(state.params, eval_rng)
+                eval_info = eval_policy(ema_params_new, eval_rng)
                 return eval_info["returned_episode_returns"]
 
             eval_score = jax.lax.cond(
@@ -1110,6 +1129,7 @@ def make_run_ablation(
 
             new_carry = AblationCarry(
                 state=state,
+                ema_params=ema_params_new,
                 env_state=env_state_new,
                 obs=obs_new,
                 done=done_new,
@@ -1361,9 +1381,9 @@ def run_ablation(
 
     config_with_eval = {**config, "NUM_ACTIONS": num_actions}
     eval_policy = build_eval_fn(env, env_params, active_eval, config_with_eval)
-    final_params = jax.device_get(final_carry.state.params)
+    final_params = jax.device_get(final_carry.ema_params)
 
-    final_info = eval_policy(final_carry.state.params, final_carry.rng)
+    final_info = eval_policy(final_carry.ema_params, final_carry.rng)
     final_score = float(final_info.get("returned_episode_returns", jnp.array(0.0)))
 
     # Extract per-achievement unlock rates from final eval

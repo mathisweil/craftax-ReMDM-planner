@@ -86,6 +86,9 @@ def _score_hypothesis(
 ) -> dict:
     """Score a hypothesis by how many of its supporting ablations succeeded.
 
+    An ablation "supports" a hypothesis if its score exceeds
+    ``max(pretrained_score, baseline_score) + 0.01``.
+
     Args:
         hyp_name:         Hypothesis name.
         hyp_info:         Dict with ``supporting_ablations``, ``description``, ``recommendation``.
@@ -96,6 +99,9 @@ def _score_hypothesis(
         Dict with ``hypothesis``, ``evidence_score``, ``n_supporting``, ``n_tested``,
         ``description``, ``recommendation``.
     """
+    baseline_score = results.get("baseline_rl", {}).get("score", pretrained_score)
+    threshold = max(pretrained_score, baseline_score) + 0.01
+
     n_tested = 0
     n_supporting = 0
     supporting_names = []
@@ -105,7 +111,7 @@ def _score_hypothesis(
             continue
         n_tested += 1
         score = results[abl_name]["score"]
-        if score > pretrained_score - 0.005:
+        if score > threshold:
             n_supporting += 1
             supporting_names.append(abl_name)
 
@@ -211,7 +217,7 @@ def generate_diagnosis_report(
     # Identify primary failure mode
     primary = scored[0]
     all_failed = all(
-        res["score"] < pretrained_score - 0.005
+        res["score"] < pretrained_score - 0.1
         for name, res in results.items()
         if name != "baseline_rl"
     )
@@ -236,7 +242,7 @@ def generate_diagnosis_report(
             "",
         ]
     else:
-        n_improved = sum(1 for res in results.values() if res["score"] > pretrained_score - 0.005)
+        n_improved = sum(1 for res in results.values() if res["score"] > pretrained_score - 0.1)
         lines += [
             f"**{n_improved}/{len(results)} ablations** achieved scores near or above the pretrained baseline.",
             "",
@@ -284,7 +290,7 @@ def generate_diagnosis_report(
     for name, res in sorted(results.items(), key=lambda x: x[1]["score"], reverse=True):
         score = res["score"]
         delta = score - pretrained_score
-        verdict = "IMPROVEMENT" if delta > 0.005 else "COLLAPSE" if score < pretrained_score - 0.005 else "NEUTRAL"
+        verdict = "IMPROVEMENT" if delta > 0.05 else "COLLAPSE" if score < pretrained_score - 0.1 else "NEUTRAL"
         spec = REGISTRY.get(name)
         hypothesis_text = spec.hypothesis if spec else "N/A"
         lines += [
