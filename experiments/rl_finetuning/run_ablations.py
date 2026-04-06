@@ -37,9 +37,14 @@ from __future__ import annotations
 import argparse
 import datetime
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any
+
+# Suppress XLA/Triton compiler C++ logs before JAX import
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+os.environ.setdefault("XLA_FLAGS", "--xla_log_level=0")
 
 import jax
 import jax.numpy as jnp

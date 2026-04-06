@@ -35,11 +35,11 @@ t_off: 0.3
 temperature: 0.3
 top_p: 0.95
 
-# ── Training loop (24 GB VRAM, obs_dim=8268) ─────────────────────────────────
+# ── Training loop (24 GB VRAM — obs_dim=8268, ~6x Classic memory per env) ────
 max_iter: 500
-num_envs: 64
+num_envs: 128                 # 2x default (conservative: obs is 6x larger)
 num_steps: 128
-batch_size: 512
+batch_size: 1024              # 2x default
 lr: 3.0e-4
 weight_decay: 1.0e-4
 max_grad_norm: 1.0
@@ -48,7 +48,7 @@ ema_decay: 0.999
 
 # ── Evaluation ────────────────────────────────────────────────────────────────
 eval_every: 25
-eval_steps: 512
+eval_steps: 1024              # longer eval for less noisy metrics
 eval_replan: 8
 
 # ── PPO collector ─────────────────────────────────────────────────────────────
@@ -62,7 +62,7 @@ t_analysis_every: 25
 cka_every: 50
 per_layer_every: 25
 t_analysis_n_bins: 10
-cka_batch_size: 64
+cka_batch_size: 128
 
 # ── Return / advantage weighting ─────────────────────────────────────────────
 win_threshold: 0.5
