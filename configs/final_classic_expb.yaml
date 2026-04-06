@@ -1,0 +1,84 @@
+# =============================================================================
+# FINAL — Craftax Classic DAgger (Exp B: big model + slow beta)
+# This is the config that produced the Classic DAgger checkpoint used for
+# RL finetuning ablations. Trained on RTX 3090 Ti 24 GB.
+# Result: val/achievements ~12-13, best_val_return=11.84 (1500 updates)
+# =============================================================================
+
+# ── Environment ──────────────────────────────────────────────────────────────
+env_name: "Craftax-Classic-Symbolic-v1"
+use_optimistic_resets: false
+optimistic_reset_ratio: 16
+
+# ── Transformer architecture ────────────────────────────────────────────────
+d_model: 384
+n_heads: 8
+n_layers: 6
+d_ff: 768
+obs_encoder_layers: 2
+obs_encoder_width: 768
+dropout_rate: 0.1
+
+# ── Diffusion ────────────────────────────────────────────────────────────────
+plan_horizon: 32
+diffusion_schedule: "cosine"
+train_sigma: 0.0
+label_smoothing: 0.0
+
+# ── Reverse sampling ────────────────────────────────────────────────────────
+diffusion_steps: 15
+remask_strategy: "rescale"
+eta: 0.5
+use_loop: true
+t_on: 0.7
+t_off: 0.3
+temperature: 0.5
+top_p: 0.95
+
+# ── Optimisation ────────────────────────────────────────────────────────────
+lr: 3.0e-4
+max_grad_norm: 1.0
+batch_size: 1024
+
+# ── Offline training ────────────────────────────────────────────────────────
+total_timesteps: 1.0e+8
+num_envs: 4096
+num_steps: 128
+num_minibatches: 8
+update_epochs: 8
+num_repeats: 1
+collect_temperature: 1.0
+lr_warmup_steps: 200
+return_weight_cap: 5.0
+val_interval: 30
+val_diffusion_steps: 50
+val_replan_every: 4
+val_steps: 256
+
+# ── Online DAgger training ──────────────────────────────────────────────────
+num_updates: 1500
+replan_every: 4
+dagger_beta_init: 1.0
+dagger_beta_decay: 0.9993
+dagger_buffer_max: 1000000
+
+# ── Data collection ─────────────────────────────────────────────────────────
+collect_num_steps: 10000000
+collect_num_envs: 128
+ppo_model_type: "ppo_rnn"
+layer_size: 512
+
+# ── Inference ────────────────────────────────────────────────────────────────
+eval_steps: 10000
+eval_num_envs: 32
+diffusion_steps_eval: 10
+
+# ── Checkpointing ───────────────────────────────────────────────────────────
+checkpoint_dir: "checkpoints_exp_b"
+save_policy: true
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+seed: 42
+use_wandb: true
+wandb_project: "remdm-craftax"
+wandb_entity: "mathis-weil-university-college-london-ucl-"

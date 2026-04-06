@@ -24,10 +24,11 @@ import optax
 
 
 def make_optimizer_standard(config: dict, params: Any = None) -> optax.GradientTransformation:
-    """Adam with global gradient clipping — baseline optimizer.
+    """AdamW with global gradient clipping — baseline optimizer.
 
     Args:
-        config: UPPERCASE config dict with ``LR`` and ``MAX_GRAD_NORM``.
+        config: UPPERCASE config dict with ``LR``, ``WEIGHT_DECAY``,
+                and ``MAX_GRAD_NORM``.
         params: Unused; accepted for uniform interface.
 
     Returns:
@@ -35,7 +36,11 @@ def make_optimizer_standard(config: dict, params: Any = None) -> optax.GradientT
     """
     return optax.chain(
         optax.clip_by_global_norm(config.get("MAX_GRAD_NORM", 1.0)),
-        optax.adam(config.get("LR", 3e-4), eps=1e-5),
+        optax.adamw(
+            config.get("LR", 3e-4),
+            weight_decay=config.get("WEIGHT_DECAY", 1e-4),
+            eps=1e-5,
+        ),
     )
 
 
@@ -44,16 +49,20 @@ def make_optimizer_standard(config: dict, params: Any = None) -> optax.GradientT
 # ---------------------------------------------------------------------------
 
 
-def _get_llrd_label(path: tuple) -> str:
+def _get_llrd_label(path: tuple, head_fragments: tuple[str, ...] = ()) -> str:
     """Assign a learning-rate group label to a parameter path.
 
     Groups (from fastest to slowest LR):
-    - ``head``:       final output projection
-    - ``block_{i}``:  TransformerBlock at index i (0 = first / earliest)
-    - ``obs_enc``:    observation encoder layers
+    - ``head``:       final output projection (highest LR = base_lr)
+    - ``block_{i}``:  TransformerBlock at index i
+    - ``obs_enc``:    observation encoder layers (lowest LR)
 
     Args:
-        path: Tuple of ``jax.tree_util.KeyEntry`` objects.
+        path:           Tuple of ``jax.tree_util.KeyEntry`` objects.
+        head_fragments: Path substrings that identify head parameters.
+                        Parameters not in any TransformerBlock and not
+                        matching any head fragment are classified as
+                        ``obs_enc``.
 
     Returns:
         Group label string.
@@ -65,12 +74,18 @@ def _get_llrd_label(path: tuple) -> str:
             return f"block_{int(block_str)}"
         except ValueError:
             return "head"
-    # Obs encoder: Dense layers and LayerNorms before TransformerBlocks
+    # Parameters outside TransformerBlocks: distinguish head vs obs encoder.
+    # The head is the final Dense projection (action output); obs encoder
+    # includes early Dense layers, LayerNorms, and embeddings.
+    if head_fragments and any(frag in path_str for frag in head_fragments):
+        return "head"
+    # Heuristic: the last Dense layer in a @nn.compact module typically has
+    # the highest index.  Fall back to obs_enc for everything else.
     return "obs_enc"
 
 
 def make_optimizer_llrd(config: dict, params: Any) -> optax.GradientTransformation:
-    """Adam with Layer-wise Learning Rate Decay (LLRD).
+    """AdamW with Layer-wise Learning Rate Decay (LLRD).
 
     Assigns lower learning rates to earlier (more general) layers.
     LR for a layer at depth d from the top = base_lr * decay^d.
@@ -81,8 +96,8 @@ def make_optimizer_llrd(config: dict, params: Any) -> optax.GradientTransformati
     - Obs encoder:              base_lr * decay^(N+1)
 
     Args:
-        config: UPPERCASE config dict with ``LR``, ``MAX_GRAD_NORM``, ``LLRD_DECAY``,
-                and ``N_LAYERS``.
+        config: UPPERCASE config dict with ``LR``, ``WEIGHT_DECAY``,
+                ``MAX_GRAD_NORM``, ``LLRD_DECAY``, and ``N_LAYERS``.
         params: Parameter pytree used to build the label tree.
 
     Returns:
@@ -92,23 +107,50 @@ def make_optimizer_llrd(config: dict, params: Any) -> optax.GradientTransformati
     decay = config.get("LLRD_DECAY", 0.9)
     n_layers = config.get("N_LAYERS", 4)
     max_grad_norm = config.get("MAX_GRAD_NORM", 1.0)
+    weight_decay = config.get("WEIGHT_DECAY", 1e-4)
+
+    # Identify head parameters: the final Dense layer outside
+    # TransformerBlocks is the action head (highest LR = base_lr).
+    # We scan all param paths to find the highest Dense_N index
+    # outside TransformerBlocks.
+    head_fragments: list[str] = []
+    max_dense_idx = -1
+    all_paths: list[str] = jax.tree.leaves(
+        jax.tree_util.tree_map_with_path(
+            lambda path, _: "/".join(
+                str(k.key) if hasattr(k, "key") else str(k) for k in path
+            ),
+            params,
+        )
+    )
+    for p in all_paths:
+        if "TransformerBlock_" not in p:
+            for segment in p.split("/"):
+                if segment.startswith("Dense_"):
+                    try:
+                        idx = int(segment.split("_")[1])
+                        if idx > max_dense_idx:
+                            max_dense_idx = idx
+                    except (ValueError, IndexError):
+                        pass
+    if max_dense_idx >= 0:
+        head_fragments = [f"Dense_{max_dense_idx}"]
 
     # Build label tree
     label_tree = jax.tree_util.tree_map_with_path(
-        lambda path, _: _get_llrd_label(path), params
+        lambda path, _: _get_llrd_label(path, tuple(head_fragments)), params
     )
 
     # Build optimizer for each label
-    transforms: dict[str, optax.GradientTransformation] = {"head": optax.adam(base_lr, eps=1e-5)}
-    # Head: fastest (depth 0 from top)
-    # Obs encoder: slowest (depth n_layers+1)
+    transforms: dict[str, optax.GradientTransformation] = {
+        "head": optax.adamw(base_lr, weight_decay=weight_decay, eps=1e-5),
+    }
     obs_lr = base_lr * (decay ** (n_layers + 1))
-    transforms["obs_enc"] = optax.adam(obs_lr, eps=1e-5)
-    # Transformer blocks: depth 1..n_layers from top (last block = 1, first = n_layers)
+    transforms["obs_enc"] = optax.adamw(obs_lr, weight_decay=weight_decay, eps=1e-5)
     for i in range(n_layers):
-        depth_from_top = n_layers - i  # block_0 is farthest from head
+        depth_from_top = n_layers - i
         lr_i = base_lr * (decay ** depth_from_top)
-        transforms[f"block_{i}"] = optax.adam(lr_i, eps=1e-5)
+        transforms[f"block_{i}"] = optax.adamw(lr_i, weight_decay=weight_decay, eps=1e-5)
 
     return optax.chain(
         optax.clip_by_global_norm(max_grad_norm),
@@ -139,6 +181,7 @@ def make_optimizer_frozen_paths(
     """
     max_grad_norm = config.get("MAX_GRAD_NORM", 1.0)
     lr = config.get("LR", 3e-4)
+    weight_decay = config.get("WEIGHT_DECAY", 1e-4)
 
     def should_freeze(path: tuple) -> bool:
         path_str = "/".join(str(k.key) if hasattr(k, "key") else str(k) for k in path)
@@ -151,7 +194,10 @@ def make_optimizer_frozen_paths(
 
     return optax.chain(
         optax.clip_by_global_norm(max_grad_norm),
-        optax.masked(optax.adam(lr, eps=1e-5), mask_tree),
+        optax.masked(
+            optax.adamw(lr, weight_decay=weight_decay, eps=1e-5),
+            mask_tree,
+        ),
     )
 
 
@@ -286,6 +332,7 @@ def make_optimizer_lora_only(
     """
     lr = config.get("LR", 3e-4)
     max_grad_norm = config.get("MAX_GRAD_NORM", 1.0)
+    weight_decay = config.get("WEIGHT_DECAY", 1e-4)
 
     mask_tree = {
         "base": jax.tree.map(lambda _: False, base_params),
@@ -294,7 +341,10 @@ def make_optimizer_lora_only(
 
     return optax.chain(
         optax.clip_by_global_norm(max_grad_norm),
-        optax.masked(optax.adam(lr, eps=1e-5), mask_tree),
+        optax.masked(
+            optax.adamw(lr, weight_decay=weight_decay, eps=1e-5),
+            mask_tree,
+        ),
     )
 
 

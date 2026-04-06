@@ -8,7 +8,7 @@ Style conventions:
 - Font sizes: title=13, axis labels=11, ticks=9, legend=9
 - Grid: alpha=0.3, linestyle="--"
 - Pretrained baseline shown as dashed horizontal line in comparison plots
-- Group colours: Baseline=grey, A=blue, B=orange, C=green, D=red
+- Group colours: Baseline=grey, A=blue, B=orange, C=teal, D=deep pink
 """
 
 from __future__ import annotations
@@ -40,13 +40,28 @@ _STYLE = {
     "legend.fontsize": 9,
 }
 
-_GROUP_COLORS = {
-    "Baseline": "#9E9E9E",
-    "A": "#2196F3",
-    "B": "#FF9800",
-    "C": "#4CAF50",
-    "D": "#F44336",
+_GROUP_COLORS: dict[str, str] = {
+    "Baseline": "#757575",
+    "A": "#1976D2",   # blue
+    "B": "#F57C00",   # orange
+    "C": "#00897B",   # teal (colorblind-safe replacement for green)
+    "D": "#C2185B",   # deep pink (colorblind-safe replacement for red)
 }
+
+_LINESTYLES: list = [
+    "-",
+    "--",
+    "-.",
+    ":",
+    (0, (3, 1, 1, 1)),   # dash-dot-dot
+    (0, (5, 2)),          # long dash
+    (0, (1, 1)),          # dense dots
+]
+
+# Pre-compute per-group member ordering for linestyle cycling.
+_GROUP_MEMBERS: dict[str, list[str]] = {}
+for _n, _s in REGISTRY.items():
+    _GROUP_MEMBERS.setdefault(_s.group, []).append(_n)
 
 
 def _group_color(name: str) -> str:
@@ -60,7 +75,55 @@ def _group_color(name: str) -> str:
     """
     spec = REGISTRY.get(name)
     group = spec.group if spec else "Baseline"
-    return _GROUP_COLORS.get(group, "#9E9E9E")
+    return _GROUP_COLORS.get(group, "#757575")
+
+
+def _ablation_style(name: str) -> dict[str, object]:
+    """Return matplotlib line-plot kwargs for an ablation.
+
+    Each ablation within a group gets a unique linestyle so that
+    overlaid lines are visually distinguishable even when colours
+    are shared.
+
+    Args:
+        name: Ablation name key (looked up in REGISTRY).
+
+    Returns:
+        Dict with ``color`` and ``linestyle`` keys.
+    """
+    spec = REGISTRY.get(name)
+    group = spec.group if spec else "Baseline"
+    color = _GROUP_COLORS.get(group, "#757575")
+    members = _GROUP_MEMBERS.get(group, [name])
+    idx = members.index(name) if name in members else 0
+    ls = _LINESTYLES[idx % len(_LINESTYLES)]
+    return {"color": color, "linestyle": ls}
+
+
+def _overlay_legend(ax: plt.Axes, fig: plt.Figure, *, ncol: int = 5) -> None:
+    """Place legend below axes to handle many entries without overlap.
+
+    For 8 or fewer labels the legend is placed inside the axes.
+    For more, it is placed below the axes so that ``bbox_inches='tight'``
+    in savefig captures it without clipping.
+
+    Args:
+        ax:   Target axes.
+        fig:  Parent figure (unused but kept for API symmetry).
+        ncol: Max columns for the external legend.
+    """
+    handles, labels = ax.get_legend_handles_labels()
+    if not labels:
+        return
+    if len(labels) <= 8:
+        ax.legend(fontsize=8)
+        return
+    ax.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.12),
+        ncol=min(ncol, len(labels)),
+        fontsize=7,
+    )
 
 
 def _ema(values: list[float], alpha: float = 0.3) -> list[float]:
@@ -249,13 +312,13 @@ def plot_eval_scores_over_training(
             history: AblationHistory = res["history"]
             if history.eval_iters:
                 ax.plot(history.eval_iters, history.eval_score,
-                        color=_group_color(name), linewidth=1.2, alpha=0.8, label=name)
+                        **_ablation_style(name), linewidth=1.2, alpha=0.8, label=name)
 
         ax.set_title("Eval Score vs Iteration — All Ablations")
         ax.set_xlabel("Iteration")
         ax.set_ylabel("Eval Score")
-        ax.legend(loc="lower right", ncol=2)
         fig.tight_layout()
+        _overlay_legend(ax, fig)
         _save(fig, output_dir / "eval_scores_over_training.png")
 
 
@@ -313,14 +376,14 @@ def plot_gradient_alignment(
             history: AblationHistory = res["history"]
             if history.grad_align_iters:
                 ax.plot(history.grad_align_iters, history.grad_align,
-                        color=_group_color(name), linewidth=1.2, alpha=0.8, label=name)
+                        **_ablation_style(name), linewidth=1.2, alpha=0.8, label=name)
 
         ax.set_title("Gradient Alignment (RL vs BC cosine similarity) — All Ablations")
         ax.set_xlabel("Iteration")
         ax.set_ylabel("Cosine Similarity")
         ax.set_ylim(-1.1, 1.1)
-        ax.legend(loc="lower right", ncol=2)
         fig.tight_layout()
+        _overlay_legend(ax, fig)
         _save(fig, output_dir / "gradient_alignment.png")
 
 
@@ -400,24 +463,38 @@ def plot_representation_drift(
     results: dict[str, dict],
     output_dir: Path,
 ) -> None:
-    """KL drift from pretrained for all ablations, overlaid.
+    """4-panel KL drift from pretrained: full, low-t, mid-t, high-t.
 
     Args:
         results:    Dict mapping name -> {"history": AblationHistory}.
         output_dir: Output directory.
     """
+    panels = [
+        ("repr_drift_kl", "Full [eps, 1.0]"),
+        ("repr_drift_kl_low_t", "Low-t [eps, 0.2]"),
+        ("repr_drift_kl_mid_t", "Mid-t [0.3, 0.7]"),
+        ("repr_drift_kl_high_t", "High-t [0.8, 1.0]"),
+    ]
+
     with plt.rc_context(_STYLE):
-        fig, ax = plt.subplots(figsize=(12, 5))
-        for name, res in results.items():
-            history: AblationHistory = res["history"]
-            if history.repr_drift_iters:
-                ax.plot(history.repr_drift_iters, history.repr_drift_kl,
-                        color=_group_color(name), linewidth=1.2, alpha=0.8, label=name)
-        ax.set_title("KL Divergence from Pretrained — All Ablations")
-        ax.set_xlabel("Iteration")
-        ax.set_ylabel("KL Divergence")
-        ax.legend(loc="upper left", ncol=2)
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        fig.suptitle("KL Divergence from Pretrained — All Ablations", fontsize=14, fontweight="bold")
+
+        for ax, (attr, title) in zip(axes.ravel(), panels):
+            for name, res in results.items():
+                history: AblationHistory = res["history"]
+                vals = getattr(history, attr, [])
+                if history.repr_drift_iters and vals:
+                    ax.plot(
+                        history.repr_drift_iters, vals,
+                        **_ablation_style(name), linewidth=1.2, alpha=0.8, label=name,
+                    )
+            ax.set_title(title)
+            ax.set_xlabel("Iteration")
+            ax.set_ylabel("KL Divergence")
+
         fig.tight_layout()
+        _overlay_legend(axes.ravel()[-1], fig)
         _save(fig, output_dir / "representation_drift.png")
 
 
@@ -442,13 +519,13 @@ def plot_cka_similarity(
             history: AblationHistory = res["history"]
             if history.cka_iters:
                 ax.plot(history.cka_iters, history.cka_similarity,
-                        color=_group_color(name), linewidth=1.2, alpha=0.8, label=name)
+                        **_ablation_style(name), linewidth=1.2, alpha=0.8, label=name)
         ax.set_title("CKA Similarity with Pretrained Representations")
         ax.set_xlabel("Iteration")
         ax.set_ylabel("CKA (0=random, 1=identical)")
         ax.set_ylim(-0.05, 1.1)
-        ax.legend(loc="lower left", ncol=2)
         fig.tight_layout()
+        _overlay_legend(ax, fig)
         _save(fig, output_dir / "cka_similarity.png")
 
 
@@ -485,14 +562,14 @@ def plot_t_analysis(
         axes[0].set_title("High-t (solid) vs Low-t (dashed) Gradient Norms")
         axes[0].set_xlabel("Iteration")
         axes[0].set_ylabel("L2 Norm")
-        axes[0].legend(loc="upper right", ncol=2)
+        axes[0].legend(loc="upper right", ncol=3, fontsize=7)
 
         axes[1].axhline(0, linestyle="--", color="black", alpha=0.4)
         axes[1].set_title("Low-t / High-t Gradient Cosine Similarity")
         axes[1].set_xlabel("Iteration")
         axes[1].set_ylabel("Cosine Similarity")
         axes[1].set_ylim(-1.1, 1.1)
-        axes[1].legend(loc="lower right", ncol=2)
+        axes[1].legend(loc="lower right", ncol=3, fontsize=7)
 
         fig.tight_layout()
         _save(fig, output_dir / "t_distribution_analysis.png")
@@ -551,23 +628,23 @@ def plot_return_distributions(
 
         for name, res in results.items():
             history: AblationHistory = res["history"]
-            color = _group_color(name)
+            style = _ablation_style(name)
             if history.win_rate and history.iters:
                 axes[0].plot(history.iters, history.win_rate,
-                             color=color, linewidth=1.2, alpha=0.8, label=name)
+                             **style, linewidth=1.2, alpha=0.8, label=name)
             if history.effective_batch_size and history.iters:
                 axes[1].plot(history.iters, history.effective_batch_size,
-                             color=color, linewidth=1.2, alpha=0.8, label=name)
+                             **style, linewidth=1.2, alpha=0.8, label=name)
 
         axes[0].set_title("Win Rate Over Training")
         axes[0].set_xlabel("Iteration")
         axes[0].set_ylabel("Win Rate")
-        axes[0].legend(ncol=2)
+        axes[0].legend(ncol=3, fontsize=7)
 
         axes[1].set_title("Effective Batch Size Over Training")
         axes[1].set_xlabel("Iteration")
         axes[1].set_ylabel("Effective Batch Size")
-        axes[1].legend(ncol=2)
+        axes[1].legend(ncol=3, fontsize=7)
 
         fig.tight_layout()
         _save(fig, output_dir / "win_rate_and_effective_batch_size.png")
@@ -641,7 +718,7 @@ def plot_achievement_breakdown(
             )
 
             color = cmap(j)
-            label = key if j < 20 else None  # cap legend entries
+            label = key if j < 22 else None  # Craftax has 22 achievements
             ax.bar(xs_start, start_vals, width=bar_w, bottom=bottoms_start,
                    color=color, alpha=0.9, label=label)
             ax.bar(xs_end, end_vals, width=bar_w, bottom=bottoms_end,
@@ -715,6 +792,98 @@ def plot_achievement_collapse_heatmap(
 
 
 # ---------------------------------------------------------------------------
+# 3.8 Group comparison
+# ---------------------------------------------------------------------------
+
+
+def plot_group_comparison(
+    results: dict[str, dict],
+    pretrained_score: float,
+    output_dir: Path,
+) -> None:
+    """Boxplot of final scores grouped by ablation category.
+
+    Args:
+        results:          Dict mapping name -> {"score": float}.
+        pretrained_score: Pretrained baseline score (dashed horizontal).
+        output_dir:       Output directory.
+    """
+    group_scores: dict[str, list[float]] = {}
+    for name, res in results.items():
+        spec = REGISTRY.get(name)
+        group = spec.group if spec else "?"
+        group_scores.setdefault(group, []).append(res["score"])
+
+    ordered_groups = [g for g in ("Baseline", "A", "B", "C", "D") if g in group_scores]
+    if not ordered_groups:
+        return
+
+    data = [group_scores[g] for g in ordered_groups]
+    colors = [_GROUP_COLORS.get(g, "#757575") for g in ordered_groups]
+
+    with plt.rc_context(_STYLE):
+        fig, ax = plt.subplots(figsize=(8, 5))
+        bp = ax.boxplot(data, labels=ordered_groups, patch_artist=True, widths=0.5)
+        for patch, c in zip(bp["boxes"], colors):
+            patch.set_facecolor(c)
+            patch.set_alpha(0.6)
+        ax.axhline(pretrained_score, linestyle="--", color="black", alpha=0.6, label="pretrained")
+        ax.set_title("Final Score Distribution by Ablation Group")
+        ax.set_xlabel("Group")
+        ax.set_ylabel("Final Score")
+        ax.legend()
+        fig.tight_layout()
+        _save(fig, output_dir / "group_comparison.png")
+
+
+def plot_t_bin_norms_heatmap(
+    results: dict[str, dict],
+    output_dir: Path,
+) -> None:
+    """Heatmap of per-t-bin gradient norms: rows=ablations, cols=t-bins.
+
+    Uses the final iteration's t-bin norms for each ablation.
+
+    Args:
+        results:    Dict mapping name -> {"history": AblationHistory}.
+        output_dir: Output directory.
+    """
+    names_with_data = [
+        n for n, res in results.items() if res["history"].t_bin_norms
+    ]
+    if not names_with_data:
+        return
+
+    # Get bin keys from first ablation with data
+    first_history = results[names_with_data[0]]["history"]
+    bin_keys = sorted({k for d in first_history.t_bin_norms for k in d})
+    if not bin_keys:
+        return
+
+    matrix = np.zeros((len(names_with_data), len(bin_keys)))
+    for i, name in enumerate(names_with_data):
+        final_bins = results[name]["history"].t_bin_norms[-1]
+        for j, bk in enumerate(bin_keys):
+            matrix[i, j] = final_bins.get(bk, 0.0)
+
+    with plt.rc_context(_STYLE):
+        fig, ax = plt.subplots(
+            figsize=(max(8.0, len(bin_keys) * 1.2), max(4.0, len(names_with_data) * 0.4)),
+        )
+        im = ax.imshow(matrix, aspect="auto", cmap="viridis", interpolation="nearest")
+        ax.set_xticks(range(len(bin_keys)))
+        ax.set_xticklabels(bin_keys, rotation=45, ha="right", fontsize=7)
+        ax.set_yticks(range(len(names_with_data)))
+        ax.set_yticklabels(names_with_data, fontsize=8)
+        ax.set_title("Per-t-Bin Gradient Norms (Final Iteration)")
+        ax.set_xlabel("t-Bin")
+        ax.set_ylabel("Ablation")
+        plt.colorbar(im, ax=ax, label="L2 Norm")
+        fig.tight_layout()
+        _save(fig, output_dir / "t_bin_norms_heatmap.png")
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -765,9 +934,13 @@ def generate_all_plots(
 
     logger.info("Generating timestep analysis plots...")
     plot_t_analysis(results, fig_dir)
+    plot_t_bin_norms_heatmap(results, fig_dir)
 
     logger.info("Generating return / advantage plots...")
     plot_return_distributions(results, fig_dir)
+
+    logger.info("Generating group comparison plots...")
+    plot_group_comparison(results, pretrained_score, fig_dir)
 
     if pretrained_ach_rates is not None:
         logger.info("Generating achievement tracking plots...")

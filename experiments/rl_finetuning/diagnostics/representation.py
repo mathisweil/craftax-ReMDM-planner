@@ -155,7 +155,7 @@ def make_cka_fn(
     model_apply: Callable,
     schedule_fn: ScheduleFn,
     num_actions: int,
-    cka_batch_size: int = 64,
+    cka_batch_size: int = 64,  # override via config CKA_BATCH_SIZE
 ) -> Callable:
     """Build a JIT-compiled CKA function returning a JAX scalar.
 

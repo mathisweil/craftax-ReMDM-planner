@@ -25,6 +25,11 @@ Usage::
     python experiments/rl_finetuning/run_ablations.py \\
         --analyze_only \\
         --results_path experiments/rl_finetuning/outputs/run_xyz/results.json
+
+    # Merge multi-GPU results
+    python experiments/rl_finetuning/run_ablations.py \\
+        --merge outputs/gpu0/results.json outputs/gpu1/results.json \\
+        --output_dir outputs/merged/
 """
 
 from __future__ import annotations
@@ -34,6 +39,7 @@ import datetime
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -53,6 +59,7 @@ if str(_CRAFTAX_BASELINES) not in sys.path:
 
 from experiments.rl_finetuning.ablations.registry import REGISTRY, AblationSpec
 from experiments.rl_finetuning.ablations.training import AblationHistory, run_ablation
+from experiments.rl_finetuning.analysis.action_distribution import run_action_distribution_analysis
 from experiments.rl_finetuning.analysis.plots import generate_all_plots
 from experiments.rl_finetuning.analysis.report import generate_diagnosis_report
 from experiments.rl_finetuning.analysis.tables import generate_summary_tables
@@ -161,6 +168,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Skip training; load results.json and regenerate plots/tables/report.")
     p.add_argument("--results_path", type=str, default=None,
                    help="Path to results.json for --analyze_only mode.")
+    p.add_argument("--merge", nargs="+", metavar="PATH",
+                   help="Merge multiple results.json files from multi-GPU runs, "
+                        "recompute statistics, and regenerate analysis.")
 
     # Output
     p.add_argument("--output_dir", type=str, default=None,
@@ -273,6 +283,8 @@ def _results_to_json(
         "ablations": {
             name: {
                 "score": res["score"],
+                "score_std": res.get("score_std", 0.0),
+                "all_scores": res.get("all_scores", [res["score"]]),
                 "history": res["history"].to_dict(),
             }
             for name, res in results.items()
@@ -300,9 +312,71 @@ def _results_from_json(path: str) -> tuple[dict, float, dict[str, float], dict]:
     for name, res_data in data["ablations"].items():
         results[name] = {
             "score": res_data["score"],
+            "score_std": res_data.get("score_std", 0.0),
+            "all_scores": res_data.get("all_scores", [res_data["score"]]),
             "history": AblationHistory.from_dict(res_data["history"]),
         }
     return results, pretrained_score, pretrained_ach_rates, config
+
+
+def _merge_result_files(
+    paths: list[str],
+) -> tuple[dict[str, dict], float, dict[str, float], dict]:
+    """Merge multiple results.json files from multi-GPU runs.
+
+    For ablations appearing in multiple files, per-seed scores are
+    concatenated and mean/std recomputed over the union.  The first
+    seed's history is kept for plots.
+
+    Args:
+        paths: List of paths to results.json files.
+
+    Returns:
+        Tuple of (merged_results, pretrained_score, pretrained_ach_rates, config).
+
+    Raises:
+        FileNotFoundError: If any path does not exist.
+        ValueError:        If no valid results files are provided.
+    """
+    if not paths:
+        raise ValueError("No results paths provided for --merge")
+
+    merged_results: dict[str, dict] = {}
+    pretrained_scores: list[float] = []
+    merged_ach_rates: dict[str, float] = {}
+    merged_config: dict = {}
+
+    for p in paths:
+        results, pt_score, ach_rates, config = _results_from_json(p)
+        pretrained_scores.append(pt_score)
+        if ach_rates:
+            merged_ach_rates.update(ach_rates)
+        if config:
+            merged_config.update(config)
+
+        for name, res in results.items():
+            if name not in merged_results:
+                merged_results[name] = {
+                    "history": res["history"],
+                    "all_scores": list(res["all_scores"]),
+                    "score": res["score"],
+                    "score_std": res.get("score_std", 0.0),
+                }
+            else:
+                merged_results[name]["all_scores"].extend(res["all_scores"])
+
+    # Recompute mean/std over the union of seeds
+    for name, res in merged_results.items():
+        scores = res["all_scores"]
+        res["score"] = float(np.mean(scores))
+        res["score_std"] = float(np.std(scores))
+
+    pretrained_score = float(np.mean(pretrained_scores))
+    logger.info(
+        "Merged %d files: %d ablations, pretrained=%.4f",
+        len(paths), len(merged_results), pretrained_score,
+    )
+    return merged_results, pretrained_score, merged_ach_rates, merged_config
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +408,27 @@ def main(argv: list[str] | None = None) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Output directory: %s", output_dir)
 
+    # ── Merge mode ─────────────────────────────────────────────────────────
+    if args.merge:
+        logger.info("Merging %d results files...", len(args.merge))
+        results, pretrained_score, pretrained_ach_rates, config = _merge_result_files(args.merge)
+        if args.ablations:
+            results = {k: v for k, v in results.items() if k in args.ablations}
+            logger.info("Filtered to %d ablations: %s", len(results), list(results.keys()))
+        # Write merged results
+        ach_rates_arg = pretrained_ach_rates if pretrained_ach_rates else None
+        merged_path = output_dir / "results.json"
+        merged_path.write_bytes(
+            _results_to_json(results, pretrained_score, config, ach_rates_arg)
+        )
+        logger.info("Wrote merged results to %s", merged_path)
+        # Regenerate analysis
+        tables = generate_summary_tables(results, pretrained_score, output_dir, ach_rates_arg)
+        generate_all_plots(results, pretrained_score, output_dir, ach_rates_arg)
+        generate_diagnosis_report(results, pretrained_score, tables, output_dir)
+        logger.info("Merge complete. Outputs in %s", output_dir)
+        return
+
     # ── Analysis-only mode ─────────────────────────────────────────────────
     if args.analyze_only:
         if not args.results_path:
@@ -341,6 +436,9 @@ def main(argv: list[str] | None = None) -> None:
         logger.info("Loading results from %s", args.results_path)
         results, pretrained_score, pretrained_ach_rates, config = _results_from_json(args.results_path)
         logger.info("Loaded %d ablation results.", len(results))
+        if args.ablations:
+            results = {k: v for k, v in results.items() if k in args.ablations}
+            logger.info("Filtered to %d ablations: %s", len(results), list(results.keys()))
         ach_rates_arg = pretrained_ach_rates if pretrained_ach_rates else None
         tables = generate_summary_tables(results, pretrained_score, output_dir, ach_rates_arg)
         generate_all_plots(results, pretrained_score, output_dir, ach_rates_arg)
@@ -475,13 +573,14 @@ def main(argv: list[str] | None = None) -> None:
         spec = REGISTRY[abl_name]
         seed_scores: list[float] = []
         seed_histories: list[AblationHistory] = []
+        first_seed_params: Any = None
 
         for seed_idx in range(num_seeds):
             abl_seed = seed + seed_idx * 1000
             abl_rng = jax.random.PRNGKey(abl_seed)
             logger.info("Running %s (seed %d/%d)...", abl_name, seed_idx + 1, num_seeds)
 
-            history, final_score, _ = run_ablation(
+            history, final_score, final_params = run_ablation(
                 spec=spec,
                 config=merged,
                 pretrained_params=pretrained_params,
@@ -500,6 +599,8 @@ def main(argv: list[str] | None = None) -> None:
             )
             seed_scores.append(final_score)
             seed_histories.append(history)
+            if seed_idx == 0:
+                first_seed_params = final_params
 
         # Aggregate over seeds (use first seed's history for plots; report mean score)
         mean_score = float(np.mean(seed_scores))
@@ -514,6 +615,7 @@ def main(argv: list[str] | None = None) -> None:
             "score": mean_score,
             "score_std": std_score,
             "all_scores": seed_scores,
+            "final_params": first_seed_params,  # in-memory only, not serialised
         }
 
         # ── Incremental save after each ablation ───────────────────────────
@@ -532,6 +634,14 @@ def main(argv: list[str] | None = None) -> None:
     # ── Save checkpoints ───────────────────────────────────────────────────
     # (params not saved here to keep the results JSON small;
     #  enable via --save_checkpoints if needed)
+
+    # ── Action distribution analysis ─────────────────────────────────────
+    logger.info("Running action distribution analysis...")
+    rng, ad_rng = jax.random.split(rng)
+    run_action_distribution_analysis(
+        results, pretrained_params, apply_eval,
+        env, env_params, merged, ad_rng, output_dir,
+    )
 
     # ── Analysis ───────────────────────────────────────────────────────────
     logger.info("Generating plots and tables...")
