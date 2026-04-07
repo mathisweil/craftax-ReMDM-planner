@@ -1381,9 +1381,32 @@ def run_ablation(
 
     config_with_eval = {**config, "NUM_ACTIONS": num_actions}
     eval_policy = build_eval_fn(env, env_params, active_eval, config_with_eval)
-    final_params = jax.device_get(final_carry.ema_params)
 
     final_info = eval_policy(final_carry.ema_params, final_carry.rng)
+
+    # Flatten LoRA params into base weights so downstream consumers
+    # (e.g. action distribution analysis) get standard flat params.
+    if is_lora:
+        ema = final_carry.ema_params
+        alpha = config.get("LORA_ALPHA", 16.0)
+        rank = config.get("LORA_RANK", 8)
+        scale = alpha / max(rank, 1)
+        lora_p = ema["lora"]
+
+        def _inject(path: tuple, param: jnp.ndarray) -> jnp.ndarray:
+            path_str = "/".join(
+                str(k.key) if hasattr(k, "key") else str(k) for k in path
+            )
+            if path_str in lora_p:
+                ab = lora_p[path_str]
+                return param + scale * (ab["A"] @ ab["B"])
+            return param
+
+        final_params = jax.device_get(
+            jax.tree_util.tree_map_with_path(_inject, ema["base"])
+        )
+    else:
+        final_params = jax.device_get(final_carry.ema_params)
     final_score = float(final_info.get("returned_episode_returns", jnp.array(0.0)))
 
     # Extract per-achievement unlock rates from final eval
