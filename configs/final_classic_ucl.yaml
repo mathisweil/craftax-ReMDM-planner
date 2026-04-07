@@ -41,7 +41,7 @@ max_grad_norm: 1.0
 batch_size: 1024
 
 # ── Offline training ────────────────────────────────────────────────────────
-total_timesteps: 1.0e+8
+total_timesteps: 3.0e+8
 num_envs: 4096
 num_steps: 128
 num_minibatches: 8
@@ -50,7 +50,7 @@ num_repeats: 1
 collect_temperature: 1.0
 lr_warmup_steps: 200
 return_weight_cap: 5.0
-val_interval: 30
+val_interval: 100
 val_diffusion_steps: 50
 val_replan_every: 4
 val_steps: 256
