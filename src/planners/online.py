@@ -27,7 +27,7 @@ from flax.training.train_state import TrainState
 from src.diffusion.sampling import sample_plan
 from src.diffusion.schedules import SCHEDULE_MAP
 
-from .common import make_grad_step, make_validate
+from .common import make_grad_step, make_validate, resolve_num_updates
 from .env import make_env
 from .model import (
     build_model,
@@ -579,10 +579,16 @@ def run_online(config: dict[str, Any]) -> None:
     """
     config = {k.upper(): v for k, v in config.items()}
 
+    # ONLINE_TOTAL_TIMESTEPS (env frames) is the hardware-portable source of
+    # truth: invariant under num_envs changes, so the same config trains the
+    # same amount of environment experience on any GPU.  ONLINE_NUM_UPDATES is
+    # kept as a legacy fallback for configs that prefer the update form.
+    resolve_num_updates(config, "online")
+
     if config.get("USE_WANDB"):
         init_wandb(
             config,
-            name=f"DAgger-{config['ENV_NAME']}",
+            name=f"DAgger-{config['ENV_NAME']}-{int(config['ONLINE_TOTAL_TIMESTEPS'] // 1e6)}M",
             resume_run_id=config.get("RESUME_WANDB_RUN_ID"),
         )
 
@@ -594,11 +600,7 @@ def run_online(config: dict[str, Any]) -> None:
     t0 = time.time()
     out = train_fn(rngs)
     elapsed = time.time() - t0
-
-    total_frames = (
-        config["NUM_UPDATES"] * config["NUM_ENVS"] * config["NUM_STEPS"]
-    )
-    print(f"Time: {elapsed:.1f}s  SPS: {total_frames / elapsed:.0f}")
+    print(f"Time: {elapsed:.1f}s  SPS: {config['ONLINE_TOTAL_TIMESTEPS'] / elapsed:.0f}")
 
     if config.get("USE_WANDB") and config.get("SAVE_POLICY"):
         # Final checkpoint (last iteration params)

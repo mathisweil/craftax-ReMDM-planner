@@ -143,7 +143,7 @@ Roll out the PPO agent live at each update step and train the diffusion model on
 ```bash
 python main.py --mode offline \
     --ppo_checkpoint_path /path/to/ppo_checkpoint \
-    --total_timesteps 100000000 \
+    --offline_total_timesteps 100000000 \
     --save_policy
 ```
 
@@ -155,14 +155,14 @@ The diffusion model (learner) is fine-tuned via DAgger (Dataset Aggregation). At
 # From scratch (requires PPO expert checkpoint)
 python main.py --mode online \
     --ppo_checkpoint_path /path/to/ppo_checkpoint \
-    --num_updates 1000 \
+    --online_num_updates 1000 \
     --save_policy
 
 # Warm-start from an offline checkpoint
 python main.py --mode online \
     --ppo_checkpoint_path /path/to/ppo_checkpoint \
     --offline_checkpoint_path /path/to/offline_checkpoint \
-    --num_updates 1000 \
+    --online_num_updates 1000 \
     --save_policy
 ```
 
@@ -208,7 +208,7 @@ A completed training checkpoint can be used as the starting point for a new run 
 python main.py --mode offline \
     --ppo_checkpoint_path /path/to/ppo_checkpoint \
     --resume_checkpoint_path /path/to/completed_offline_checkpoint \
-    --total_timesteps 200000000 \
+    --offline_total_timesteps 200000000 \
     --save_policy
 
 # Explicit step and wandb run ID override
@@ -217,14 +217,14 @@ python main.py --mode offline \
     --resume_checkpoint_path /path/to/completed_offline_checkpoint \
     --resume_step 1525 \
     --resume_wandb_run_id abc123xyz \
-    --total_timesteps 200000000 \
+    --offline_total_timesteps 200000000 \
     --save_policy
 
 # Resume from a W&B artifact
 python main.py --mode offline \
     --ppo_checkpoint_path /path/to/ppo_checkpoint \
     --resume_checkpoint_path wandb:my-team/remdm-craftax/policy:latest \
-    --total_timesteps 200000000 \
+    --offline_total_timesteps 200000000 \
     --save_policy
 ```
 
@@ -234,7 +234,7 @@ python main.py --mode offline \
 python main.py --mode online \
     --ppo_checkpoint_path /path/to/ppo_checkpoint \
     --resume_checkpoint_path /path/to/completed_online_checkpoint \
-    --num_updates 2000 \
+    --online_num_updates 2000 \
     --save_policy
 ```
 
@@ -319,7 +319,7 @@ Preset configs for larger runs are provided in `configs/`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `total_timesteps` | 1e8 | Total environment steps for live-PPO data collection |
+| `offline_total_timesteps` | 1e8 | Total environment steps for live-PPO data collection (offline mode) |
 | `num_envs` | 1024 | Parallel environments |
 | `num_steps` | 64 | Environment steps collected per update |
 | `num_minibatches` | 8 | Gradient minibatches per epoch |
@@ -340,7 +340,8 @@ Preset configs for larger runs are provided in `configs/`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `num_updates` | 1000 | Outer DAgger iterations |
+| `online_total_timesteps` | None | PRIMARY: env-frame budget for online DAgger (hardware-portable). Derives `num_updates`. |
+| `online_num_updates` | 1000 | LEGACY: outer DAgger iterations (used when `online_total_timesteps` is unset) |
 | `replan_every` | 4 | Environment steps per diffusion plan during validation |
 | `dagger_beta_init` | 1.0 | Initial expert mixing probability `beta_1` (1.0 = pure expert first iteration) |
 | `dagger_beta_decay` | 0.95 | Exponential decay: `beta_i = beta_1 * decay^i` |

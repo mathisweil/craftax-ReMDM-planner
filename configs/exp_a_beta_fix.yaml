@@ -1,14 +1,8 @@
 # =============================================================================
 # Experiment A — Beta decay fix only (isolate data quality)
 # Target hardware: NVIDIA RTX 3090 Ti (24 GB)
-# Baseline: configs/ucl_4090_3090.yaml
-# -----------------------------------------------------------------------------
-# CHANGES vs baseline:
-#   dagger_beta_decay:  0.998 -> 0.9993  (expert stays present ~2x longer)
-#   num_updates:        2500 -> 1500     (val plateaued by step 800; save 40%)
-#   val_interval:       50 -> 30         (more validation points in fewer steps)
-#   seed:               null -> 42       (fixed for cross-experiment comparison)
-# Everything else identical to baseline to isolate beta's effect.
+# Slows dagger_beta_decay so the expert stays present roughly 2x longer.
+# Everything else identical to the baseline.
 # =============================================================================
 
 # ── Environment ──────────────────────────────────────────────────────────────
@@ -16,7 +10,7 @@ env_name: "Craftax-Classic-Symbolic-v1"
 use_optimistic_resets: false
 optimistic_reset_ratio: 16
 
-# ── Transformer architecture (UNCHANGED) ────────────────────────────────────
+# ── Transformer architecture ─────────────────────────────────────────────────
 d_model: 256
 n_heads: 4
 n_layers: 4
@@ -31,8 +25,9 @@ diffusion_schedule: "cosine"
 train_sigma: 0.0
 label_smoothing: 0.0
 
-# ── Reverse sampling (UNCHANGED) ────────────────────────────────────────────
+# ── Reverse sampling ─────────────────────────────────────────────────────────
 diffusion_steps: 15
+diffusion_steps_eval: 10
 remask_strategy: "rescale"
 eta: 0.5
 use_loop: true
@@ -41,34 +36,36 @@ t_off: 0.3
 temperature: 0.5
 top_p: 0.95
 
-# ── Optimisation (UNCHANGED) ────────────────────────────────────────────────
+# ── Optimisation ─────────────────────────────────────────────────────────────
 lr: 3.0e-4
 max_grad_norm: 1.0
-batch_size: 1024
+lr_warmup_steps: 200
 
-# ── Offline training (UNCHANGED) ────────────────────────────────────────────
-total_timesteps: 1.0e+8
+# ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 4096
 num_steps: 128
 num_minibatches: 16
 update_epochs: 8
 num_repeats: 1
+
+# ── Offline training ─────────────────────────────────────────────────────────
+offline_total_timesteps: 1.0e+8
 collect_temperature: 1.0
-lr_warmup_steps: 200
 return_weight_cap: 5.0
-val_interval: 30                    # CHANGED: 50 -> 30 (more val points in fewer steps)
+
+# ── Online DAgger training ───────────────────────────────────────────────────
+online_num_updates: 1500            # val plateaus by step 800
+dagger_beta_init: 1.0
+dagger_beta_decay: 0.9993           # beta > 0.5 at step 990, > 0.1 at step 3290
+dagger_buffer_max: 1000000
+
+# ── Validation rollouts ──────────────────────────────────────────────────────
+val_interval: 30
 val_diffusion_steps: 50
 val_replan_every: 4
 val_steps: 256
 
-# ── Online DAgger training ──────────────────────────────────────────────────
-num_updates: 1500                   # CHANGED: 2500 -> 1500 (val plateaus by step 800)
-replan_every: 4
-dagger_beta_init: 1.0
-dagger_beta_decay: 0.9993           # CHANGED: 0.998 -> 0.9993 (beta > 0.5 at step 990, > 0.1 at step 3290)
-dagger_buffer_max: 1000000
-
-# ── Data collection ─────────────────────────────────────────────────────────
+# ── Data collection ──────────────────────────────────────────────────────────
 collect_num_steps: 10000000
 collect_num_envs: 128
 ppo_model_type: "ppo_rnn"
@@ -77,10 +74,8 @@ layer_size: 512
 # ── Inference ────────────────────────────────────────────────────────────────
 eval_steps: 10000
 eval_num_envs: 32
-diffusion_steps_eval: 10
 
-# ── Checkpointing ───────────────────────────────────────────────────────────
-checkpoint_dir: "checkpoints_exp_a"
+# ── Checkpointing ────────────────────────────────────────────────────────────
 save_policy: true
 
 # ── Resume ───────────────────────────────────────────────────────────────────
@@ -89,7 +84,7 @@ resume_wandb_run_id: null
 resume_step: null
 
 # ── Logging ──────────────────────────────────────────────────────────────────
-seed: 42                            # CHANGED: fixed for cross-experiment comparison
+seed: 42
 use_wandb: true
 wandb_project: "remdm-craftax"
 wandb_entity: "mathis-weil-university-college-london-ucl-"
