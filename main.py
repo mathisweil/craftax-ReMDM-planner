@@ -6,9 +6,12 @@ from typing import Any
 
 import sys; sys.path.append(str(pathlib.Path(__file__).resolve().parent / "Craftax_Baselines"))
 
+import os
 import jax
 import numpy as np
 import yaml
+
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 
 from src.planners.collect import run_collect
 from src.planners.model import load_checkpoint_metadata, resolve_checkpoint_path
