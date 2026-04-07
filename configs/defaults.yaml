@@ -73,6 +73,17 @@ dagger_beta_decay: 0.95             # LEGACY: per-update decay  beta_i = beta_in
 # set, it overrides dagger_buffer_max via:  buffer_max = cycles * fpu
 dagger_buffer_cycles: null          # PRIMARY: buffer capacity in update cycles
 dagger_buffer_max: 100000           # LEGACY: max samples in DAgger replay buffer
+# B1: passes per update over the aggregated buffer.  Each pass redraws a
+# fresh sample of size samples_per_update from D, so total samples seen
+# per update ≈ n_passes * samples_per_update.  null = 1 pass, which
+# matches offline BC's per-update gradient work exactly (fair compute
+# comparison: same num_updates * update_epochs * num_minibatches grad
+# steps).  Raise to >1 to trade BC fairness for higher per-update D
+# coverage (e.g. ~⌊|D|/samples_per_update⌋ for full-buffer coverage).
+dagger_train_passes: null
+# B2: deterministic argmax expert (true) vs categorical sampling (false).
+# True keeps the expert mapping s -> a* fixed, removing label noise from D.
+dagger_expert_deterministic: true
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
 # val_interval_frames is the env-frame-invariant source of truth.  When set,

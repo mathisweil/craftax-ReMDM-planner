@@ -48,7 +48,7 @@ update_epochs: 8
 num_repeats: 1
 
 # ── Offline training ─────────────────────────────────────────────────────────
-offline_total_timesteps: 3.0e+8
+offline_total_timesteps: 1.0e+8
 collect_temperature: 1.0
 return_weight_cap: 5.0
 

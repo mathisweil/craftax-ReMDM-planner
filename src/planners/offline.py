@@ -16,6 +16,7 @@ from src.diffusion.schedules import SCHEDULE_MAP
 from .common import (
     make_grad_step,
     make_validate,
+    print_config_snapshot,
     resolve_num_updates,
     resolve_scaled_hyperparams,
 )
@@ -308,6 +309,7 @@ def run_offline_diffusion(config):
     # Translate env-frame-denominated hyperparameters (LR_WARMUP_FRAMES,
     # VAL_INTERVAL_FRAMES) into their update-step legacy keys.
     resolve_scaled_hyperparams(config, "offline")
+    print_config_snapshot(config, "offline")
 
     if config["USE_WANDB"]:
         init_wandb(
