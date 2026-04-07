@@ -69,7 +69,7 @@ val_replan_every: 4
 val_steps: 256
 
 # ── Online DAgger training (CHANGED: num_updates, buffer; beta IDENTICAL) ───
-num_updates: 1000                   # CHANGED: 1500 -> 1000 (user requested)
+num_updates: 2000                   # CHANGED: 1500 -> 1000 (user requested)
 replan_every: 4
 dagger_beta_init: 1.0
 dagger_beta_decay: 0.9993           # IDENTICAL — schedule must match for fairness
