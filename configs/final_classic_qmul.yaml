@@ -3,29 +3,32 @@
 # Env-frame-matched fairness with final_classic_ucl.yaml (Exp B, seed 42).
 # -----------------------------------------------------------------------------
 # FAIRNESS PRINCIPLE: same total env frames in both offline BC and online DAgger.
-# QMUL has 64x fewer parallel envs (64 vs 4096), so it does 64x more update
-# steps to see the same total data. Beta schedule, LR warmup, and validation
-# cadence all scale by 64 so they align in env-frame time.
+# QMUL has ~42.7x fewer parallel envs (96 vs 4096), so it does ~42.7x more
+# update steps to see the same total data. Beta schedule, LR warmup, and
+# validation cadence all scale by 128/3 so they align in env-frame time.
 #
-# DERIVED VALUES (scale = 4096/64 = 64, exact integer):
-#   num_envs:             4096 -> 64     (was 128/384/1536; all OOM. minibatch now 776)
-#   offline_num_updates:  572  -> 36608  (299,892,736 env frames, EXACT match)
-#   num_updates (online): 1500 -> 96000  (786,432,000 env frames, EXACT match)
-#   dagger_beta_decay:    0.9993 -> 0.999989   (final beta = 0.350 in both, after 1500 / 96000 updates)
-#   lr_warmup_steps:      200  -> 12800  (same env-frame warmup duration: 200 * 64)
-#   val_interval:         100  -> 6400   (same number of validations: ~5.72)
+# DERIVED VALUES (scale = 4096/96 = 128/3 ~= 42.67):
+#   num_envs:             4096 -> 96     (sized to use ~6.5-7.5 GB of 8 GB budget)
+#   offline_num_updates:  572  -> 24405  (UCL: 299,892,736 frames; QMUL: 299,888,640, off 4096 ~ 1/3 update)
+#   num_updates (online): 1500 -> 64000  (786,432,000 env frames, EXACT match)
+#   dagger_beta_decay:    0.9993 -> 0.999984   (final beta = 0.350 in both, after 1500 / 64000 updates)
+#   lr_warmup_steps:      200  -> 8533   (same env-frame warmup duration: 200 * 128/3)
+#   val_interval:         100  -> 213    (FINER than fair-scaled 4267: ~114 validations vs UCL 5.72)
+#                                         User-chosen: same env-frame cadence as previous 64-env / 320 setting
+#                                         (~2.6M env frames per validation, for richer monitoring)
 #
-# OOM HISTORY:
-#   num_envs=1536 -> 20 GB single allocation (minibatch=18624)
-#   num_envs=384  -> 15 GB single allocation (minibatch=4656)
-#   num_envs=128  -> ~500 MB short of fitting (minibatch=1552)
-# At minibatch size B, the dominant memory is ~B * 320k floats * 4 bytes
-# (transformer activations stored for backward) plus ~equal-size workspace
-# during backward, so total scales linearly with minibatch. minibatch=776 ->
-# ~1 GB stored activations, ~2 GB peak. Comfortable margin in 8 GB.
+# VRAM SIZING (empirical, on QMUL H200 8 GB partition):
+#   num_envs=1536 -> 20 GB single allocation, FAIL  (minibatch=18624)
+#   num_envs=384  -> 15 GB single allocation, FAIL  (minibatch=4656)
+#   num_envs=128  -> ~8.5 GB peak,            FAIL  (minibatch=1552, ~500 MB short)
+#   num_envs=64   -> ~5 GB peak,              OK    (minibatch=776, but underutilized)
+#   num_envs=96   -> ~6.5-7.5 GB peak,        OK    (minibatch=1164) <-- chosen
+# Memory scales roughly linearly: ~0.055 GB per parallel env. At 96 envs the
+# allocation lands in the 6.5-7.5 GB sweet spot with ~0.5-1.5 GB headroom for
+# transient peaks (validation cond branch, JAX workspace, env state spikes).
 #
 # BUFFER DEVIATION (env-frame matching not feasible at 8 GB):
-#   dagger_buffer_max:    1000000 -> 15625 (cycle-matched in update-time: 1.91 updates of history)
+#   dagger_buffer_max:    1000000 -> 23438 (cycle-matched in update-time: 1.91 updates of history)
 #   Env-frame match would require 1M samples (~5 GB extra VRAM, doesn't fit).
 #   Both seeds therefore see "1.91 updates of recent history" in the buffer:
 #   equivalent in update-time, not in env-frame time.
@@ -34,14 +37,14 @@
 # max_grad_norm, num_minibatches=8, update_epochs=8, dagger_beta_init,
 # replan_every, val_replan_every, val_steps, all eval/inference settings.
 #
-# UNAVOIDABLE DEVIATION: per-step minibatch is 776 (vs UCL 49664, 64x smaller)
-# due to lower num_envs. Same total samples processed across training; SGD
-# gradient noise is higher per step. lr is unchanged.
+# UNAVOIDABLE DEVIATION: per-step minibatch is 1164 (vs UCL 49664, ~42.7x
+# smaller) due to lower num_envs. Same total samples processed across
+# training; SGD gradient noise is higher per step. lr is unchanged.
 #
-# Wall-clock: 64x more update steps but each step processes 64x less data,
-# so per-step wall-time is much smaller (smaller minibatches under-utilize
-# the GPU). Net slowdown vs UCL is hard to predict but typically 5-15x rather
-# than 64x for transformer training at this scale.
+# Wall-clock: ~42.7x more update steps but each step processes ~42.7x less
+# data, so per-step wall-time is much smaller (smaller minibatches under-
+# utilize the GPU). Net slowdown vs UCL is hard to predict but typically
+# 5-12x rather than 42.7x for transformer training at this scale.
 # =============================================================================
 
 # -- Environment --------------------------------------------------------------
@@ -79,27 +82,27 @@ lr: 3.0e-4
 max_grad_norm: 1.0
 batch_size: 1024
 
-# -- Offline training (SCALED to match UCL env frames EXACTLY) ---------------
-offline_num_updates: 36608          # SCALED: 572 * 64; 299,892,736 env frames (exact UCL match)
-num_envs: 64                        # OOM-safe (was 128/384/1536); minibatch 64*97/8 = 776
+# -- Offline training (SCALED to match UCL env frames) -----------------------
+offline_num_updates: 24405          # SCALED: 572 * 128/3 ~= 24405; 299,888,640 env frames
+num_envs: 96                        # VRAM-tuned to ~6.5-7.5 GB; minibatch 96*97/8 = 1164
 num_steps: 128
 num_minibatches: 8                  # IDENTICAL to UCL (preserves SGD structure)
 update_epochs: 8
 num_repeats: 1
 collect_temperature: 1.0
-lr_warmup_steps: 12800              # SCALED: 200 * 64
+lr_warmup_steps: 8533               # SCALED: 200 * 128/3 ~= 8533
 return_weight_cap: 5.0
-val_interval: 320
+val_interval: 213                   # User-chosen finer cadence: ~2.6M env frames per validation
 val_diffusion_steps: 50
 val_replan_every: 4
 val_steps: 256
 
 # -- Online DAgger training (SCALED to match UCL env frames + beta schedule) -
-num_updates: 96000                  # SCALED: 1500 * 64; 786,432,000 env frames (exact UCL match)
+num_updates: 64000                  # SCALED: 1500 * 128/3 = 64000 exact; 786,432,000 env frames (exact UCL match)
 replan_every: 4
 dagger_beta_init: 1.0
-dagger_beta_decay: 0.999989         # SCALED: 0.9993^(1/64); final beta=0.350 matches UCL
-dagger_buffer_max: 15625            # cycle-matched in update-time (1.91 updates of history)
+dagger_beta_decay: 0.999984         # SCALED: 0.9993^(1500/64000); final beta=0.350 matches UCL
+dagger_buffer_max: 23438            # cycle-matched in update-time (1.91 updates of history)
 
 # -- Data collection ---------------------------------------------------------
 collect_num_steps: 10000000
