@@ -1,21 +1,20 @@
 # =============================================================================
-# Classic DAgger — QMUL H200 (8 GB VRAM budget) — second seed (1000 updates)
-# Equivalent recipe to final_classic_expb.yaml (Exp B), scaled to fit 8 GB.
-# Designed to be combined with the first seed (24 GB run, seed=42, 1500 updates).
+# Classic DAgger — QMUL H200 (8 GB VRAM budget) — second seed
+# Maximum-fidelity match to final_classic_ucl.yaml (Exp B, seed 42).
 # -----------------------------------------------------------------------------
-# CHANGES vs final_classic_expb.yaml (only what 8 GB forces, plus seed):
-#   num_envs:            4096 -> 1024     (rollout fits in ~0.7 GB)
-#   dagger_buffer_max:   1000000 -> 800000 (800k * 1345 * 4 = 4.3 GB; fills VRAM)
-#   num_updates:         1500 -> 1000     (user requested)
-#   seed:                42 -> 43         (different seed for fairness)
+# CHANGES vs final_classic_ucl.yaml (only what 8 GB forces, plus seed):
+#   num_envs:            4096 -> 1536     (largest that fits in 8 GB)
+#   dagger_buffer_max:   1000000 -> 375000 (cycle-matched: 1.91 updates of history,
+#                                          identical to UCL's 1M / (4096*128) ratio)
+#   seed:                42 -> 43         (independent seed)
 #   checkpoint_dir:      separate
-# Architecture, optimisation, diffusion, eval, beta schedule are IDENTICAL.
-# Effective minibatch shrinks 4x (65536 -> 16384) — unavoidable; all other
-# optimisation hyperparameters are kept untouched to preserve seed comparability.
-# Buffer was bumped 300k -> 800k after measuring 5 GB usage; the buffer is the
-# only "free" lever that doesn't change optimisation dynamics, and pushing it
-# closer to seed 42's 1M actually makes the runs *more* comparable.
-# Estimated VRAM: ~7.5 GB
+# EVERYTHING ELSE is bit-identical to UCL: num_minibatches=8, update_epochs=8,
+# num_updates=1500, lr=3e-4, lr_warmup_steps=200, dagger_beta_decay=0.9993,
+# all architecture, all diffusion, all eval. Same SGD structure (8*8=64 grad
+# steps per update), same beta schedule, same buffer replay-cycle period.
+# The only unavoidable deviation is the per-step minibatch (24576 vs UCL 65536,
+# ~2.7x smaller) — this is purely a function of the VRAM ceiling.
+# Estimated VRAM: ~7.1 GB
 # =============================================================================
 
 # ── Environment ──────────────────────────────────────────────────────────────
@@ -54,26 +53,26 @@ max_grad_norm: 1.0
 batch_size: 1024
 
 # ── Offline training (CHANGED: num_envs only) ───────────────────────────────
-total_timesteps: 1.0e+8
-num_envs: 1024                      # CHANGED: 4096 -> 1024 (8 GB budget)
+total_timesteps: 3.0e+8
+num_envs: 1536
 num_steps: 128
-num_minibatches: 8                  # IDENTICAL — minibatch = 1024*128/8 = 16384
+num_minibatches: 8
 update_epochs: 8
 num_repeats: 1
 collect_temperature: 1.0
 lr_warmup_steps: 200
 return_weight_cap: 5.0
-val_interval: 30
+val_interval: 100
 val_diffusion_steps: 50
 val_replan_every: 4
 val_steps: 256
 
-# ── Online DAgger training (CHANGED: num_updates, buffer; beta IDENTICAL) ───
-num_updates: 2000                   # CHANGED: 1500 -> 1000 (user requested)
+# ── Online DAgger training (CHANGED: buffer only; beta + updates IDENTICAL) ─
+num_updates: 1500                   # IDENTICAL to UCL
 replan_every: 4
 dagger_beta_init: 1.0
 dagger_beta_decay: 0.9993           # IDENTICAL — schedule must match for fairness
-dagger_buffer_max: 700000           # CHANGED: 1000000 -> 800000 (4.3 GB; fills 8 GB)
+dagger_buffer_max: 375000           # CHANGED: 1000000 -> 375000 (cycle-matched)
 
 # ── Data collection ─────────────────────────────────────────────────────────
 collect_num_steps: 10000000
