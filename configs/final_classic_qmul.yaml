@@ -63,7 +63,7 @@ dagger_beta_final: 0.344            # IDENTICAL to UCL; resolves to 0.99998359 d
 dagger_buffer_cycles: 1.90735       # IDENTICAL to UCL; resolves to ~23438 samples on 96 envs
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
-val_interval_frames: 2.097152e6     # IDENTICAL to UCL; resolves to 171 update steps on 96 envs
+val_interval_frames: 2.097152e+6     # IDENTICAL to UCL; resolves to 171 update steps on 96 envs
 val_diffusion_steps: 50
 val_replan_every: 4
 val_steps: 256

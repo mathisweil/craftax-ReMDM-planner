@@ -48,18 +48,18 @@ update_epochs: 8
 num_repeats: 1
 
 # ── Offline training ─────────────────────────────────────────────────────────
-offline_total_timesteps: 5e8  # = 5e8/262144 ~= 1907 UCL updates
+offline_total_timesteps: 5.0e+8  # = 5e8/262144 ~= 1907 UCL updates
 collect_temperature: 1.0
 return_weight_cap: 5.0
 
 # ── Online DAgger training ───────────────────────────────────────────────────
-online_total_timesteps: 5e8   # = 5e8/262144 ~= 1907 UCL updates
+online_total_timesteps: 5.0e+8   # = 5e8/262144 ~= 1907 UCL updates
 dagger_beta_init: 1.0
 dagger_beta_final: 0.385            # 0.9995^1907 at this hardware; auto-resolves per fpu
 dagger_buffer_cycles: 0.76294       # ~200K samples on UCL = ~0.76 update cycles of history
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
-val_interval_frames: 2.62144e7      # = 100 update steps at this hardware (100 * 2048 * 128)
+val_interval_frames: 2.0e+7      # = 100 update steps at this hardware (100 * 2048 * 128)
 val_diffusion_steps: 25
 val_replan_every: 2
 val_steps: 256

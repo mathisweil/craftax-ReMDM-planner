@@ -66,12 +66,12 @@ def resolve_num_updates(config: dict[str, Any], mode: str) -> None:
 
     ts = config.get(ts_key)
     nu = config.get(nu_key)
+    # float() first to accept YAML scientific notation parsed as string
+    # (PyYAML 1.1 only auto-coerces "3.0e+8", not "3e8" or "3.0e8").
     if ts is not None:
-        # float() first to accept YAML scientific notation parsed as string
-        # (PyYAML 1.1 only auto-coerces "3.0e+8", not "3e8" or "3.0e8").
         num_updates = max(1, int(float(ts)) // frames_per_update)
     elif nu:
-        num_updates = int(nu)
+        num_updates = int(float(nu))
     else:
         raise ValueError(
             f"{mode.capitalize()} mode requires either "
