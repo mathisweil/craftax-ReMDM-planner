@@ -3,28 +3,29 @@
 # Env-frame-matched fairness with final_classic_ucl.yaml (Exp B, seed 42).
 # -----------------------------------------------------------------------------
 # FAIRNESS PRINCIPLE: same total env frames in both offline BC and online DAgger.
-# QMUL has 32x fewer parallel envs (128 vs 4096), so it does 32x more update
+# QMUL has 64x fewer parallel envs (64 vs 4096), so it does 64x more update
 # steps to see the same total data. Beta schedule, LR warmup, and validation
-# cadence all scale by 32 so they align in env-frame time.
+# cadence all scale by 64 so they align in env-frame time.
 #
-# DERIVED VALUES (scale = 4096/128 = 32, exact integer):
-#   num_envs:             4096 -> 128    (was 384/1536; both OOM. minibatch now 1552)
-#   offline_num_updates:  572  -> 18304  (299,892,736 env frames, EXACT match)
-#   num_updates (online): 1500 -> 48000  (786,432,000 env frames, EXACT match)
-#   dagger_beta_decay:    0.9993 -> 0.999978   (final beta = 0.350 in both, after 1500 / 48000 updates)
-#   lr_warmup_steps:      200  -> 6400   (same env-frame warmup duration: 200 * 32)
-#   val_interval:         100  -> 3200   (same number of validations: ~5.72)
+# DERIVED VALUES (scale = 4096/64 = 64, exact integer):
+#   num_envs:             4096 -> 64     (was 128/384/1536; all OOM. minibatch now 776)
+#   offline_num_updates:  572  -> 36608  (299,892,736 env frames, EXACT match)
+#   num_updates (online): 1500 -> 96000  (786,432,000 env frames, EXACT match)
+#   dagger_beta_decay:    0.9993 -> 0.999989   (final beta = 0.350 in both, after 1500 / 96000 updates)
+#   lr_warmup_steps:      200  -> 12800  (same env-frame warmup duration: 200 * 64)
+#   val_interval:         100  -> 6400   (same number of validations: ~5.72)
 #
-# OOM HISTORY: num_envs=1536 OOMed at 20 GB single allocation (minibatch=18624).
-# num_envs=384 OOMed at 15 GB single allocation (minibatch=4656). At minibatch
-# size B, the dominant memory is ~B * 320k floats * 4 bytes (transformer
-# activations stored for backward) plus ~equal-size workspace during backward,
-# so total scales linearly with minibatch. minibatch=1552 -> ~2 GB stored
-# activations, ~4 GB peak. Comfortable in 8 GB with margin for params,
-# optimizer state, env state, and dagger buffer.
+# OOM HISTORY:
+#   num_envs=1536 -> 20 GB single allocation (minibatch=18624)
+#   num_envs=384  -> 15 GB single allocation (minibatch=4656)
+#   num_envs=128  -> ~500 MB short of fitting (minibatch=1552)
+# At minibatch size B, the dominant memory is ~B * 320k floats * 4 bytes
+# (transformer activations stored for backward) plus ~equal-size workspace
+# during backward, so total scales linearly with minibatch. minibatch=776 ->
+# ~1 GB stored activations, ~2 GB peak. Comfortable margin in 8 GB.
 #
 # BUFFER DEVIATION (env-frame matching not feasible at 8 GB):
-#   dagger_buffer_max:    1000000 -> 31250 (cycle-matched in update-time: 1.91 updates of history)
+#   dagger_buffer_max:    1000000 -> 15625 (cycle-matched in update-time: 1.91 updates of history)
 #   Env-frame match would require 1M samples (~5 GB extra VRAM, doesn't fit).
 #   Both seeds therefore see "1.91 updates of recent history" in the buffer:
 #   equivalent in update-time, not in env-frame time.
@@ -33,14 +34,14 @@
 # max_grad_norm, num_minibatches=8, update_epochs=8, dagger_beta_init,
 # replan_every, val_replan_every, val_steps, all eval/inference settings.
 #
-# UNAVOIDABLE DEVIATION: per-step minibatch is 1552 (vs UCL 49664, 32x smaller)
+# UNAVOIDABLE DEVIATION: per-step minibatch is 776 (vs UCL 49664, 64x smaller)
 # due to lower num_envs. Same total samples processed across training; SGD
 # gradient noise is higher per step. lr is unchanged.
 #
-# Wall-clock: 32x more update steps but each step processes 32x less data,
+# Wall-clock: 64x more update steps but each step processes 64x less data,
 # so per-step wall-time is much smaller (smaller minibatches under-utilize
-# the GPU). Net slowdown vs UCL is hard to predict but typically 3-10x rather
-# than 32x for transformer training at this scale.
+# the GPU). Net slowdown vs UCL is hard to predict but typically 5-15x rather
+# than 64x for transformer training at this scale.
 # =============================================================================
 
 # -- Environment --------------------------------------------------------------
@@ -79,26 +80,26 @@ max_grad_norm: 1.0
 batch_size: 1024
 
 # -- Offline training (SCALED to match UCL env frames EXACTLY) ---------------
-offline_num_updates: 18304          # SCALED: 572 * 32; 299,892,736 env frames (exact UCL match)
-num_envs: 128                       # OOM-safe (was 384/1536); minibatch 128*97/8 = 1552
+offline_num_updates: 36608          # SCALED: 572 * 64; 299,892,736 env frames (exact UCL match)
+num_envs: 64                        # OOM-safe (was 128/384/1536); minibatch 64*97/8 = 776
 num_steps: 128
 num_minibatches: 8                  # IDENTICAL to UCL (preserves SGD structure)
 update_epochs: 8
 num_repeats: 1
 collect_temperature: 1.0
-lr_warmup_steps: 6400               # SCALED: 200 * 32
+lr_warmup_steps: 12800              # SCALED: 200 * 64
 return_weight_cap: 5.0
-val_interval: 3200                  # SCALED: 100 * 32 (same number of validations)
+val_interval: 320
 val_diffusion_steps: 50
 val_replan_every: 4
 val_steps: 256
 
 # -- Online DAgger training (SCALED to match UCL env frames + beta schedule) -
-num_updates: 48000                  # SCALED: 1500 * 32; 786,432,000 env frames (exact UCL match)
+num_updates: 96000                  # SCALED: 1500 * 64; 786,432,000 env frames (exact UCL match)
 replan_every: 4
 dagger_beta_init: 1.0
-dagger_beta_decay: 0.999978         # SCALED: 0.9993^(1/32); final beta=0.350 matches UCL
-dagger_buffer_max: 31250            # cycle-matched in update-time (1.91 updates of history)
+dagger_beta_decay: 0.999989         # SCALED: 0.9993^(1/64); final beta=0.350 matches UCL
+dagger_buffer_max: 15625            # cycle-matched in update-time (1.91 updates of history)
 
 # -- Data collection ---------------------------------------------------------
 collect_num_steps: 10000000
