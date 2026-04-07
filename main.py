@@ -17,7 +17,7 @@ import numpy as np
 import yaml
 
 from src.planners.collect import run_collect
-from src.planners.common import resolve_num_updates
+from src.planners.common import resolve_num_updates, resolve_scaled_hyperparams
 from src.planners.model import load_checkpoint_metadata, resolve_checkpoint_path
 from src.planners.offline import run_offline_diffusion
 from src.planners.online import run_online
@@ -103,14 +103,17 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
     p.add_argument("--val_steps", type=int, default=None)
     p.add_argument("--return_weight_cap", type=float, default=None)
     p.add_argument("--lr_warmup_steps", type=int, default=None)
+    p.add_argument("--lr_warmup_frames", type=lambda x: int(float(x)), default=None)
+    p.add_argument("--val_interval_frames", type=lambda x: int(float(x)), default=None)
 
     # Online DAgger
     p.add_argument("--online_num_updates", type=lambda x: int(float(x)), default=None)
     p.add_argument("--online_total_timesteps", type=lambda x: int(float(x)), default=None)
-    p.add_argument("--replan_every", type=int, default=None)
     p.add_argument("--dagger_beta_init", type=float, default=None)
     p.add_argument("--dagger_beta_decay", type=float, default=None)
+    p.add_argument("--dagger_beta_final", type=float, default=None)
     p.add_argument("--dagger_buffer_max", type=int, default=None)
+    p.add_argument("--dagger_buffer_cycles", type=float, default=None)
 
     # Data collection
     p.add_argument("--collect_num_steps", type=lambda x: int(float(x)), default=None)
@@ -240,9 +243,11 @@ def _resolve_resume(config: dict[str, Any]) -> None:
 
     resume_step = config["RESUME_STEP"]
 
-    # Resolve NUM_UPDATES via the shared helper so resume validation matches
-    # whatever the runner will compute.  Idempotent — the runner re-runs it.
+    # Resolve NUM_UPDATES and scaled hyperparams via the shared helpers so
+    # resume validation matches whatever the runner will compute.  Both are
+    # idempotent — the runner re-runs them.
     resolve_num_updates(config, mode)
+    resolve_scaled_hyperparams(config, mode)
     num_updates = config["NUM_UPDATES"]
 
     if resume_step >= num_updates:

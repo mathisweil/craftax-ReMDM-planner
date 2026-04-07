@@ -2,23 +2,11 @@
 # Final Full Craftax DAgger — QMUL H200 8 GB partition (seed 43)
 # Env-frame-matched second seed of final_craftax_full_ucl.yaml.
 # -----------------------------------------------------------------------------
-# Hardware ratio is fixed: qmul_fpu/ucl_fpu = (384*128)/(2048*128) = 3/16.
-# Because this ratio is independent of the total env-frame budget, every
-# fairness-critical key below is INVARIANT under offline_total_timesteps and
-# online_total_timesteps changes — as long as UCL and QMUL share the same
-# totals, fairness holds automatically.
-#
-# Scaling formulas for keys denominated in update steps (not env frames):
-#   dagger_beta_decay : ucl_decay^(qmul_fpu/ucl_fpu)
-#                     = 0.9995^(3/16)  = 0.99990623
-#   lr_warmup_steps   : ucl_warmup * (ucl_fpu/qmul_fpu)
-#                     = 300 * 16/3    = 1600
-#   val_interval      : ucl_val_interval * (ucl_fpu/qmul_fpu)
-#                     = 100 * 16/3    = 533
-#   dagger_buffer_max : ucl_buffer * (qmul_envs/ucl_envs)
-#                     = 200000 * 384/2048 = 37500
-#                       (cycle-matched: 0.76 updates of history; full env-frame
-#                        match doesn't fit in 8 GB)
+# Identical to final_craftax_full_ucl.yaml except for num_envs (384 vs 2048)
+# and seed (43 vs 42).  All fairness-critical hyperparameters are now
+# denominated in env frames or update cycles, so they are AUTOMATICALLY
+# scaled to this hardware tier by resolve_scaled_hyperparams() — no manual
+# derivation.
 # =============================================================================
 
 # ── Environment ──────────────────────────────────────────────────────────────
@@ -55,7 +43,7 @@ top_p: 0.95
 # ── Optimisation ─────────────────────────────────────────────────────────────
 lr: 5.0e-4
 max_grad_norm: 1.0
-lr_warmup_steps: 1600               # = 300 * 16/3  (UCL warmup * ucl_fpu/qmul_fpu)
+lr_warmup_frames: 7.86432e7         # IDENTICAL to UCL; resolves to 1600 update steps on 384 envs
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 384                       # max for 8 GB; minibatch = 384*128/8 = 6144
@@ -65,15 +53,15 @@ update_epochs: 8
 num_repeats: 1
 
 # ── Offline training ─────────────────────────────────────────────────────────
-offline_total_timesteps: 5e8  # IDENTICAL to UCL; = 5e8/49152 ~= 10173 QMUL updates
+offline_total_timesteps: 5e8        # IDENTICAL to UCL
 collect_temperature: 1.0
 return_weight_cap: 5.0
 
 # ── Online DAgger training ───────────────────────────────────────────────────
-online_total_timesteps: 5e8   # IDENTICAL to UCL; = 5e8/49152 ~= 10173 QMUL updates
+online_total_timesteps: 5e8         # IDENTICAL to UCL
 dagger_beta_init: 1.0
-dagger_beta_decay: 0.99990623  # = 0.9995^(3/16); final beta matches UCL's 0.9995^1907 ~= 0.385
-dagger_buffer_max: 37500       # = 200000 * 384/2048
+dagger_beta_final: 0.385            # IDENTICAL to UCL; resolves to 0.99990623 decay on 384 envs
+dagger_buffer_cycles: 0.76294       # IDENTICAL to UCL; resolves to ~37500 samples on 384 envs
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
 val_interval: 533                   # = 100 * 16/3  (UCL val_interval * ucl_fpu/qmul_fpu)
