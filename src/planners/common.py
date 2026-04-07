@@ -169,6 +169,105 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
         config["DAGGER_BUFFER_MAX"] = max(1, int(round(float(buffer_cycles) * fpu)))
 
 
+def print_config_snapshot(config: dict[str, Any], mode: str) -> None:
+    """Print a structured banner of training-critical hyperparameters.
+
+    Surfaces fairness-critical, schedule, and architecture parameters at
+    the start of every offline/online run so cross-hardware comparisons
+    can be sanity-checked at a glance.  Must be called AFTER
+    :func:`resolve_num_updates` and :func:`resolve_scaled_hyperparams`
+    so the printed values reflect what training will actually use.
+
+    Args:
+        config: Upper-cased config dict (post-resolver).
+        mode:   Either ``"offline"`` or ``"online"``.
+    """
+    fpu = int(config["NUM_STEPS"]) * int(config["NUM_ENVS"])
+    num_updates = int(config["NUM_UPDATES"])
+    minibatch = fpu // int(config["NUM_MINIBATCHES"])
+    ts_key = f"{mode.upper()}_TOTAL_TIMESTEPS"
+    total_frames = int(config[ts_key])
+
+    bar = "=" * 72
+    title = f"{mode.upper()} training — config snapshot"
+    print(f"\n{bar}\n  {title}\n{bar}")
+    print(f"  env_name              : {config['ENV_NAME']}")
+    print(f"  seed                  : {config['SEED']}")
+
+    print("  -- Rollout / hardware --")
+    print(f"    num_envs            = {config['NUM_ENVS']}")
+    print(f"    num_steps           = {config['NUM_STEPS']}")
+    print(f"    fpu (envs*steps)    = {fpu}")
+    print(f"    num_minibatches     = {config['NUM_MINIBATCHES']}  (minibatch={minibatch})")
+    print(f"    update_epochs       = {config['UPDATE_EPOCHS']}")
+    print(f"    num_repeats         = {config.get('NUM_REPEATS', 1)}")
+
+    print("  -- Schedule --")
+    print(f"    {ts_key.lower():<24} = {total_frames:,}  (~{total_frames/1e6:.1f}M frames)")
+    print(f"    {'num_updates':<24} = {num_updates:,}")
+    warmup = int(config.get("LR_WARMUP_STEPS", 0))
+    print(f"    {'lr':<24} = {float(config['LR']):.2e}")
+    print(f"    {'lr_warmup_steps':<24} = {warmup}  (~{warmup * fpu / 1e6:.2f}M frames)")
+    print(f"    {'max_grad_norm':<24} = {config.get('MAX_GRAD_NORM', 1.0)}")
+
+    if mode == "online":
+        beta_init = float(config.get("DAGGER_BETA_INIT", 1.0))
+        beta_decay = float(config["DAGGER_BETA_DECAY"])
+        final_beta = beta_init * beta_decay ** num_updates
+        buffer_max = int(config["DAGGER_BUFFER_MAX"])
+        cycles = buffer_max / fpu
+        # Mirrors the n_train_passes default in run_online: drawn fresh per
+        # update, capped at samples_per_update for memory.
+        plan_h = int(config["PLAN_HORIZON"])
+        samples_per_update = int(config["NUM_ENVS"]) * (
+            int(config["NUM_STEPS"]) - plan_h + 1
+        )
+        n_passes = config.get("DAGGER_TRAIN_PASSES") or max(
+            1, buffer_max // max(1, samples_per_update)
+        )
+        expert_det = bool(config.get("DAGGER_EXPERT_DETERMINISTIC", True))
+        total_grad_steps = (
+            num_updates * int(n_passes)
+            * int(config["UPDATE_EPOCHS"]) * int(config["NUM_MINIBATCHES"])
+        )
+        passes_tag = "auto" if config.get("DAGGER_TRAIN_PASSES") is None else "override"
+        print("  -- DAgger --")
+        print(f"    {'dagger_beta_init':<24} = {beta_init}")
+        print(f"    {'dagger_beta_decay':<24} = {beta_decay:.10f}")
+        print(f"    {'final beta':<24} = {final_beta:.4f}  (init * decay^N)")
+        print(f"    {'dagger_buffer_max':<24} = {buffer_max:,}  (~{cycles:.2f} update cycles)")
+        print(f"    {'samples_per_update':<24} = {samples_per_update:,}")
+        print(f"    {'dagger_train_passes':<24} = {n_passes}  ({passes_tag})")
+        print(f"    {'dagger_expert_determ':<24} = {expert_det}")
+        print(f"    {'total_grad_steps':<24} = {total_grad_steps:,}")
+    else:
+        total_grad_steps = (
+            num_updates * int(config["UPDATE_EPOCHS"]) * int(config["NUM_MINIBATCHES"])
+        )
+        print(f"    {'total_grad_steps':<24} = {total_grad_steps:,}")
+
+    val_int = int(config.get("VAL_INTERVAL", 0))
+    print("  -- Validation --")
+    print(f"    val_interval        = {val_int} updates  (~{val_int * fpu / 1e6:.2f}M frames)")
+    print(f"    val_diffusion_steps = {config.get('VAL_DIFFUSION_STEPS')}")
+    print(f"    val_replan_every    = {config.get('VAL_REPLAN_EVERY')}")
+    print(f"    val_steps           = {config.get('VAL_STEPS')}")
+
+    print("  -- Diffusion model --")
+    print(
+        f"    d_model/n_heads/n_layers/d_ff = "
+        f"{config['D_MODEL']}/{config['N_HEADS']}/{config['N_LAYERS']}/{config['D_FF']}"
+    )
+    print(f"    plan_horizon        = {config['PLAN_HORIZON']}")
+    print(f"    diffusion_steps     = {config['DIFFUSION_STEPS']}")
+    print(f"    remask_strategy     = {config.get('REMASK_STRATEGY')}  eta={config.get('ETA')}")
+    print(
+        f"    sampling: temp={config.get('TEMPERATURE')}  top_p={config.get('TOP_P')}  "
+        f"loop={config.get('USE_LOOP')}  t_on/t_off={config.get('T_ON')}/{config.get('T_OFF')}"
+    )
+    print(f"{bar}\n", flush=True)
+
+
 def _action_stats(
     acts: jnp.ndarray,
     num_actions: int,
