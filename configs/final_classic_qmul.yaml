@@ -5,14 +5,17 @@
 # -----------------------------------------------------------------------------
 # CHANGES vs final_classic_expb.yaml (only what 8 GB forces, plus seed):
 #   num_envs:            4096 -> 1024     (rollout fits in ~0.7 GB)
-#   dagger_buffer_max:   1000000 -> 300000 (300k * 1345 * 4 = 1.6 GB)
+#   dagger_buffer_max:   1000000 -> 800000 (800k * 1345 * 4 = 4.3 GB; fills VRAM)
 #   num_updates:         1500 -> 1000     (user requested)
 #   seed:                42 -> 43         (different seed for fairness)
 #   checkpoint_dir:      separate
 # Architecture, optimisation, diffusion, eval, beta schedule are IDENTICAL.
 # Effective minibatch shrinks 4x (65536 -> 16384) — unavoidable; all other
 # optimisation hyperparameters are kept untouched to preserve seed comparability.
-# Estimated VRAM: ~5-6 GB
+# Buffer was bumped 300k -> 800k after measuring 5 GB usage; the buffer is the
+# only "free" lever that doesn't change optimisation dynamics, and pushing it
+# closer to seed 42's 1M actually makes the runs *more* comparable.
+# Estimated VRAM: ~7.5 GB
 # =============================================================================
 
 # ── Environment ──────────────────────────────────────────────────────────────
@@ -70,7 +73,7 @@ num_updates: 1000                   # CHANGED: 1500 -> 1000 (user requested)
 replan_every: 4
 dagger_beta_init: 1.0
 dagger_beta_decay: 0.9993           # IDENTICAL — schedule must match for fairness
-dagger_buffer_max: 300000           # CHANGED: 1000000 -> 300000 (1.6 GB)
+dagger_buffer_max: 800000           # CHANGED: 1000000 -> 800000 (4.3 GB; fills 8 GB)
 
 # ── Data collection ─────────────────────────────────────────────────────────
 collect_num_steps: 10000000
