@@ -55,7 +55,16 @@ def make_train(config: dict[str, Any]):
     num_samples = num_envs * valid_per_rollout
     return_weight_cap = config.get("RETURN_WEIGHT_CAP", 5.0)
 
-    config["NUM_UPDATES"] = config["TOTAL_TIMESTEPS"] // num_steps // num_envs
+    # Resolve num_updates. OFFLINE_NUM_UPDATES is the hardware-portable source of
+    # truth (invariant under num_envs changes); TOTAL_TIMESTEPS is derived from it
+    # for run names, SPS reporting, and orbax checkpoint step IDs. If
+    # OFFLINE_NUM_UPDATES is unset, fall back to deriving from TOTAL_TIMESTEPS for
+    # backward compatibility with older configs.
+    if config.get("OFFLINE_NUM_UPDATES"):
+        config["NUM_UPDATES"] = int(config["OFFLINE_NUM_UPDATES"])
+        config["TOTAL_TIMESTEPS"] = config["NUM_UPDATES"] * num_steps * num_envs
+    else:
+        config["NUM_UPDATES"] = config["TOTAL_TIMESTEPS"] // num_steps // num_envs
     assert num_samples % config["NUM_MINIBATCHES"] == 0, (
         f"{num_samples} samples not divisible by {config['NUM_MINIBATCHES']} minibatches"
     )

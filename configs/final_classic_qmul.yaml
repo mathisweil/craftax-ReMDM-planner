@@ -52,13 +52,11 @@ lr: 3.0e-4
 max_grad_norm: 1.0
 batch_size: 1024
 
-# ── Offline training (CHANGED: num_envs + total_timesteps; both follow from VRAM) ─
-total_timesteps: 3.74e+7            # CHANGED: 1e+8 -> 3.74e+7 to keep offline
-                                    # num_updates IDENTICAL to UCL: 190 updates
-                                    # (190 * 128 * 1536 = 37.4M)
-num_envs: 1536                      # CHANGED: 4096 -> 1536 (max for 8 GB)
+# ── Offline training (CHANGED: num_envs only) ───────────────────────────────
+offline_num_updates: 1550
+num_envs: 1536
 num_steps: 128
-num_minibatches: 8                  # IDENTICAL — minibatch = 1536*128/8 = 24576
+num_minibatches: 8
 update_epochs: 8
 num_repeats: 1
 collect_temperature: 1.0

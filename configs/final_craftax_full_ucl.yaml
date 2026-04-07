@@ -41,7 +41,7 @@ max_grad_norm: 1.0
 batch_size: 1024
 
 # ── Offline training ────────────────────────────────────────────────────────
-total_timesteps: 5.0e+8
+offline_num_updates: 1907           # = 5e+8 / 2048 / 128 (hardware-portable)
 num_envs: 2048
 num_steps: 128
 num_minibatches: 8
