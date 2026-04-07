@@ -73,7 +73,7 @@ num_updates: 1000                   # CHANGED: 1500 -> 1000 (user requested)
 replan_every: 4
 dagger_beta_init: 1.0
 dagger_beta_decay: 0.9993           # IDENTICAL — schedule must match for fairness
-dagger_buffer_max: 750000           # CHANGED: 1000000 -> 800000 (4.3 GB; fills 8 GB)
+dagger_buffer_max: 700000           # CHANGED: 1000000 -> 800000 (4.3 GB; fills 8 GB)
 
 # ── Data collection ─────────────────────────────────────────────────────────
 collect_num_steps: 10000000
