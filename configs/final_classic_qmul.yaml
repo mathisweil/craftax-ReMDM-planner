@@ -68,26 +68,26 @@ max_grad_norm: 1.0
 batch_size: 1024
 
 # -- Offline training (SCALED to match UCL env frames) -----------------------
-offline_num_updates: 1525           # SCALED: 572 * 8/3 ~= 1525; 299,827,200 env frames
-num_envs: 1536                      # max for 8 GB
+offline_num_updates: 3050           # SCALED: 572 * 8/3 ~= 1525; 299,827,200 env frames
+num_envs: 768                      # max for 8 GB
 num_steps: 128
 num_minibatches: 8                  # IDENTICAL: minibatch = 1536*128/8 = 24576
 update_epochs: 8
 num_repeats: 1
 collect_temperature: 1.0
-lr_warmup_steps: 533                # SCALED: 200 * 8/3 ~= 533
+lr_warmup_steps: 1066                # SCALED: 200 * 8/3 ~= 533
 return_weight_cap: 5.0
-val_interval: 267                   # SCALED: 100 * 8/3 ~= 267 (same number of validations)
+val_interval: 534                   # SCALED: 100 * 8/3 ~= 267 (same number of validations)
 val_diffusion_steps: 50
 val_replan_every: 4
 val_steps: 256
 
 # -- Online DAgger training (SCALED to match UCL env frames + beta schedule) -
-num_updates: 4000                   # SCALED: 1500 * 8/3 = 4000 exact; 786,432,000 env frames
+num_updates: 8000                   # SCALED: 1500 * 8/3 = 4000 exact; 786,432,000 env frames
 replan_every: 4
 dagger_beta_init: 1.0
-dagger_beta_decay: 0.999737         # SCALED: 0.9993^(1500/4000); final beta=0.350 matches UCL
-dagger_buffer_max: 375000           # cycle-matched in update-time (1.91 updates of history)
+dagger_beta_decay: 0.999869         # SCALED: 0.9993^(1500/4000); final beta=0.350 matches UCL
+dagger_buffer_max: 187500           # cycle-matched in update-time (1.91 updates of history)
 
 # -- Data collection ---------------------------------------------------------
 collect_num_steps: 10000000
