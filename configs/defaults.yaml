@@ -23,44 +23,50 @@ diffusion_schedule: "cosine"        # cosine | linear
 train_sigma: 0.0                    # remasking correction during training (0 = standard MDLM)
 label_smoothing: 0.0                # cross-entropy label smoothing (0 = exact ELBO)
 
-# ── Reverse sampling ─────────────────────────────────────────────────────────
-diffusion_steps: 15                 # denoising steps T at inference
+# ── Reverse sampling (training, validation, inference) ──────────────────────
+diffusion_steps: 15                 # denoising steps T during training
+diffusion_steps_eval: 10            # denoising steps T at inference (--mode inference)
 remask_strategy: "rescale"          # rescale | cap | conf
 eta: 0.5                            # remasking strength
 use_loop: true                      # three-phase loop (Algorithm 3)
-t_on: 0.7                           # loop: remasking starts
-t_off: 0.3                          # loop: remasking ends
-temperature: 0.5                    # softmax temperature for sampling
-top_p: 0.95                         # nucleus sampling threshold
+t_on: 0.7
+t_off: 0.3
+temperature: 0.5
+top_p: 0.95
 
 # ── Optimisation ─────────────────────────────────────────────────────────────
 lr: 3.0e-4
 max_grad_norm: 1.0
-batch_size: 768
+lr_warmup_steps: 0                  # linear warm-up before cosine LR decay (0 = disabled)
 
-# ── Offline training (--mode offline) ────────────────────────────────────────
-total_timesteps: 1.0e+8             # legacy: env-frame budget; num_updates derived
-offline_num_updates: null           # if set, takes precedence over total_timesteps;
-                                    # hardware-portable across num_envs changes
+# ── Rollout (shared by offline + online) ─────────────────────────────────────
 num_envs: 1024
 num_steps: 64
 num_minibatches: 8
 update_epochs: 4
-num_repeats: 1
-collect_temperature: 1.0
-lr_warmup_steps: 0                  # linear warm-up steps before cosine LR decay (0 = disabled)
+num_repeats: 1                      # independent training seeds (vmapped)
+
+# ── Offline training (--mode offline) ────────────────────────────────────────
+# num_updates is derived as offline_total_timesteps // (num_envs * num_steps),
+# so the env-frame budget is hardware-portable across num_envs changes.
+offline_total_timesteps: 1.0e+8     # PRIMARY: env-frame budget
+offline_num_updates: null           # LEGACY: used only when offline_total_timesteps is unset
+collect_temperature: 1.0            # softmax temperature on PPO logits during data collection
 return_weight_cap: 5.0              # clip ceiling for per-window return weights
-val_interval: 50
-val_diffusion_steps: 50
-val_replan_every: 4                 # env steps executed per diffusion plan during validation
-val_steps: 128                      # total env steps per validation rollout
 
 # ── Online DAgger training (--mode online) ───────────────────────────────────
-num_updates: 1000
-replan_every: 4                     # env steps per diffusion plan during validation
-dagger_beta_init: 1.0              # initial expert mixing probability beta_1
-dagger_beta_decay: 0.95            # exponential decay: beta_i = beta_1 * decay^i
-dagger_buffer_max: 100000          # max samples in DAgger replay buffer (circular eviction)
+# num_updates is derived as online_total_timesteps // (num_envs * num_steps).
+online_total_timesteps: null        # PRIMARY: env-frame budget
+online_num_updates: 1000            # LEGACY: used only when online_total_timesteps is unset
+dagger_beta_init: 1.0               # initial expert mixing probability beta_1
+dagger_beta_decay: 0.95             # exponential decay: beta_i = beta_1 * decay^i
+dagger_buffer_max: 100000           # max samples in DAgger replay buffer (circular eviction)
+
+# ── Validation rollouts ──────────────────────────────────────────────────────
+val_interval: 50                    # update steps between validation rollouts
+val_diffusion_steps: 50             # denoising steps during validation
+val_replan_every: 4                 # env steps executed per diffusion plan
+val_steps: 128                      # total env steps per validation rollout
 
 # ── Data collection (--mode collect) ─────────────────────────────────────────
 collect_num_steps: 10000000
@@ -70,21 +76,19 @@ layer_size: 512
 
 # ── Inference (--mode inference) ─────────────────────────────────────────────
 eval_steps: 10000
-eval_num_envs: 32                   # parallel agents during evaluation (separate from training num_envs)
-diffusion_steps_eval: 10
+eval_num_envs: 32
 
-# ── Checkpointing ───────────────────────────────────────────────────────────
-checkpoint_dir: "checkpoints_online"
+# ── Checkpointing ────────────────────────────────────────────────────────────
 save_policy: true
 
 # ── Resume ───────────────────────────────────────────────────────────────────
-resume_checkpoint_path: null      # path to a completed checkpoint to resume from (accepts wandb: refs)
-resume_wandb_run_id: null         # W&B run ID to resume logging into (auto-read from checkpoint metadata if null)
-resume_step: null                 # update step the checkpoint was saved at (auto-read from checkpoint metadata if null)
+resume_checkpoint_path: null        # accepts wandb: refs
+resume_wandb_run_id: null           # auto-read from checkpoint metadata if null
+resume_step: null                   # auto-read from checkpoint metadata if null
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 seed: null                          # random if not set
 use_wandb: true
 wandb_project: "remdm-craftax"
 wandb_entity: "mathis-weil-university-college-london-ucl-"
-wandb_download_dir: null              # download directory for W&B artifacts (null = wandb default ./artifacts/)
+wandb_download_dir: null            # null = wandb default ./artifacts/

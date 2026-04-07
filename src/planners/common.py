@@ -18,6 +18,71 @@ from src.diffusion.sampling import sample_plan
 from src.diffusion.schedules import ScheduleFn
 
 
+def resolve_num_updates(config: dict[str, Any], mode: str) -> None:
+    """Resolve ``NUM_UPDATES`` from env-frame-denominated config keys.
+
+    Mutates ``config`` in place.  After this call the runners can read
+    ``NUM_UPDATES`` (and ``OFFLINE_TOTAL_TIMESTEPS`` /
+    ``ONLINE_TOTAL_TIMESTEPS`` depending on mode) without worrying about
+    whether the user specified the env-frame or update-count form.
+
+    Resolution priority:
+
+    ===========  ============================================================
+    Mode         Priority (highest first)
+    ===========  ============================================================
+    ``offline``  ``OFFLINE_TOTAL_TIMESTEPS``  >  ``OFFLINE_NUM_UPDATES``
+    ``online``   ``ONLINE_TOTAL_TIMESTEPS``   >  ``ONLINE_NUM_UPDATES``
+    ===========  ============================================================
+
+    Env-frame keys are preferred because they are invariant under
+    ``num_envs`` changes — the same value yields the same total environment
+    experience regardless of hardware sizing, which makes cross-hardware
+    fairness studies (e.g. UCL 4096-env vs QMUL 96-env) trivially fair
+    without manual scaling.
+
+    The function is idempotent: calling it twice with the same config has
+    the same effect as calling it once.
+
+    Args:
+        config: Upper-cased config dict.  Must contain ``NUM_STEPS`` and
+                ``NUM_ENVS``.
+        mode:   Either ``"offline"`` or ``"online"``.
+
+    Raises:
+        ValueError: If neither the env-frame nor the update-count form is
+                    set for the given mode, or if ``mode`` is unknown.
+    """
+    frames_per_update = int(config["NUM_STEPS"]) * int(config["NUM_ENVS"])
+
+    if mode == "offline":
+        ts_key, nu_key = "OFFLINE_TOTAL_TIMESTEPS", "OFFLINE_NUM_UPDATES"
+    elif mode == "online":
+        ts_key, nu_key = "ONLINE_TOTAL_TIMESTEPS", "ONLINE_NUM_UPDATES"
+    else:
+        raise ValueError(
+            f"Unknown mode: {mode!r}; expected 'offline' or 'online'."
+        )
+
+    ts = config.get(ts_key)
+    nu = config.get(nu_key)
+    if ts is not None:
+        num_updates = max(1, int(ts) // frames_per_update)
+    elif nu:
+        num_updates = int(nu)
+    else:
+        raise ValueError(
+            f"{mode.capitalize()} mode requires either "
+            f"{ts_key.lower()!r} (env frames, preferred) or "
+            f"{nu_key.lower()!r} to be set."
+        )
+
+    config["NUM_UPDATES"] = num_updates
+    # Re-snap so downstream consumers (run names, SPS, checkpoint IDs)
+    # see the exact integer multiple actually trained.
+    config[ts_key] = num_updates * frames_per_update
+
+
 def _action_stats(
     acts: jnp.ndarray,
     num_actions: int,

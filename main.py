@@ -17,6 +17,7 @@ import numpy as np
 import yaml
 
 from src.planners.collect import run_collect
+from src.planners.common import resolve_num_updates
 from src.planners.model import load_checkpoint_metadata, resolve_checkpoint_path
 from src.planners.offline import run_offline_diffusion
 from src.planners.online import run_online
@@ -88,7 +89,7 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
     p.add_argument("--batch_size", type=int, default=None)
 
     # Offline training
-    p.add_argument("--total_timesteps", type=lambda x: int(float(x)), default=None)
+    p.add_argument("--offline_total_timesteps", type=lambda x: int(float(x)), default=None)
     p.add_argument("--offline_num_updates", type=int, default=None)
     p.add_argument("--num_envs", type=int, default=None)
     p.add_argument("--num_steps", type=int, default=None)
@@ -104,7 +105,8 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
     p.add_argument("--lr_warmup_steps", type=int, default=None)
 
     # Online DAgger
-    p.add_argument("--num_updates", type=lambda x: int(float(x)), default=None)
+    p.add_argument("--online_num_updates", type=lambda x: int(float(x)), default=None)
+    p.add_argument("--online_total_timesteps", type=lambda x: int(float(x)), default=None)
     p.add_argument("--replan_every", type=int, default=None)
     p.add_argument("--dagger_beta_init", type=float, default=None)
     p.add_argument("--dagger_beta_decay", type=float, default=None)
@@ -238,30 +240,21 @@ def _resolve_resume(config: dict[str, Any]) -> None:
 
     resume_step = config["RESUME_STEP"]
 
-    # Validate step is in range.
-    if mode == "offline":
-        # Mirror the resolution logic in offline.run_offline_diffusion: prefer
-        # OFFLINE_NUM_UPDATES, fall back to TOTAL_TIMESTEPS derivation.
-        if config.get("OFFLINE_NUM_UPDATES"):
-            num_updates = int(config["OFFLINE_NUM_UPDATES"])
-        else:
-            num_updates = (
-                int(config["TOTAL_TIMESTEPS"])
-                // config["NUM_STEPS"]
-                // config["NUM_ENVS"]
-            )
-        if resume_step >= num_updates:
-            raise ValueError(
-                f"resume_step ({resume_step}) >= num_updates ({num_updates}). "
-                f"Increase --offline_num_updates (or --total_timesteps) to extend training."
-            )
-    elif mode == "online":
-        num_updates = config["NUM_UPDATES"]
-        if resume_step >= num_updates:
-            raise ValueError(
-                f"resume_step ({resume_step}) >= num_updates ({num_updates}). "
-                f"Increase --num_updates to extend training."
-            )
+    # Resolve NUM_UPDATES via the shared helper so resume validation matches
+    # whatever the runner will compute.  Idempotent — the runner re-runs it.
+    resolve_num_updates(config, mode)
+    num_updates = config["NUM_UPDATES"]
+
+    if resume_step >= num_updates:
+        bump_flag = (
+            "--offline_total_timesteps (or --offline_num_updates)"
+            if mode == "offline"
+            else "--online_total_timesteps (or --online_num_updates)"
+        )
+        raise ValueError(
+            f"resume_step ({resume_step}) >= num_updates ({num_updates}). "
+            f"Increase {bump_flag} to extend training."
+        )
 
 
 # =============================================================================

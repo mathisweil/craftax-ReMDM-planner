@@ -1,58 +1,32 @@
 # =============================================================================
-# Classic DAgger - QMUL H200 (8 GB VRAM budget) - second seed
-# Env-frame-matched fairness with final_classic_ucl.yaml (Exp B, seed 42).
+# Final Craftax Classic DAgger — QMUL H200 8 GB partition (seed 43)
+# Env-frame-matched second seed of final_classic_ucl.yaml.
 # -----------------------------------------------------------------------------
-# FAIRNESS PRINCIPLE: same total env frames in both offline BC and online DAgger.
-# QMUL has ~42.7x fewer parallel envs (96 vs 4096), so it does ~42.7x more
-# update steps to see the same total data. Beta schedule, LR warmup, and
-# validation cadence all scale by 128/3 so they align in env-frame time.
+# Hardware ratio is fixed: qmul_fpu/ucl_fpu = (96*128)/(4096*128) = 3/128.
+# Because this ratio is independent of the total env-frame budget, every
+# fairness-critical key below is INVARIANT under offline_total_timesteps and
+# online_total_timesteps changes — as long as UCL and QMUL share the same
+# totals, fairness holds automatically.
 #
-# DERIVED VALUES (scale = 4096/96 = 128/3 ~= 42.67):
-#   num_envs:             4096 -> 96     (sized to use ~6.5-7.5 GB of 8 GB budget)
-#   offline_num_updates:  572  -> 24405  (UCL: 299,892,736 frames; QMUL: 299,888,640, off 4096 ~ 1/3 update)
-#   num_updates (online): 1500 -> 64000  (786,432,000 env frames, EXACT match)
-#   dagger_beta_decay:    0.9993 -> 0.999984   (final beta = 0.350 in both, after 1500 / 64000 updates)
-#   lr_warmup_steps:      200  -> 8533   (same env-frame warmup duration: 200 * 128/3)
-#   val_interval:         100  -> 213    (FINER than fair-scaled 4267: ~114 validations vs UCL 5.72)
-#                                         User-chosen: same env-frame cadence as previous 64-env / 320 setting
-#                                         (~2.6M env frames per validation, for richer monitoring)
-#
-# VRAM SIZING (empirical, on QMUL H200 8 GB partition):
-#   num_envs=1536 -> 20 GB single allocation, FAIL  (minibatch=18624)
-#   num_envs=384  -> 15 GB single allocation, FAIL  (minibatch=4656)
-#   num_envs=128  -> ~8.5 GB peak,            FAIL  (minibatch=1552, ~500 MB short)
-#   num_envs=64   -> ~5 GB peak,              OK    (minibatch=776, but underutilized)
-#   num_envs=96   -> ~6.5-7.5 GB peak,        OK    (minibatch=1164) <-- chosen
-# Memory scales roughly linearly: ~0.055 GB per parallel env. At 96 envs the
-# allocation lands in the 6.5-7.5 GB sweet spot with ~0.5-1.5 GB headroom for
-# transient peaks (validation cond branch, JAX workspace, env state spikes).
-#
-# BUFFER DEVIATION (env-frame matching not feasible at 8 GB):
-#   dagger_buffer_max:    1000000 -> 23438 (cycle-matched in update-time: 1.91 updates of history)
-#   Env-frame match would require 1M samples (~5 GB extra VRAM, doesn't fit).
-#   Both seeds therefore see "1.91 updates of recent history" in the buffer:
-#   equivalent in update-time, not in env-frame time.
-#
-# IDENTICAL TO UCL: architecture, all diffusion params, batch_size, lr,
-# max_grad_norm, num_minibatches=8, update_epochs=8, dagger_beta_init,
-# replan_every, val_replan_every, val_steps, all eval/inference settings.
-#
-# UNAVOIDABLE DEVIATION: per-step minibatch is 1164 (vs UCL 49664, ~42.7x
-# smaller) due to lower num_envs. Same total samples processed across
-# training; SGD gradient noise is higher per step. lr is unchanged.
-#
-# Wall-clock: ~42.7x more update steps but each step processes ~42.7x less
-# data, so per-step wall-time is much smaller (smaller minibatches under-
-# utilize the GPU). Net slowdown vs UCL is hard to predict but typically
-# 5-12x rather than 42.7x for transformer training at this scale.
+# Scaling formulas for keys denominated in update steps (not env frames):
+#   dagger_beta_decay : ucl_decay^(qmul_fpu/ucl_fpu)
+#                     = 0.9993^(3/128) = 0.99998359
+#   lr_warmup_steps   : ucl_warmup * (ucl_fpu/qmul_fpu)
+#                     = 200 * 128/3   = 8533
+#   val_interval      : ucl_val_interval * (ucl_fpu/qmul_fpu)
+#                     = 4 * 128/3     = 171
+#   dagger_buffer_max : ucl_buffer * (qmul_envs/ucl_envs)
+#                     = 1000000 * 96/4096 = 23438
+#                       (cycle-matched: 1.91 updates of history; full env-frame
+#                        match doesn't fit in 8 GB)
 # =============================================================================
 
-# -- Environment --------------------------------------------------------------
+# ── Environment ──────────────────────────────────────────────────────────────
 env_name: "Craftax-Classic-Symbolic-v1"
 use_optimistic_resets: false
 optimistic_reset_ratio: 16
 
-# -- Transformer architecture (IDENTICAL to first seed) ----------------------
+# ── Transformer architecture ─────────────────────────────────────────────────
 d_model: 384
 n_heads: 8
 n_layers: 6
@@ -61,14 +35,15 @@ obs_encoder_layers: 2
 obs_encoder_width: 768
 dropout_rate: 0.1
 
-# -- Diffusion (IDENTICAL) ----------------------------------------------------
+# ── Diffusion ────────────────────────────────────────────────────────────────
 plan_horizon: 32
 diffusion_schedule: "cosine"
 train_sigma: 0.0
 label_smoothing: 0.0
 
-# -- Reverse sampling (IDENTICAL) --------------------------------------------
+# ── Reverse sampling ─────────────────────────────────────────────────────────
 diffusion_steps: 15
+diffusion_steps_eval: 10
 remask_strategy: "rescale"
 eta: 0.5
 use_loop: true
@@ -77,55 +52,55 @@ t_off: 0.3
 temperature: 0.5
 top_p: 0.95
 
-# -- Optimisation (IDENTICAL) ------------------------------------------------
+# ── Optimisation ─────────────────────────────────────────────────────────────
 lr: 3.0e-4
 max_grad_norm: 1.0
-batch_size: 1024
+lr_warmup_steps: 8533               # = 200 * 128/3  (UCL warmup * ucl_fpu/qmul_fpu)
 
-# -- Offline training (SCALED to match UCL env frames) -----------------------
-offline_num_updates: 24405          # SCALED: 572 * 128/3 ~= 24405; 299,888,640 env frames
-num_envs: 96                        # VRAM-tuned to ~6.5-7.5 GB; minibatch 96*97/8 = 1164
+# ── Rollout ──────────────────────────────────────────────────────────────────
+num_envs: 96                        # VRAM-tuned to ~6.5–7.5 GB; minibatch = 96*128/8 = 1536
 num_steps: 128
-num_minibatches: 8                  # IDENTICAL to UCL (preserves SGD structure)
+num_minibatches: 8
 update_epochs: 8
 num_repeats: 1
+
+# ── Offline training ─────────────────────────────────────────────────────────
+offline_total_timesteps: 3e8  # IDENTICAL to UCL; = 3e8/12288 ~= 24414 QMUL updates
 collect_temperature: 1.0
-lr_warmup_steps: 8533               # SCALED: 200 * 128/3 ~= 8533
 return_weight_cap: 5.0
-val_interval: 213                   # User-chosen finer cadence: ~2.6M env frames per validation
+
+# ── Online DAgger training ───────────────────────────────────────────────────
+online_total_timesteps: 8e8   # IDENTICAL to UCL; = 8e8/12288 ~= 65104 QMUL updates
+dagger_beta_init: 1.0
+dagger_beta_decay: 0.99998359  # = 0.9993^(3/128); final beta matches UCL's 0.9993^1526 ~= 0.344
+dagger_buffer_max: 23438       # = 1000000 * 96/4096
+
+# ── Validation rollouts ──────────────────────────────────────────────────────
+val_interval: 171                   # = 4 * 128/3  (UCL val_interval * ucl_fpu/qmul_fpu)
 val_diffusion_steps: 50
 val_replan_every: 4
 val_steps: 256
 
-# -- Online DAgger training (SCALED to match UCL env frames + beta schedule) -
-num_updates: 64000                  # SCALED: 1500 * 128/3 = 64000 exact; 786,432,000 env frames (exact UCL match)
-replan_every: 4
-dagger_beta_init: 1.0
-dagger_beta_decay: 0.999984         # SCALED: 0.9993^(1500/64000); final beta=0.350 matches UCL
-dagger_buffer_max: 23438            # cycle-matched in update-time (1.91 updates of history)
-
-# -- Data collection ---------------------------------------------------------
+# ── Data collection ──────────────────────────────────────────────────────────
 collect_num_steps: 10000000
 collect_num_envs: 128
 ppo_model_type: "ppo_rnn"
 layer_size: 512
 
-# -- Inference ----------------------------------------------------------------
+# ── Inference ────────────────────────────────────────────────────────────────
 eval_steps: 10000
 eval_num_envs: 32
-diffusion_steps_eval: 10
 
-# -- Checkpointing -----------------------------------------------------------
-checkpoint_dir: "checkpoints_exp_b_seed43_qmul"
+# ── Checkpointing ────────────────────────────────────────────────────────────
 save_policy: true
 
-# -- Resume -------------------------------------------------------------------
+# ── Resume ───────────────────────────────────────────────────────────────────
 resume_checkpoint_path: null
 resume_wandb_run_id: null
 resume_step: null
 
-# -- Logging ------------------------------------------------------------------
-seed: 43                            # CHANGED: 42 -> 43 (different seed)
+# ── Logging ──────────────────────────────────────────────────────────────────
+seed: 43
 use_wandb: true
 wandb_project: "remdm-craftax"
 wandb_entity: "mathis-weil-university-college-london-ucl-"

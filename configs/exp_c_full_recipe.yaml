@@ -1,27 +1,8 @@
 # =============================================================================
 # Experiment C — Full recipe (beta + big model + training dynamics)
 # Target hardware: NVIDIA RTX 4090 (24 GB)
-# Baseline: configs/ucl_4090_3090.yaml
-# -----------------------------------------------------------------------------
-# CHANGES vs baseline (cumulative with Experiments A + B):
-#   dagger_beta_decay:  0.998 -> 0.9993  (from Exp A)
-#   num_updates:        2500 -> 1500     (from Exp A)
-#   val_interval:       50 -> 30         (from Exp A)
-#   d_model:            256 -> 384       (from Exp B)
-#   n_heads:            4 -> 8           (from Exp B)
-#   n_layers:           4 -> 6           (from Exp B)
-#   d_ff:               512 -> 768       (from Exp B)
-#   obs_encoder_width:  512 -> 768       (from Exp B)
-#   num_minibatches:    16 -> 8          (from Exp B)
-#   diffusion_steps:    15 -> 25         (NEW: cleaner plans, acc_t_high was only 0.6)
-#   replan_every:       4 -> 2           (NEW: correct execution errors sooner)
-#   lr:                 3e-4 -> 5e-4     (NEW: scale with larger effective batch)
-#   lr_warmup_steps:    200 -> 300       (NEW: stabilize bigger model + higher LR)
-#   temperature:        0.5 -> 0.3       (NEW: sharper plan sampling)
-#   val_diffusion_steps:50 -> 25         (NEW: match training diffusion_steps)
-#   val_replan_every:   4 -> 2           (NEW: match replan_every)
-#   seed:               null -> 42       (fixed for cross-experiment comparison)
-# Estimated VRAM: ~19-20 GB
+# Cumulative with Experiments A + B: also bumps diffusion_steps, lowers
+# temperature, raises lr, and tightens validation to match training settings.
 # =============================================================================
 
 # ── Environment ──────────────────────────────────────────────────────────────
@@ -29,13 +10,13 @@ env_name: "Craftax-Classic-Symbolic-v1"
 use_optimistic_resets: false
 optimistic_reset_ratio: 16
 
-# ── Transformer architecture (CHANGED) ──────────────────────────────────────
-d_model: 384                        # CHANGED: 256 -> 384
-n_heads: 8                          # CHANGED: 4 -> 8
-n_layers: 6                         # CHANGED: 4 -> 6
-d_ff: 768                           # CHANGED: 512 -> 768
+# ── Transformer architecture ─────────────────────────────────────────────────
+d_model: 384
+n_heads: 8
+n_layers: 6
+d_ff: 768
 obs_encoder_layers: 2
-obs_encoder_width: 768              # CHANGED: 512 -> 768
+obs_encoder_width: 768
 dropout_rate: 0.1
 
 # ── Diffusion ────────────────────────────────────────────────────────────────
@@ -44,44 +25,47 @@ diffusion_schedule: "cosine"
 train_sigma: 0.0
 label_smoothing: 0.0
 
-# ── Reverse sampling (CHANGED) ──────────────────────────────────────────────
-diffusion_steps: 25                 # CHANGED: 15 -> 25 (more denoising for cleaner plans)
+# ── Reverse sampling ─────────────────────────────────────────────────────────
+diffusion_steps: 25                 # more denoising for cleaner plans
+diffusion_steps_eval: 10
 remask_strategy: "rescale"
 eta: 0.5
 use_loop: true
 t_on: 0.7
 t_off: 0.3
-temperature: 0.3                    # CHANGED: 0.5 -> 0.3 (sharper sampling)
+temperature: 0.3                    # sharper sampling than baseline
 top_p: 0.95
 
-# ── Optimisation (CHANGED) ──────────────────────────────────────────────────
-lr: 5.0e-4                          # CHANGED: 3e-4 -> 5e-4 (scale with 2x batch)
+# ── Optimisation ─────────────────────────────────────────────────────────────
+lr: 5.0e-4                          # scale with 2x effective batch
 max_grad_norm: 1.0
-batch_size: 1024
+lr_warmup_steps: 300                # stabilize higher LR + bigger model
 
-# ── Offline training ────────────────────────────────────────────────────────
-total_timesteps: 1.0e+8
+# ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 4096
 num_steps: 128
-num_minibatches: 8                  # CHANGED: 16 -> 8 (minibatch 2048)
+num_minibatches: 8                  # minibatch 2048
 update_epochs: 8
 num_repeats: 1
-collect_temperature: 1.0
-lr_warmup_steps: 300                # CHANGED: 200 -> 300 (stabilize higher LR)
-return_weight_cap: 5.0
-val_interval: 30                    # CHANGED: 50 -> 30
-val_diffusion_steps: 25             # CHANGED: 50 -> 25 (match diffusion_steps)
-val_replan_every: 2                 # CHANGED: 4 -> 2 (match replan_every)
-val_steps: 256
 
-# ── Online DAgger training (CHANGED) ────────────────────────────────────────
-num_updates: 1500                   # CHANGED: 2500 -> 1500
-replan_every: 2                     # CHANGED: 4 -> 2 (correct errors sooner)
+# ── Offline training ─────────────────────────────────────────────────────────
+offline_total_timesteps: 1.0e+8
+collect_temperature: 1.0
+return_weight_cap: 5.0
+
+# ── Online DAgger training ───────────────────────────────────────────────────
+online_num_updates: 1500
 dagger_beta_init: 1.0
-dagger_beta_decay: 0.9993           # CHANGED: 0.998 -> 0.9993
+dagger_beta_decay: 0.9993
 dagger_buffer_max: 1000000
 
-# ── Data collection ─────────────────────────────────────────────────────────
+# ── Validation rollouts ──────────────────────────────────────────────────────
+val_interval: 30
+val_diffusion_steps: 25             # match diffusion_steps
+val_replan_every: 2
+val_steps: 256
+
+# ── Data collection ──────────────────────────────────────────────────────────
 collect_num_steps: 10000000
 collect_num_envs: 128
 ppo_model_type: "ppo_rnn"
@@ -90,10 +74,8 @@ layer_size: 512
 # ── Inference ────────────────────────────────────────────────────────────────
 eval_steps: 10000
 eval_num_envs: 32
-diffusion_steps_eval: 10
 
-# ── Checkpointing ───────────────────────────────────────────────────────────
-checkpoint_dir: "checkpoints_exp_c"
+# ── Checkpointing ────────────────────────────────────────────────────────────
 save_policy: true
 
 # ── Resume ───────────────────────────────────────────────────────────────────
@@ -102,7 +84,7 @@ resume_wandb_run_id: null
 resume_step: null
 
 # ── Logging ──────────────────────────────────────────────────────────────────
-seed: 42                            # CHANGED: fixed for cross-experiment comparison
+seed: 42
 use_wandb: true
 wandb_project: "remdm-craftax"
 wandb_entity: "mathis-weil-university-college-london-ucl-"

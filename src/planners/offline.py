@@ -13,7 +13,7 @@ import orbax.checkpoint as ocp
 import wandb
 
 from src.diffusion.schedules import SCHEDULE_MAP
-from .common import make_grad_step, make_validate
+from .common import make_grad_step, make_validate, resolve_num_updates
 from .env import Transition, make_env
 from .model import (
     build_model,
@@ -55,9 +55,9 @@ def make_train(config: dict[str, Any]):
     num_samples = num_envs * valid_per_rollout
     return_weight_cap = config.get("RETURN_WEIGHT_CAP", 5.0)
 
-    # NUM_UPDATES and TOTAL_TIMESTEPS are resolved in run_offline_diffusion
-    # before wandb.init so the run name can use TOTAL_TIMESTEPS. We assume both
-    # are present here.
+    # NUM_UPDATES and OFFLINE_TOTAL_TIMESTEPS are resolved in
+    # run_offline_diffusion before wandb.init so the run name can use
+    # OFFLINE_TOTAL_TIMESTEPS. We assume both are present here.
     assert num_samples % config["NUM_MINIBATCHES"] == 0, (
         f"{num_samples} samples not divisible by {config['NUM_MINIBATCHES']} minibatches"
     )
@@ -295,25 +295,16 @@ def run_offline_diffusion(config):
     """
     config = {k.upper(): v for k, v in config.items()}
 
-    # Resolve num_updates. OFFLINE_NUM_UPDATES is the hardware-portable source of
-    # truth (invariant under num_envs changes); TOTAL_TIMESTEPS is derived from it
-    # for run names, SPS reporting, and orbax checkpoint step IDs. If
-    # OFFLINE_NUM_UPDATES is unset, fall back to deriving from TOTAL_TIMESTEPS for
-    # backward compatibility with older configs.
-    if config.get("OFFLINE_NUM_UPDATES"):
-        config["NUM_UPDATES"] = int(config["OFFLINE_NUM_UPDATES"])
-        config["TOTAL_TIMESTEPS"] = (
-            config["NUM_UPDATES"] * config["NUM_STEPS"] * config["NUM_ENVS"]
-        )
-    else:
-        config["NUM_UPDATES"] = (
-            config["TOTAL_TIMESTEPS"] // config["NUM_STEPS"] // config["NUM_ENVS"]
-        )
+    # OFFLINE_TOTAL_TIMESTEPS (env frames) is the hardware-portable source of
+    # truth: invariant under num_envs changes, so the same config trains the
+    # same amount of environment experience on any GPU.  OFFLINE_NUM_UPDATES
+    # is kept as a legacy fallback for configs that prefer the update form.
+    resolve_num_updates(config, "offline")
 
     if config["USE_WANDB"]:
         init_wandb(
             config,
-            name=f"{config['ENV_NAME']}-OfflineDiffusion-{int(config['TOTAL_TIMESTEPS'] // 1e6)}M",
+            name=f"{config['ENV_NAME']}-OfflineDiffusion-{int(config['OFFLINE_TOTAL_TIMESTEPS'] // 1e6)}M",
             resume_run_id=config.get("RESUME_WANDB_RUN_ID"),
         )
 
@@ -325,14 +316,14 @@ def run_offline_diffusion(config):
     t0 = time.time()
     out = train_fn(rngs)
     elapsed = time.time() - t0
-    print(f"Time: {elapsed:.1f}s  SPS: {config['TOTAL_TIMESTEPS'] / elapsed:.0f}")
+    print(f"Time: {elapsed:.1f}s  SPS: {config['OFFLINE_TOTAL_TIMESTEPS'] / elapsed:.0f}")
 
     if config["USE_WANDB"] and config["SAVE_POLICY"]:
         train_states = out["runner_state"][0]
         train_state = jax.tree.map(lambda x: x[0], train_states)
         path = os.path.join(wandb.run.dir, "policies")
         with ocp.CheckpointManager(path, options=ocp.CheckpointManagerOptions(max_to_keep=1)) as mgr:
-            mgr.save(int(config["TOTAL_TIMESTEPS"]), args=ocp.args.StandardSave(train_state))
+            mgr.save(int(config["OFFLINE_TOTAL_TIMESTEPS"]), args=ocp.args.StandardSave(train_state))
         print(f"Saved policy to {path}")
 
         num_updates = config["NUM_UPDATES"]

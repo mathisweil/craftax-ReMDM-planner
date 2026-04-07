@@ -1,8 +1,7 @@
 # =============================================================================
-# FINAL — Full Craftax DAgger (Exp C-Full v2: big model + full recipe + slow beta)
-# This is the config that produces the Full Craftax DAgger checkpoint used for
-# RL finetuning ablations. Trained on RTX 4090 24 GB.
-# Expected: val/achievements ~15-18, best_val_return ~16-20 (2500 updates)
+# Final Full Craftax DAgger — UCL RTX 4090 24 GB (seed 42)
+# Big transformer + full sampling recipe + slow beta decay.  Produces the Full
+# Craftax DAgger checkpoint used by the RL fine-tuning ablation suite.
 # =============================================================================
 
 # ── Environment ──────────────────────────────────────────────────────────────
@@ -10,7 +9,7 @@ env_name: "Craftax-Symbolic-v1"
 use_optimistic_resets: false
 optimistic_reset_ratio: 16
 
-# ── Transformer architecture ────────────────────────────────────────────────
+# ── Transformer architecture ─────────────────────────────────────────────────
 d_model: 384
 n_heads: 8
 n_layers: 6
@@ -25,8 +24,9 @@ diffusion_schedule: "cosine"
 train_sigma: 0.0
 label_smoothing: 0.0
 
-# ── Reverse sampling ────────────────────────────────────────────────────────
+# ── Reverse sampling ─────────────────────────────────────────────────────────
 diffusion_steps: 25
+diffusion_steps_eval: 10
 remask_strategy: "rescale"
 eta: 0.5
 use_loop: true
@@ -35,34 +35,36 @@ t_off: 0.3
 temperature: 0.3
 top_p: 0.95
 
-# ── Optimisation ────────────────────────────────────────────────────────────
+# ── Optimisation ─────────────────────────────────────────────────────────────
 lr: 5.0e-4
 max_grad_norm: 1.0
-batch_size: 1024
+lr_warmup_steps: 300
 
-# ── Offline training ────────────────────────────────────────────────────────
-offline_num_updates: 1907           # = 5e+8 / 2048 / 128 (hardware-portable)
+# ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 2048
 num_steps: 128
 num_minibatches: 8
 update_epochs: 8
 num_repeats: 1
+
+# ── Offline training ─────────────────────────────────────────────────────────
+offline_total_timesteps: 5e8  # = 5e8/262144 ~= 1907 UCL updates
 collect_temperature: 1.0
-lr_warmup_steps: 300
 return_weight_cap: 5.0
+
+# ── Online DAgger training ───────────────────────────────────────────────────
+online_total_timesteps: 5e8   # = 5e8/262144 ~= 1907 UCL updates
+dagger_beta_init: 1.0
+dagger_beta_decay: 0.9995
+dagger_buffer_max: 200000
+
+# ── Validation rollouts ──────────────────────────────────────────────────────
 val_interval: 100
 val_diffusion_steps: 25
 val_replan_every: 2
 val_steps: 256
 
-# ── Online DAgger training ──────────────────────────────────────────────────
-num_updates: 2000
-replan_every: 2
-dagger_beta_init: 1.0
-dagger_beta_decay: 0.9995
-dagger_buffer_max: 200000
-
-# ── Data collection ─────────────────────────────────────────────────────────
+# ── Data collection ──────────────────────────────────────────────────────────
 collect_num_steps: 10000000
 collect_num_envs: 128
 ppo_model_type: "ppo_rnn"
@@ -71,10 +73,8 @@ layer_size: 512
 # ── Inference ────────────────────────────────────────────────────────────────
 eval_steps: 10000
 eval_num_envs: 32
-diffusion_steps_eval: 10
 
-# ── Checkpointing ───────────────────────────────────────────────────────────
-checkpoint_dir: "checkpoints_exp_c_full_v2"
+# ── Checkpointing ────────────────────────────────────────────────────────────
 save_policy: true
 
 # ── Logging ──────────────────────────────────────────────────────────────────
