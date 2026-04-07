@@ -56,7 +56,7 @@ val_replan_every: 2
 val_steps: 256
 
 # ── Online DAgger training ──────────────────────────────────────────────────
-num_updates: 2500
+num_updates: 2000
 replan_every: 2
 dagger_beta_init: 1.0
 dagger_beta_decay: 0.9995
