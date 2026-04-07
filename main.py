@@ -83,6 +83,7 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
 
     # Offline training
     p.add_argument("--total_timesteps", type=lambda x: int(float(x)), default=None)
+    p.add_argument("--offline_num_updates", type=int, default=None)
     p.add_argument("--num_envs", type=int, default=None)
     p.add_argument("--num_steps", type=int, default=None)
     p.add_argument("--num_minibatches", type=int, default=None)
@@ -233,15 +234,20 @@ def _resolve_resume(config: dict[str, Any]) -> None:
 
     # Validate step is in range.
     if mode == "offline":
-        num_updates = (
-            int(config["TOTAL_TIMESTEPS"])
-            // config["NUM_STEPS"]
-            // config["NUM_ENVS"]
-        )
+        # Mirror the resolution logic in offline.run_offline_diffusion: prefer
+        # OFFLINE_NUM_UPDATES, fall back to TOTAL_TIMESTEPS derivation.
+        if config.get("OFFLINE_NUM_UPDATES"):
+            num_updates = int(config["OFFLINE_NUM_UPDATES"])
+        else:
+            num_updates = (
+                int(config["TOTAL_TIMESTEPS"])
+                // config["NUM_STEPS"]
+                // config["NUM_ENVS"]
+            )
         if resume_step >= num_updates:
             raise ValueError(
                 f"resume_step ({resume_step}) >= num_updates ({num_updates}). "
-                f"Increase --total_timesteps to extend training."
+                f"Increase --offline_num_updates (or --total_timesteps) to extend training."
             )
     elif mode == "online":
         num_updates = config["NUM_UPDATES"]
