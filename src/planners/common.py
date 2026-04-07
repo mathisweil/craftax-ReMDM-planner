@@ -67,7 +67,9 @@ def resolve_num_updates(config: dict[str, Any], mode: str) -> None:
     ts = config.get(ts_key)
     nu = config.get(nu_key)
     if ts is not None:
-        num_updates = max(1, int(ts) // frames_per_update)
+        # float() first to accept YAML scientific notation parsed as string
+        # (PyYAML 1.1 only auto-coerces "3.0e+8", not "3e8" or "3.0e8").
+        num_updates = max(1, int(float(ts)) // frames_per_update)
     elif nu:
         num_updates = int(nu)
     else:
@@ -132,14 +134,16 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
     """
     fpu = int(config["NUM_STEPS"]) * int(config["NUM_ENVS"])
 
+    # float() first to accept YAML scientific notation parsed as string
+    # (PyYAML 1.1 only auto-coerces "3.0e+8", not "3e8" or "3.0e8").
     # ── Mode-agnostic ────────────────────────────────────────────────
     warmup_frames = config.get("LR_WARMUP_FRAMES")
     if warmup_frames is not None:
-        config["LR_WARMUP_STEPS"] = int(warmup_frames) // fpu
+        config["LR_WARMUP_STEPS"] = int(float(warmup_frames)) // fpu
 
     val_frames = config.get("VAL_INTERVAL_FRAMES")
     if val_frames is not None:
-        config["VAL_INTERVAL"] = max(1, int(val_frames) // fpu)
+        config["VAL_INTERVAL"] = max(1, int(float(val_frames)) // fpu)
 
     # ── Online-only ──────────────────────────────────────────────────
     if mode != "online":
@@ -162,7 +166,7 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
 
     buffer_cycles = config.get("DAGGER_BUFFER_CYCLES")
     if buffer_cycles is not None:
-        config["DAGGER_BUFFER_MAX"] = int(round(float(buffer_cycles) * fpu))
+        config["DAGGER_BUFFER_MAX"] = max(1, int(round(float(buffer_cycles) * fpu)))
 
 
 def _action_stats(
