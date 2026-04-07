@@ -37,7 +37,11 @@ top_p: 0.95
 # ── Optimisation ─────────────────────────────────────────────────────────────
 lr: 3.0e-4
 max_grad_norm: 1.0
-lr_warmup_steps: 0                  # linear warm-up before cosine LR decay (0 = disabled)
+# lr_warmup_frames is the env-frame-denominated source of truth (invariant
+# under num_envs changes).  When set, it overrides lr_warmup_steps via:
+#   lr_warmup_steps = lr_warmup_frames // (num_envs * num_steps)
+lr_warmup_frames: null              # PRIMARY: env-frame warmup budget
+lr_warmup_steps: 0                  # LEGACY: linear warm-up before cosine LR decay (0 = disabled)
 
 # ── Rollout (shared by offline + online) ─────────────────────────────────────
 num_envs: 1024
@@ -59,11 +63,22 @@ return_weight_cap: 5.0              # clip ceiling for per-window return weights
 online_total_timesteps: null        # PRIMARY: env-frame budget
 online_num_updates: 1000            # LEGACY: used only when online_total_timesteps is unset
 dagger_beta_init: 1.0               # initial expert mixing probability beta_1
-dagger_beta_decay: 0.95             # exponential decay: beta_i = beta_1 * decay^i
-dagger_buffer_max: 100000           # max samples in DAgger replay buffer (circular eviction)
+# dagger_beta_final is the env-frame-invariant source of truth: the target
+# mixing ratio at the end of training.  When set, it overrides
+# dagger_beta_decay via:  decay = (beta_final / beta_init) ** (1 / num_updates)
+dagger_beta_final: null             # PRIMARY: target final beta
+dagger_beta_decay: 0.95             # LEGACY: per-update decay  beta_i = beta_init * decay^i
+# dagger_buffer_cycles measures buffer capacity in *update cycles of history*
+# (1 cycle = num_envs * num_steps frames), invariant under num_envs.  When
+# set, it overrides dagger_buffer_max via:  buffer_max = cycles * fpu
+dagger_buffer_cycles: null          # PRIMARY: buffer capacity in update cycles
+dagger_buffer_max: 100000           # LEGACY: max samples in DAgger replay buffer
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
-val_interval: 50                    # update steps between validation rollouts
+# val_interval_frames is the env-frame-invariant source of truth.  When set,
+# it overrides val_interval via:  val_interval = val_interval_frames // fpu
+val_interval_frames: null           # PRIMARY: env-frames between validations
+val_interval: 50                    # LEGACY: update steps between validation rollouts
 val_diffusion_steps: 50             # denoising steps during validation
 val_replan_every: 4                 # env steps executed per diffusion plan
 val_steps: 128                      # total env steps per validation rollout

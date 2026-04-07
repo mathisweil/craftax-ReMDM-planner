@@ -83,6 +83,88 @@ def resolve_num_updates(config: dict[str, Any], mode: str) -> None:
     config[ts_key] = num_updates * frames_per_update
 
 
+def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
+    """Resolve env-frame-denominated hyperparameters into update-step form.
+
+    Mutates ``config`` in place.  PRIMARY (env-frame) keys override LEGACY
+    (update-step) keys when set, mirroring the
+    :func:`resolve_num_updates` pattern.  When the PRIMARY key is ``None``
+    the LEGACY value passes through unchanged, preserving full
+    backward compatibility with configs that predate this resolver.
+
+    Resolution table
+    ================
+
+    +-----------------------------+------------------------+----------+
+    | PRIMARY (env-frame)         | LEGACY (update-step)   | Mode     |
+    +=============================+========================+==========+
+    | ``LR_WARMUP_FRAMES``        | ``LR_WARMUP_STEPS``    | both     |
+    +-----------------------------+------------------------+----------+
+    | ``VAL_INTERVAL_FRAMES``     | ``VAL_INTERVAL``       | both     |
+    +-----------------------------+------------------------+----------+
+    | ``DAGGER_BETA_FINAL``       | ``DAGGER_BETA_DECAY``  | online   |
+    +-----------------------------+------------------------+----------+
+    | ``DAGGER_BUFFER_CYCLES``    | ``DAGGER_BUFFER_MAX``  | online   |
+    +-----------------------------+------------------------+----------+
+
+    Why env-frame units
+    -------------------
+    Env-frame values are invariant under ``num_envs`` changes, so the
+    same config trains the same effective experiment on any GPU.  The
+    update-step legacy keys had to be hand-derived per hardware tier,
+    which was both error-prone and obscured the conceptual quantity
+    (e.g. *final beta*, not *per-update decay constant*).
+
+    The conversion for ``DAGGER_BETA_FINAL`` requires ``NUM_UPDATES``,
+    so this function MUST be called after :func:`resolve_num_updates`
+    when resolving online mode.
+
+    Idempotent: calling this twice is equivalent to calling it once.
+
+    Args:
+        config: Upper-cased config dict.  Must contain ``NUM_STEPS`` and
+                ``NUM_ENVS``.
+        mode:   Either ``"offline"`` or ``"online"``.
+
+    Raises:
+        ValueError: If ``DAGGER_BETA_FINAL`` is set in online mode but
+                    ``NUM_UPDATES`` has not been resolved yet.
+    """
+    fpu = int(config["NUM_STEPS"]) * int(config["NUM_ENVS"])
+
+    # ── Mode-agnostic ────────────────────────────────────────────────
+    warmup_frames = config.get("LR_WARMUP_FRAMES")
+    if warmup_frames is not None:
+        config["LR_WARMUP_STEPS"] = int(warmup_frames) // fpu
+
+    val_frames = config.get("VAL_INTERVAL_FRAMES")
+    if val_frames is not None:
+        config["VAL_INTERVAL"] = max(1, int(val_frames) // fpu)
+
+    # ── Online-only ──────────────────────────────────────────────────
+    if mode != "online":
+        return
+
+    beta_final = config.get("DAGGER_BETA_FINAL")
+    if beta_final is not None:
+        num_updates = config.get("NUM_UPDATES")
+        if num_updates is None:
+            raise ValueError(
+                "DAGGER_BETA_FINAL requires NUM_UPDATES to be resolved "
+                "first; call resolve_num_updates() before "
+                "resolve_scaled_hyperparams()."
+            )
+        beta_init = float(config.get("DAGGER_BETA_INIT", 1.0))
+        # final = init * decay^N  =>  decay = (final / init) ** (1 / N)
+        config["DAGGER_BETA_DECAY"] = (
+            float(beta_final) / beta_init
+        ) ** (1.0 / int(num_updates))
+
+    buffer_cycles = config.get("DAGGER_BUFFER_CYCLES")
+    if buffer_cycles is not None:
+        config["DAGGER_BUFFER_MAX"] = int(round(float(buffer_cycles) * fpu))
+
+
 def _action_stats(
     acts: jnp.ndarray,
     num_actions: int,

@@ -27,7 +27,12 @@ from flax.training.train_state import TrainState
 from src.diffusion.sampling import sample_plan
 from src.diffusion.schedules import SCHEDULE_MAP
 
-from .common import make_grad_step, make_validate, resolve_num_updates
+from .common import (
+    make_grad_step,
+    make_validate,
+    resolve_num_updates,
+    resolve_scaled_hyperparams,
+)
 from .env import make_env
 from .model import (
     build_model,
@@ -584,6 +589,11 @@ def run_online(config: dict[str, Any]) -> None:
     # same amount of environment experience on any GPU.  ONLINE_NUM_UPDATES is
     # kept as a legacy fallback for configs that prefer the update form.
     resolve_num_updates(config, "online")
+    # Translate env-frame-denominated hyperparameters (LR_WARMUP_FRAMES,
+    # VAL_INTERVAL_FRAMES, DAGGER_BETA_FINAL, DAGGER_BUFFER_CYCLES) into
+    # their update-step legacy keys.  Must run AFTER resolve_num_updates
+    # because DAGGER_BETA_FINAL needs NUM_UPDATES.
+    resolve_scaled_hyperparams(config, "online")
 
     if config.get("USE_WANDB"):
         init_wandb(

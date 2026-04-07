@@ -13,7 +13,12 @@ import orbax.checkpoint as ocp
 import wandb
 
 from src.diffusion.schedules import SCHEDULE_MAP
-from .common import make_grad_step, make_validate, resolve_num_updates
+from .common import (
+    make_grad_step,
+    make_validate,
+    resolve_num_updates,
+    resolve_scaled_hyperparams,
+)
 from .env import Transition, make_env
 from .model import (
     build_model,
@@ -300,6 +305,9 @@ def run_offline_diffusion(config):
     # same amount of environment experience on any GPU.  OFFLINE_NUM_UPDATES
     # is kept as a legacy fallback for configs that prefer the update form.
     resolve_num_updates(config, "offline")
+    # Translate env-frame-denominated hyperparameters (LR_WARMUP_FRAMES,
+    # VAL_INTERVAL_FRAMES) into their update-step legacy keys.
+    resolve_scaled_hyperparams(config, "offline")
 
     if config["USE_WANDB"]:
         init_wandb(
