@@ -65,11 +65,11 @@ top_p: 0.95
 # -- Optimisation (IDENTICAL) ------------------------------------------------
 lr: 3.0e-4
 max_grad_norm: 1.0
-batch_size: 1024
+batch_size: 512
 
 # -- Offline training (SCALED to match UCL env frames) -----------------------
 offline_num_updates: 3050           # SCALED: 572 * 8/3 ~= 1525; 299,827,200 env frames
-num_envs: 768                      # max for 8 GB
+num_envs: 512                      # max for 8 GB
 num_steps: 128
 num_minibatches: 8                  # IDENTICAL: minibatch = 1536*128/8 = 24576
 update_epochs: 8

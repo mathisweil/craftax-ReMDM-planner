@@ -7,11 +7,14 @@ from typing import Any
 import sys; sys.path.append(str(pathlib.Path(__file__).resolve().parent / "Craftax_Baselines"))
 
 import os
+
+# Must be set BEFORE `import jax` — JAX/XLA reads logging config at import time.
+# Suppresses XLA Triton autotuner noise (rejected kernel configs logged at ERROR).
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+
 import jax
 import numpy as np
 import yaml
-
-os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 
 from src.planners.collect import run_collect
 from src.planners.model import load_checkpoint_metadata, resolve_checkpoint_path
