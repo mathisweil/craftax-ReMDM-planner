@@ -53,13 +53,13 @@ collect_temperature: 1.0
 return_weight_cap: 5.0
 
 # ── Online DAgger training ───────────────────────────────────────────────────
-online_total_timesteps: 8.0e+8
+online_total_timesteps: 1.0e+8
 dagger_beta_init: 1.0
 dagger_beta_final: 0.344            # 0.9993^1525 at this hardware; auto-resolves per fpu
 dagger_buffer_cycles: 1.90735       # ~1M samples on UCL = ~1.91 update cycles of history
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
-val_interval_frames: 2.0e+6
+val_interval_frames: 1.0e+6
 val_diffusion_steps: 50
 val_replan_every: 4
 val_steps: 256
