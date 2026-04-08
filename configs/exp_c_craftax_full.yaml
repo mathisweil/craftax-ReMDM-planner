@@ -42,7 +42,7 @@ max_grad_norm: 1.0
 lr_warmup_steps: 300
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
-num_envs: 2048                      # halved from 4096: larger obs per env
+num_envs: 448                      # halved from 4096: larger obs per env
 num_steps: 128
 num_minibatches: 8                  # minibatch = 2048 * 128 / 8 = 32768
 update_epochs: 8
@@ -54,13 +54,13 @@ collect_temperature: 1.0
 return_weight_cap: 5.0
 
 # ── Online DAgger training ───────────────────────────────────────────────────
-online_num_updates: 2000            # harder task, more room to learn
+online_total_timesteps: 1.0e+8            # harder task, more room to learn
 dagger_beta_init: 1.0
 dagger_beta_decay: 0.9993
 dagger_buffer_max: 200000           # 8268 obs -> ~6.6 GB at 200k
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
-val_interval: 30
+val_interval_frames: 1.0e+6
 val_diffusion_steps: 25             # match diffusion_steps
 val_replan_every: 2
 val_steps: 256
