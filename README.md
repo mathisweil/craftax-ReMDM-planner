@@ -166,6 +166,8 @@ python main.py --mode online \
     --save_policy
 ```
 
+When `save_policy=true`, online training uploads **two** W&B artifacts: `{env_name}-policy` (final weights) and `{env_name}-policy-best` (weights from the validation iteration with the highest return). Either artifact can be consumed downstream by `--checkpoint_path wandb:…`.
+
 ### Stage 4 — Evaluate
 
 ```bash
@@ -267,15 +269,20 @@ Preset configs for larger runs are provided in `configs/`:
 | File | Purpose |
 |------|---------|
 | `configs/defaults.yaml` | Base defaults for all modes |
-| `configs/big_diffusion_offline.yaml` | Larger model for offline training |
-| `configs/big_diffusion_online.yaml` | Larger model for online training |
-| `configs/A100_diffusion_offline.yaml` | A100-tuned offline config |
-| `configs/A100_diffusion_online.yaml` | A100-tuned online config |
-| `configs/ucl_4090_3090.yaml` | UCL RTX 4090/3090 preset |
-| `configs/ucl_4070.yaml` | UCL RTX 4070 preset |
-| `configs/ali_gpu.yaml` | Ali GPU preset |
-| `configs/qmul_h200.yaml` | QMUL H200 preset |
-| `configs/ablations.yaml` | RL fine-tuning ablation hyperparameters (loaded by `experiments/`, not `main.py`) |
+| `configs/classic_exp_a_beta_fix.yaml` | Craftax Classic DAgger — beta decay fix only (isolates data quality) |
+| `configs/classic_exp_b_beta_big_model.yaml` | Craftax Classic DAgger — beta fix + 3.5× larger transformer |
+| `configs/classic_exp_c_full_recipe.yaml` | Craftax Classic DAgger — beta + big model + training dynamics |
+| `configs/craftax_exp_a_beta_fix.yaml` | Full Craftax DAgger — beta decay fix only |
+| `configs/craftax_exp_b_beta_big_model.yaml` | Full Craftax DAgger — beta fix + larger transformer |
+| `configs/craftax_exp_c_full_recipe.yaml` | Full Craftax DAgger — full recipe |
+| `configs/final_classic_ucl.yaml` | Final Craftax Classic DAgger — UCL 3090 Ti, seed 42 (produces the Classic checkpoint consumed by the ablation suite) |
+| `configs/final_classic_qmul.yaml` | Env-frame-matched second seed of `final_classic_ucl.yaml` (QMUL H200, seed 43) |
+| `configs/final_craftax_ucl.yaml` | Final Full Craftax DAgger — UCL 4090, seed 42 (produces the Full Craftax checkpoint consumed by the ablation suite) |
+| `configs/final_craftax_qmul.yaml` | Env-frame-matched second seed of `final_craftax_ucl.yaml` (QMUL H200, seed 43) |
+
+RL fine-tuning ablation hyperparameters live under `experiments/rl_finetuning/configs/` and are loaded by `run_ablations.py`, not by `main.py`. See `experiments/README.md`.
+
+The `final_*_qmul.yaml` presets differ from their UCL counterparts only in `num_envs` (smaller partition) and `seed`. All fairness-critical hyperparameters are denominated in env frames or update cycles and automatically rescaled by `resolve_scaled_hyperparams()` at load time, so no manual derivation is needed when moving between hardware tiers.
 
 ### Key hyperparameters
 
@@ -283,7 +290,7 @@ Preset configs for larger runs are provided in `configs/`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `env_name` | `Craftax-Classic-Symbolic-v1` | Craftax environment ID |
+| `env_name` | `Craftax-Classic-Symbolic-v1` | Craftax environment ID. Use `Craftax-Symbolic-v1` for Full Craftax. |
 | `use_optimistic_resets` | `false` | Use `OptimisticResetVecEnvWrapper` instead of `AutoResetEnvWrapper` |
 | `optimistic_reset_ratio` | 16 | Fraction of envs reset per step when optimistic resets are enabled |
 
@@ -319,19 +326,21 @@ Preset configs for larger runs are provided in `configs/`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `offline_total_timesteps` | 1e8 | Total environment steps for live-PPO data collection (offline mode) |
+| `offline_total_timesteps` | 1e8 | **PRIMARY** env-frame budget for live-PPO data collection. Derives `num_updates` as `offline_total_timesteps // (num_envs * num_steps)`, making the run hardware-portable across `num_envs` changes. |
+| `offline_num_updates` | `null` | **LEGACY** outer update count; used only when `offline_total_timesteps` is unset. |
 | `num_envs` | 1024 | Parallel environments |
 | `num_steps` | 64 | Environment steps collected per update |
 | `num_minibatches` | 8 | Gradient minibatches per epoch |
 | `update_epochs` | 4 | SGD epochs per update step |
 | `num_repeats` | 1 | Independent training seeds (vmapped) |
 | `lr` | 3e-4 | Adam learning rate (cosine-decayed to 10% over all gradient steps) |
-| `lr_warmup_steps` | 0 | Linear warm-up steps before cosine decay (0 = disabled) |
+| `lr_warmup_frames` | `null` | **PRIMARY** env-frame warm-up budget. Derives `lr_warmup_steps` as `lr_warmup_frames // (num_envs * num_steps)`. |
+| `lr_warmup_steps` | 0 | **LEGACY** linear warm-up steps before cosine decay (used when `lr_warmup_frames` is unset; 0 = disabled). |
 | `max_grad_norm` | 1.0 | Global gradient clipping norm |
-| `batch_size` | 768 | Minibatch size |
-| `return_weight_cap` | 5.0 | Clip ceiling for per-window return weights |
+| `return_weight_cap` | 5.0 | Clip ceiling for per-window return weights (lower clip is fixed at 0.1) |
 | `collect_temperature` | 1.0 | Softmax temperature on PPO logits during live data collection |
-| `val_interval` | 50 | Validation frequency in update steps |
+| `val_interval_frames` | `null` | **PRIMARY** env-frames between validation rollouts. Overrides `val_interval` via `val_interval = val_interval_frames // (num_envs * num_steps)`. |
+| `val_interval` | 50 | **LEGACY** validation frequency in update steps (used when `val_interval_frames` is unset). |
 | `val_diffusion_steps` | 50 | Denoising steps used during validation rollouts |
 | `val_replan_every` | 4 | Environment steps executed per diffusion plan during validation |
 | `val_steps` | 128 | Total environment steps per validation rollout |
@@ -340,12 +349,15 @@ Preset configs for larger runs are provided in `configs/`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `online_total_timesteps` | None | PRIMARY: env-frame budget for online DAgger (hardware-portable). Derives `num_updates`. |
-| `online_num_updates` | 1000 | LEGACY: outer DAgger iterations (used when `online_total_timesteps` is unset) |
-| `replan_every` | 4 | Environment steps per diffusion plan during validation |
-| `dagger_beta_init` | 1.0 | Initial expert mixing probability `beta_1` (1.0 = pure expert first iteration) |
-| `dagger_beta_decay` | 0.95 | Exponential decay: `beta_i = beta_1 * decay^i` |
-| `dagger_buffer_max` | 100000 | Max samples in the DAgger replay buffer (circular eviction when full) |
+| `online_total_timesteps` | `null` | **PRIMARY** env-frame budget for online DAgger (hardware-portable). Derives `num_updates` as `online_total_timesteps // (num_envs * num_steps)`. |
+| `online_num_updates` | 1000 | **LEGACY** outer DAgger iterations (used when `online_total_timesteps` is unset). |
+| `dagger_beta_init` | 1.0 | Initial expert mixing probability `beta_1` (1.0 = pure expert on the first iteration). |
+| `dagger_beta_final` | `null` | **PRIMARY** target mixing ratio at the end of training. Overrides `dagger_beta_decay` via `decay = (beta_final / beta_init) ** (1 / num_updates)`. |
+| `dagger_beta_decay` | 0.95 | **LEGACY** per-update decay: `beta_i = beta_init * decay^i` (used when `dagger_beta_final` is unset). |
+| `dagger_buffer_cycles` | `null` | **PRIMARY** buffer capacity denominated in update cycles of history (1 cycle = `num_envs * num_steps` frames). Overrides `dagger_buffer_max` via `buffer_max = cycles * (num_envs * num_steps)`. |
+| `dagger_buffer_max` | 100000 | **LEGACY** max samples in the DAgger replay buffer (circular eviction when full). |
+| `dagger_train_passes` | `null` | Passes per update over the aggregated buffer. `null` = 1 pass (matches offline BC per-update gradient work exactly for fair compute comparison). Raise to >1 to trade BC fairness for wider per-update buffer coverage. |
+| `dagger_expert_deterministic` | `true` | If `true`, the PPO expert takes the argmax action (fixed `s → a*` map); if `false`, it samples categorically. Deterministic removes label noise from the aggregated dataset. |
 
 **Data collection**
 
@@ -368,8 +380,7 @@ Preset configs for larger runs are provided in `configs/`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `checkpoint_dir` | `checkpoints_online` | Directory for periodic checkpoints |
-| `save_policy` | `true` | Save final checkpoint at end of training |
+| `save_policy` | `true` | Save final checkpoint at end of training and upload it as a W&B artifact |
 
 **Resume**
 
@@ -446,16 +457,17 @@ craftax-ReMDM-planner/
 │       ├── rnd.py                 # RND network
 │       └── icm.py                 # ICM encoder, forward, and inverse networks
 ├── configs/
-│   ├── defaults.yaml              # Base hyperparameters (CLI-overridable)
-│   ├── big_diffusion_offline.yaml
-│   ├── big_diffusion_online.yaml
-│   ├── A100_diffusion_offline.yaml
-│   ├── A100_diffusion_online.yaml
-│   ├── ucl_4090_3090.yaml         # UCL RTX 4090/3090 preset
-│   ├── ucl_4070.yaml              # UCL RTX 4070 preset
-│   ├── ali_gpu.yaml               # Ali GPU preset
-│   ├── qmul_h200.yaml            # QMUL H200 preset
-│   └── ablations.yaml             # RL fine-tuning ablation hyperparameters
+│   ├── defaults.yaml                        # Base hyperparameters (CLI-overridable)
+│   ├── classic_exp_a_beta_fix.yaml          # Classic DAgger — beta decay fix only
+│   ├── classic_exp_b_beta_big_model.yaml    # Classic DAgger — beta fix + big model
+│   ├── classic_exp_c_full_recipe.yaml       # Classic DAgger — full recipe
+│   ├── craftax_exp_a_beta_fix.yaml          # Full Craftax DAgger — beta fix
+│   ├── craftax_exp_b_beta_big_model.yaml    # Full Craftax DAgger — beta + big model
+│   ├── craftax_exp_c_full_recipe.yaml       # Full Craftax DAgger — full recipe
+│   ├── final_classic_ucl.yaml               # Classic DAgger — UCL 3090 Ti, seed 42
+│   ├── final_classic_qmul.yaml              # Classic DAgger — QMUL H200, seed 43
+│   ├── final_craftax_ucl.yaml               # Full Craftax DAgger — UCL 4090, seed 42
+│   └── final_craftax_qmul.yaml              # Full Craftax DAgger — QMUL H200, seed 43
 ├── src/
 │   ├── diffusion/
 │   │   ├── forward.py             # Forward masking process q(z_t | x_0)
@@ -479,10 +491,11 @@ craftax-ReMDM-planner/
 ├── experiments/
 │   └── rl_finetuning/             # RL fine-tuning ablation suite (see experiments/README.md)
 │       ├── run_ablations.py       # CLI entry point
-│       ├── ablations/             # Loss, optimizer, and registry modules
+│       ├── ablations/             # Loss, optimizer, registry, and training modules
 │       ├── diagnostics/           # Gradient, representation, and timestep diagnostics
 │       ├── analysis/              # Plots, tables, and report generation
-│       └── configs/               # ablations_default.yaml, ablations_fast.yaml
+│       └── configs/               # ablations_default.yaml, ablations_fast.yaml,
+│                                  # ablations_final_{classic,craftax}_{ucl,qmul}.yaml
 ├── main.py                        # CLI entry point
 ├── pyproject.toml                 # uv project — direct deps + tool config
 └── uv.lock                        # Reproducible lockfile (commit this)
@@ -500,7 +513,9 @@ craftax-ReMDM-planner/
 
 **Return weighting**: valid windows are weighted by their cumulative reward, normalised by the batch mean and clipped to `[0.1, RETURN_WEIGHT_CAP]`. Weights are passed as per-sample multipliers into the MDLM loss before reduction, so they correctly scale each sample's gradient contribution.
 
-**LR schedule**: cosine decay from `lr` to `lr * 0.1` over all gradient steps. Set `lr_warmup_steps > 0` to prepend a linear warm-up phase.
+**LR schedule**: cosine decay from `lr` to `lr * 0.1` over all gradient steps. Set `lr_warmup_frames > 0` (env-frame-invariant, PRIMARY) or `lr_warmup_steps > 0` (LEGACY) to prepend a linear warm-up phase.
+
+**Env-frame-invariant hyperparameters**: the PRIMARY keys `offline_total_timesteps`, `online_total_timesteps`, `lr_warmup_frames`, `val_interval_frames`, `dagger_beta_final`, and `dagger_buffer_cycles` are denominated in env frames (or update cycles). At config load time, `resolve_scaled_hyperparams()` in `src/planners/common.py` converts them to the equivalent update-step-denominated quantities (`num_updates`, `lr_warmup_steps`, `val_interval`, `dagger_beta_decay`, `dagger_buffer_max`) using the current `num_envs * num_steps` frames-per-update. This lets the same config run on different hardware tiers without re-tuning.
 
 **Loss weight clipping**: the MDLM SUBS weight `-alpha'(t) / (1 - alpha_t)` is clipped to 1000 to prevent numerical instability when `alpha_t ≈ 1`.
 
@@ -508,7 +523,9 @@ craftax-ReMDM-planner/
 
 **W&B logging**: all metric aggregation is centralised in `src/planners/logging.py`. Metric namespaces: `diffusion/` (loss, accuracy), `train/` (data quality, throughput), `env/` (episode returns, achievements), `val/` (validation rollouts, emitted every `val_interval` steps), `dagger/` (online DAgger training: beta, buffer fill, reward mean, valid fraction). `train/sps` (environment frames/sec) is only logged in modes that perform live environment interaction.
 
-**DAgger dataset aggregation**: online training (`--mode online`) implements DAgger (Ross et al., 2011). A circular replay buffer accumulates `(obs, expert_plan)` pairs across all iterations. Each update samples uniformly from the full buffer, not just the latest batch. Training samples that cross episode boundaries (any `done` within the plan-horizon window) are marked invalid. The expert (PPO agent) receives correct `done` flags so its RNN hidden state resets on episode boundaries.
+**DAgger dataset aggregation**: online training (`--mode online`) implements DAgger (Ross et al., 2011). A circular replay buffer accumulates `(obs, expert_plan)` pairs across all iterations. Each update samples uniformly from the full buffer, not just the latest batch. Training samples that cross episode boundaries (any `done` within the plan-horizon window) are marked invalid. The expert (PPO agent) receives correct `done` flags so its RNN hidden state resets on episode boundaries. Windows are extracted with a sliding stride (one per env-time position) rather than stepping the buffer in plan-horizon chunks, so every visited state contributes a label.
+
+**Best-checkpoint tracking**: during online training, the parameters from the validation iteration with the highest validation return are preserved alongside the current live parameters. The final checkpoint and the best-validation checkpoint are both uploaded as separate W&B artifacts (`{env_name}-policy` and `{env_name}-policy-best`).
 
 **Denoising step indexing**: the reverse scan runs from `step_idx = 0` to `T-1`, mapping to diffusion time `t = (T - step_idx) / T` (high noise to low noise).
 
