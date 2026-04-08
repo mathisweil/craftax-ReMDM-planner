@@ -40,7 +40,7 @@ top_p: 0.95
 max_iter: 500
 num_envs: 64
 num_steps: 128
-batch_size: 512
+batch_size: 256
 lr: 3.0e-4
 weight_decay: 1.0e-4
 max_grad_norm: 1.0
