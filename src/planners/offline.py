@@ -314,7 +314,7 @@ def run_offline_diffusion(config):
     if config["USE_WANDB"]:
         init_wandb(
             config,
-            name=f"{config['ENV_NAME']}-OfflineDiffusion-{int(config['OFFLINE_TOTAL_TIMESTEPS'] // 1e6)}M",
+            name=f"{config['ENV_NAME']}-OfflineDiffusion-BC-{int(config['OFFLINE_TOTAL_TIMESTEPS'] // 1e6)}M",
             resume_run_id=config.get("RESUME_WANDB_RUN_ID"),
         )
 
