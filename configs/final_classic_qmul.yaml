@@ -1,5 +1,5 @@
 # =============================================================================
-# Final Craftax Classic DAgger — QMUL H200 8 GB partition (seed 43)
+# Final Craftax Classic DAgger — QMUL H200 8 GB partition (seed 43) - EXP B
 # Env-frame-matched second seed of final_classic_ucl.yaml.
 # -----------------------------------------------------------------------------
 # Identical to final_classic_ucl.yaml except for num_envs (96 vs 4096) and
