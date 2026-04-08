@@ -1,25 +1,21 @@
 # =============================================================================
-# Final Craftax Classic DAgger — QMUL H200 8 GB partition (seed 43) - EXP B - 9M model
-# Env-frame-matched second seed of final_classic_ucl.yaml.
-# -----------------------------------------------------------------------------
-# Identical to final_classic_ucl.yaml except for num_envs (96 vs 4096) and
-# seed (43 vs 42).  All fairness-critical hyperparameters are now denominated
-# in env frames or update cycles, so they are AUTOMATICALLY scaled to this
-# hardware tier by resolve_scaled_hyperparams() — no manual derivation.
+# Final Full Craftax DAgger — UCL RTX 4090 24 GB - EXP C - 7M model
+# Big transformer + full sampling recipe + slow beta decay.  Produces the Full
+# Craftax DAgger checkpoint used by the RL fine-tuning ablation suite.
 # =============================================================================
 
 # ── Environment ──────────────────────────────────────────────────────────────
-env_name: "Craftax-Classic-Symbolic-v1"
+env_name: "Craftax-Symbolic-v1"
 use_optimistic_resets: false
 optimistic_reset_ratio: 16
 
 # ── Transformer architecture ─────────────────────────────────────────────────
-d_model: 384
-n_heads: 8
-n_layers: 6
-d_ff: 768
+d_model: 256
+n_heads: 4
+n_layers: 4
+d_ff: 512
 obs_encoder_layers: 2
-obs_encoder_width: 768
+obs_encoder_width: 512
 dropout_rate: 0.1
 
 # ── Diffusion ────────────────────────────────────────────────────────────────
@@ -29,23 +25,23 @@ train_sigma: 0.0
 label_smoothing: 0.0
 
 # ── Reverse sampling ─────────────────────────────────────────────────────────
-diffusion_steps: 15
+diffusion_steps: 25
 diffusion_steps_eval: 10
 remask_strategy: "rescale"
 eta: 0.5
 use_loop: true
 t_on: 0.7
 t_off: 0.3
-temperature: 0.5
+temperature: 0.3
 top_p: 0.95
 
 # ── Optimisation ─────────────────────────────────────────────────────────────
-lr: 3.0e-4
+lr: 5.0e-4
 max_grad_norm: 1.0
-lr_warmup_frames: 1.048576e8        # IDENTICAL to UCL; resolves to 8533 update steps on 96 envs
+lr_warmup_frames: 7.86432e7         # = 300 update steps at this hardware (300 * 2048 * 128)
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
-num_envs: 96                        # VRAM-tuned to ~6.5–7.5 GB; minibatch = 96*128/8 = 1536
+num_envs: 832
 num_steps: 128
 num_minibatches: 8
 update_epochs: 8
@@ -59,13 +55,13 @@ return_weight_cap: 5.0
 # ── Online DAgger training ───────────────────────────────────────────────────
 online_total_timesteps: 1.0e+8
 dagger_beta_init: 1.0
-dagger_beta_final: 0.344
-dagger_buffer_cycles: 1.90735
+dagger_beta_final: 0.385            # 0.9995^1907 at this hardware; auto-resolves per fpu
+dagger_buffer_cycles: 0.76294       # ~200K samples on UCL = ~0.76 update cycles of history
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
 val_interval_frames: 1.0e+6
-val_diffusion_steps: 50
-val_replan_every: 4
+val_diffusion_steps: 25
+val_replan_every: 2
 val_steps: 256
 
 # ── Data collection ──────────────────────────────────────────────────────────
@@ -81,13 +77,8 @@ eval_num_envs: 32
 # ── Checkpointing ────────────────────────────────────────────────────────────
 save_policy: true
 
-# ── Resume ───────────────────────────────────────────────────────────────────
-resume_checkpoint_path: null
-resume_wandb_run_id: null
-resume_step: null
-
 # ── Logging ──────────────────────────────────────────────────────────────────
-seed: 43
+seed: 42
 use_wandb: true
 wandb_project: "remdm-craftax"
 wandb_entity: "mathis-weil-university-college-london-ucl-"
