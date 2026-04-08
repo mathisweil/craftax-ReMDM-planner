@@ -52,18 +52,18 @@ update_epochs: 8
 num_repeats: 1
 
 # ── Offline training ─────────────────────────────────────────────────────────
-offline_total_timesteps: 1.0e+7        # IDENTICAL to UCL
+offline_total_timesteps: 1.0e+8
 collect_temperature: 1.0
 return_weight_cap: 5.0
 
 # ── Online DAgger training ───────────────────────────────────────────────────
-online_total_timesteps: 1.0e+7         # IDENTICAL to UCL
+online_total_timesteps: 1.0e+8
 dagger_beta_init: 1.0
-dagger_beta_final: 0.344            # IDENTICAL to UCL; resolves to 0.99998359 decay on 96 envs
-dagger_buffer_cycles: 1.90735       # IDENTICAL to UCL; resolves to ~23438 samples on 96 envs
+dagger_beta_final: 0.344
+dagger_buffer_cycles: 1.90735
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
-val_interval_frames: 2.0e+6
+val_interval_frames: 1.0e+6
 val_diffusion_steps: 50
 val_replan_every: 4
 val_steps: 256
