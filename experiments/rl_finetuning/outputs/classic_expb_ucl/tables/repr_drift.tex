@@ -1,0 +1,36 @@
+\begin{table}[htbp]
+\centering
+\caption{Representation drift (KL divergence) at final iteration.}
+\label{tab:repr_drift}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Method} & \textbf{KL\_mean} & \textbf{KL\_low\_t} & \textbf{KL\_mid\_t} & \textbf{KL\_high\_t} \\
+\midrule
+trust\_region\_kl & 0.0644 & 0.0792 & 0.0642 & 0.0467 \\
+reward\_filtering & 0.1518 & 0.1650 & 0.1517 & 0.1434 \\
+kl\_penalty & 0.1675 & 0.1829 & 0.1690 & 0.1648 \\
+mixed\_replay & 0.1732 & 0.1795 & 0.1692 & 0.1658 \\
+low\_t & 0.1879 & 0.1964 & 0.1801 & 0.1934 \\
+llrd & 0.1888 & 0.1944 & 0.1837 & 0.1813 \\
+entropy\_bonus & 0.1893 & 0.1981 & 0.1865 & 0.1962 \\
+ewc & 0.1950 & 0.2140 & 0.1901 & 0.1834 \\
+gradient\_surgery & 0.2095 & 0.2165 & 0.2046 & 0.2008 \\
+baseline\_rl & 0.2096 & 0.2168 & 0.2047 & 0.2007 \\
+action\_diversity & 0.2099 & 0.2171 & 0.2050 & 0.2011 \\
+running\_stats & 0.2180 & 0.2235 & 0.2142 & 0.2159 \\
+advantage\_clip & 0.2191 & 0.2263 & 0.2168 & 0.2171 \\
+bc\_wins & 0.2197 & 0.2273 & 0.2174 & 0.2170 \\
+reward\_model & 0.2227 & 0.2316 & 0.2172 & 0.2161 \\
+t\_curriculum & 0.2255 & 0.2232 & 0.2188 & 0.2447 \\
+layer\_ablation\_top2 & 9.6726 & 8.6042 & 9.5582 & 10.7141 \\
+layer\_ablation\_top1 & 13.3242 & 13.3114 & 13.2170 & 13.3402 \\
+layer\_ablation\_top3 & 16.2087 & 16.4796 & 15.9604 & 16.6099 \\
+ffn\_only & 23.8914 & 22.4150 & 23.8235 & 25.3956 \\
+normalized\_adv & 63.2407 & 63.1069 & 64.2241 & 61.8984 \\
+attention\_only & 90.1913 & 90.4135 & 90.0651 & 90.1449 \\
+frozen\_backbone & 115.5261 & 115.5716 & 115.4307 & 115.7664 \\
+head\_only & 115.8261 & 115.7438 & 115.7163 & 116.1807 \\
+lora & 1679591.0000 & 1673381.2500 & 1672479.6250 & 1676199.7500 \\
+\bottomrule
+\end{tabular}
+\end{table}

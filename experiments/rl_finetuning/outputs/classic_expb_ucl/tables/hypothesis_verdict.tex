@@ -1,0 +1,36 @@
+\begin{table}[htbp]
+\centering
+\caption{Hypothesis verdict per ablation.}
+\label{tab:hypothesis}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Ablation} & \textbf{Group} & \textbf{Hypothesis} & \textbf{Result} & \textbf{Conclusion} \\
+\midrule
+baseline\_rl & Baseline & Diagnoses whether the RL signal alone causes collapse & IMPROVEMENT & Hypothesis SUPPORTED — this intervention helps \\
+kl\_penalty & A & If this helps: catastrophic forgetting is the primary cause; soft regularisation... & IMPROVEMENT & Hypothesis SUPPORTED — this intervention helps \\
+ewc & A & If EWC helps: forgetting pretrained representations is the proximate cause & IMPROVEMENT & Hypothesis SUPPORTED — this intervention helps \\
+llrd & A & If LLRD helps: deep gradient flow into early layers corrupts representations & IMPROVEMENT & Hypothesis SUPPORTED — this intervention helps \\
+lora & A & If LoRA works: too many unconstrained degrees of freedom cause collapse & COLLAPSE & Hypothesis REFUTED — intervention did not prevent collapse \\
+mixed\_replay & A & If mixed replay helps: online data distribution alone is too corrupted & IMPROVEMENT & Hypothesis SUPPORTED — this intervention helps \\
+trust\_region\_kl & A & If hard constraint helps: soft KL is insufficient — a hard boundary is needed & IMPROVEMENT & Hypothesis SUPPORTED — this intervention helps \\
+t\_curriculum & B & If curriculum helps: ordering of learning signals matters & IMPROVEMENT & Hypothesis SUPPORTED — this intervention helps \\
+entropy\_bonus & B & If entropy bonus helps: collapse is mode-collapse; not a gradient problem & IMPROVEMENT & Hypothesis SUPPORTED — this intervention helps \\
+gradient\_surgery & B & If PCGrad helps: gradients are conflicting and resolvable by projection & IMPROVEMENT & Hypothesis SUPPORTED — this intervention helps \\
+advantage\_clip & B & If clipping helps: large advantage magnitudes destabilise training & IMPROVEMENT & Hypothesis SUPPORTED — this intervention helps \\
+normalized\_adv & B & If std normalisation helps: simple mean normalisation is too loose & COLLAPSE & Hypothesis REFUTED — intervention did not prevent collapse \\
+bc\_wins & B & If BC on wins helps: the return weighting is the specific cause & IMPROVEMENT & Hypothesis SUPPORTED — this intervention helps \\
+low\_t & B & If low-t helps: high-t (coarse-structure) gradients are biased & IMPROVEMENT & Hypothesis SUPPORTED — this intervention helps \\
+frozen\_backbone & C & If frozen backbone helps: deep gradient flow into backbone causes collapse & COLLAPSE & Hypothesis REFUTED — intervention did not prevent collapse \\
+head\_only & C & If head-only works: backbone representations are fine; only decision boundary ne... & COLLAPSE & Hypothesis REFUTED — intervention did not prevent collapse \\
+attention\_only & C & If attention-only works: model needs routing updates, not feature updates & COLLAPSE & Hypothesis REFUTED — intervention did not prevent collapse \\
+ffn\_only & C & If FFN-only works: stored knowledge (FFN as memory) needs updating; not attentio... & COLLAPSE & Hypothesis REFUTED — intervention did not prevent collapse \\
+layer\_ablation\_top1 & C & Minimal unfrozen depth needed; collapse depth correlates with gradient flow dept... & COLLAPSE & Hypothesis REFUTED — intervention did not prevent collapse \\
+layer\_ablation\_top2 & C & Minimal unfrozen depth needed; collapse depth correlates with gradient flow dept... & COLLAPSE & Hypothesis REFUTED — intervention did not prevent collapse \\
+layer\_ablation\_top3 & C & Minimal unfrozen depth needed; collapse depth correlates with gradient flow dept... & COLLAPSE & Hypothesis REFUTED — intervention did not prevent collapse \\
+reward\_filtering & D & If filtering helps: noisy/low-return data poisons gradients & IMPROVEMENT & Hypothesis SUPPORTED — this intervention helps \\
+running\_stats & D & If running stats help: batch normalisation is too noisy for small batches & IMPROVEMENT & Hypothesis SUPPORTED — this intervention helps \\
+action\_diversity & D & If diversity filtering helps: degenerate PPO plans corrupt training & IMPROVEMENT & Hypothesis SUPPORTED — this intervention helps \\
+reward\_model & D & If reward model helps: raw returns are too sparse; learned model smooths signal & IMPROVEMENT & Hypothesis SUPPORTED — this intervention helps \\
+\bottomrule
+\end{tabular}
+\end{table}

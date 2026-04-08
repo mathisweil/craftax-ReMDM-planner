@@ -1,0 +1,36 @@
+\begin{table}[htbp]
+\centering
+\caption{Catastrophic forgetting timeline.}
+\label{tab:forgetting}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Method} & \textbf{First\_Collapse\_Iter} & \textbf{Min\_Score} & \textbf{Recovery\_Score} & \textbf{Recovered} \\
+\midrule
+baseline\_rl & never & 9.7303 & 10.8216 & N/A \\
+kl\_penalty & never & 9.8106 & 10.9880 & N/A \\
+ewc & never & 9.5767 & 10.7862 & N/A \\
+llrd & never & 10.0296 & 10.7272 & N/A \\
+lora & 25 & -0.9283 & -0.9103 & N \\
+mixed\_replay & never & 10.0754 & 10.9151 & N/A \\
+trust\_region\_kl & never & 9.8786 & 10.6206 & N/A \\
+t\_curriculum & never & 10.1262 & 10.9168 & N/A \\
+entropy\_bonus & never & 9.8287 & 10.9190 & N/A \\
+gradient\_surgery & never & 9.8682 & 10.8241 & N/A \\
+advantage\_clip & never & 9.7370 & 10.7793 & N/A \\
+normalized\_adv & 250 & 5.3672 & 5.0739 & N \\
+bc\_wins & never & 9.8543 & 10.8676 & N/A \\
+low\_t & never & 9.9204 & 10.6598 & N/A \\
+frozen\_backbone & 75 & -0.9247 & 0.2878 & N \\
+head\_only & 75 & -0.9247 & 0.2743 & N \\
+attention\_only & 75 & -0.9247 & 0.5447 & N \\
+ffn\_only & 200 & 3.0321 & 1.8791 & N \\
+layer\_ablation\_top1 & 175 & 6.2978 & 4.0468 & N \\
+layer\_ablation\_top2 & 225 & 7.2379 & 6.3875 & N \\
+layer\_ablation\_top3 & 175 & 7.6156 & 6.0164 & Y \\
+reward\_filtering & never & 9.8508 & 11.0502 & N/A \\
+running\_stats & never & 10.0158 & 10.9616 & N/A \\
+action\_diversity & never & 9.9356 & 11.0773 & N/A \\
+reward\_model & never & 9.9416 & 10.8205 & N/A \\
+\bottomrule
+\end{tabular}
+\end{table}

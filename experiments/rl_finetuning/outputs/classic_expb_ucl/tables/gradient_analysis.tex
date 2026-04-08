@@ -1,0 +1,36 @@
+\begin{table}[htbp]
+\centering
+\caption{Gradient alignment and representation drift analysis.}
+\label{tab:gradient}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Method} & \textbf{Mean\_Grad\_Align} & \textbf{Final\_Grad\_Align} & \textbf{Trend} & \textbf{Mean\_KL\_Drift} & \textbf{Final\_KL\_Drift} \\
+\midrule
+trust\_region\_kl & 0.0555 & 0.1171 & up & 0.0598 & 0.0644 \\
+kl\_penalty & 0.0206 & 0.0969 & up & 0.1461 & 0.1675 \\
+mixed\_replay & -0.0176 & 0.0927 & up & 0.1588 & 0.1732 \\
+entropy\_bonus & 0.0139 & 0.0891 & up & 0.1637 & 0.1893 \\
+running\_stats & 0.0230 & 0.0808 & down & 0.1804 & 0.2180 \\
+reward\_filtering & 0.0208 & 0.0775 & up & 0.1140 & 0.1518 \\
+lora & 0.0827 & 0.0770 & down & 594365.3405 & 1679591.0000 \\
+bc\_wins & 0.0092 & 0.0702 & down & 0.1915 & 0.2197 \\
+llrd & 0.0125 & 0.0680 & up & 0.1374 & 0.1888 \\
+advantage\_clip & -0.0014 & 0.0667 & up & 0.1898 & 0.2191 \\
+gradient\_surgery & 0.0153 & 0.0650 & up & 0.1598 & 0.2095 \\
+baseline\_rl & 0.0153 & 0.0645 & up & 0.1598 & 0.2096 \\
+action\_diversity & 0.0153 & 0.0644 & up & 0.1599 & 0.2099 \\
+t\_curriculum & 0.0152 & 0.0495 & up & 0.1973 & 0.2255 \\
+reward\_model & 0.0169 & 0.0449 & down & 0.1717 & 0.2227 \\
+normalized\_adv & 0.0111 & 0.0350 & up & 33.7243 & 63.2407 \\
+layer\_ablation\_top3 & 0.0474 & 0.0302 & down & 12.0196 & 16.2087 \\
+low\_t & 0.0246 & 0.0278 & down & 0.1329 & 0.1879 \\
+attention\_only & 0.0171 & 0.0192 & up & 110.2509 & 90.1913 \\
+frozen\_backbone & 0.0152 & 0.0109 & down & 125.0461 & 115.5261 \\
+head\_only & 0.0151 & 0.0109 & down & 125.3780 & 115.8261 \\
+ffn\_only & 0.0466 & 0.0048 & down & 15.3517 & 23.8914 \\
+layer\_ablation\_top1 & 0.0475 & -0.0028 & down & 11.5116 & 13.3242 \\
+layer\_ablation\_top2 & 0.0461 & -0.0040 & down & 11.3600 & 9.6726 \\
+ewc & 0.0251 & -0.0246 & down & 0.1534 & 0.1950 \\
+\bottomrule
+\end{tabular}
+\end{table}

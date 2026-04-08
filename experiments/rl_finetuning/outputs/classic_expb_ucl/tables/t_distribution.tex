@@ -1,0 +1,36 @@
+\begin{table}[htbp]
+\centering
+\caption{Timestep distribution analysis.}
+\label{tab:t_dist}
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Method} & \textbf{HighLow\_Ratio} & \textbf{LowHigh\_Cos\_Sim} & \textbf{Dominant\_Regime} \\
+\midrule
+baseline\_rl & 0.0800 & 0.0888 & low-t \\
+kl\_penalty & 0.0920 & 0.0543 & low-t \\
+ewc & 0.0800 & 0.0666 & low-t \\
+llrd & 0.0760 & 0.0818 & low-t \\
+lora & 0.3280 & 0.9819 & low-t \\
+mixed\_replay & 0.0810 & -0.0058 & low-t \\
+trust\_region\_kl & 0.0990 & 0.0600 & low-t \\
+t\_curriculum & 0.0980 & 0.0614 & low-t \\
+entropy\_bonus & 0.0920 & 0.0534 & low-t \\
+gradient\_surgery & 0.0800 & 0.0881 & low-t \\
+advantage\_clip & 0.0780 & 0.0912 & low-t \\
+normalized\_adv & 0.3030 & 0.6614 & low-t \\
+bc\_wins & 0.0810 & 0.0876 & low-t \\
+low\_t & 0.1030 & 0.0652 & low-t \\
+frozen\_backbone & 0.3130 & 0.9871 & low-t \\
+head\_only & 0.3140 & 0.9874 & low-t \\
+attention\_only & 0.3070 & 0.9822 & low-t \\
+ffn\_only & 0.3050 & 0.9569 & low-t \\
+layer\_ablation\_top1 & 0.3020 & 0.9718 & low-t \\
+layer\_ablation\_top2 & 0.3260 & 0.9374 & low-t \\
+layer\_ablation\_top3 & 0.3250 & 0.8966 & low-t \\
+reward\_filtering & 0.0750 & 0.0609 & low-t \\
+running\_stats & 0.0830 & 0.0936 & low-t \\
+action\_diversity & 0.0800 & 0.0895 & low-t \\
+reward\_model & 0.0850 & 0.0771 & low-t \\
+\bottomrule
+\end{tabular}
+\end{table}
