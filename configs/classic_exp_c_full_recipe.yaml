@@ -54,7 +54,7 @@ collect_temperature: 1.0
 return_weight_cap: 5.0
 
 # ── Online DAgger training ───────────────────────────────────────────────────
-online_num_updates: 1500
+online_total_timesteps: 1.0e+8
 dagger_beta_init: 1.0
 dagger_beta_decay: 0.9993
 dagger_buffer_max: 1000000
