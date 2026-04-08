@@ -59,7 +59,7 @@ dagger_beta_final: 0.385            # 0.9995^1907 at this hardware; auto-resolve
 dagger_buffer_cycles: 0.76294       # ~200K samples on UCL = ~0.76 update cycles of history
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
-val_interval_frames: 2.0e+7      # = 100 update steps at this hardware (100 * 2048 * 128)
+val_interval_frames: 2.0e+7
 val_diffusion_steps: 25
 val_replan_every: 2
 val_steps: 256
