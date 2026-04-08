@@ -42,7 +42,7 @@ max_grad_norm: 1.0
 lr_warmup_steps: 300                # stabilize higher LR + bigger model
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
-num_envs: 4096
+num_envs: 448
 num_steps: 128
 num_minibatches: 8                  # minibatch 2048
 update_epochs: 8

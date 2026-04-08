@@ -1,6 +1,7 @@
 # =============================================================================
-# RL Fine-Tuning Ablation Suite — Full Craftax (big model, 384/8/6)
-# Matches checkpoint: final_craftax_full_expc_v2.yaml (Exp C-Full v2 DAgger)
+# RL Fine-Tuning Ablation Suite — Full Craftax, UCL hardware
+# Matches checkpoint produced by: configs/final_craftax_full_ucl.yaml
+#   (d_model=384, n_heads=8, n_layers=6, d_ff=768, plan_horizon=32, seed 42)
 # Target hardware: UCL RTX 3090 Ti (24 GB VRAM)
 # Self-contained — does NOT require defaults.yaml.
 # =============================================================================
