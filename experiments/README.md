@@ -30,13 +30,19 @@ rl_finetuning/
 │   ├── tables.py             # Summary tables as polars DataFrames + LaTeX export
 │   └── report.py             # diagnosis.md + decision tree figure
 └── configs/
-    ├── ablations_default.yaml   # Full-run hyperparameters (self-contained)
-    └── ablations_fast.yaml      # Smoke-test overrides (50 iterations, 16 envs)
+    ├── ablations_default.yaml              # Full-run hyperparameters (self-contained)
+    ├── ablations_fast.yaml                 # Smoke-test overrides (50 iterations, 16 envs)
+    ├── ablations_final_classic_ucl.yaml    # Matches configs/final_classic_ucl.yaml   (UCL 3090 Ti, seed 42)
+    ├── ablations_final_classic_qmul.yaml   # Matches configs/final_classic_qmul.yaml  (QMUL H200, seed 43)
+    ├── ablations_final_craftax_ucl.yaml    # Matches configs/final_craftax_ucl.yaml   (UCL 4090,   seed 42)
+    └── ablations_final_craftax_qmul.yaml   # Matches configs/final_craftax_qmul.yaml  (QMUL H200, seed 43)
 ```
+
+The `ablations_final_*` presets pin the transformer architecture and sampling hyperparameters to exactly match the corresponding pretrained DAgger checkpoints under `configs/final_*`, so they can be consumed without re-specifying every field. They are **self-contained** (do not require `ablations_default.yaml`).
 
 ### Usage
 
-The pretrained diffusion checkpoint can come from either offline training (`--mode offline`) or DAgger online training (`--mode online`) — the checkpoint format is identical. Use `--checkpoint_path` (or its alias `--offline_checkpoint_path`) to point to it.
+The pretrained diffusion checkpoint can come from either offline training (`--mode offline`) or DAgger online training (`--mode online`) — the checkpoint format is identical. Use `--checkpoint_path` (or its alias `--offline_checkpoint_path`) to point to it. For DAgger runs, either the final (`{env}-policy`) or best-validation (`{env}-policy-best`) artifact produced by `--mode online` can be consumed directly.
 
 Checkpoint paths accept `wandb:` prefixed artifact references (e.g., `wandb:team/project/artifact:latest`), which are downloaded automatically before training begins.
 
@@ -58,6 +64,17 @@ python experiments/rl_finetuning/run_ablations.py \
     --num_seeds 3 \
     --checkpoint_path $PRETRAINED_CKPT \
     --ppo_checkpoint_path $PPO_CKPT \
+    --use_wandb
+```
+
+**Full suite against a pinned `final_*` checkpoint:**
+```bash
+# Craftax Classic, UCL hardware (seed 42 checkpoint)
+python experiments/rl_finetuning/run_ablations.py \
+    --ablations_config experiments/rl_finetuning/configs/ablations_final_classic_ucl.yaml \
+    --all --num_seeds 3 \
+    --checkpoint_path wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy-best:latest \
+    --ppo_checkpoint_path wandb:my-team/ppo-craftax/ppo-rnn-policy:best \
     --use_wandb
 ```
 
