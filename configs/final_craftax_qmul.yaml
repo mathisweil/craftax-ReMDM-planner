@@ -1,5 +1,5 @@
 # =============================================================================
-# Final Full Craftax DAgger — QMUL H200 8 GB partition - EXP C
+# Final Full Craftax DAgger — QMUL H200 8 GB partition - EXP C - 15M model
 # Env-frame-matched second seed of final_craftax_full_ucl.yaml.
 # -----------------------------------------------------------------------------
 # Identical to final_craftax_full_ucl.yaml except for num_envs (384 vs 2048)
