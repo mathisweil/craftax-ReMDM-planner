@@ -1,30 +1,36 @@
 """Stage and upload the COMP0258 demo bundle to a public HuggingFace repo.
 
-The downstream consumer is ``demo.ipynb`` (Cell 1), which calls
+The downstream consumer is ``demo_craftax.ipynb`` (Cell 1), which calls
 ``snapshot_download(repo_id=HF_REPO_ID, local_dir="remdm-craftax")`` and then
-imports from ``src/`` and reads ``checkpoint/``,
-``experiments/.../analysis/{figures,tables}/``, and ``configs/``.
+imports from ``src/`` and reads checkpoint subdirectories under
+``checkpoints/``, the pre-computed ablation analysis dir, and ``configs/``.
 
 What this script uploads:
 
 1. Source tree              -> ``src/``, ``Craftax_Baselines/``, ``configs/``
-2. DAgger checkpoint        -> ``checkpoint/`` (renamed from ``artifacts/...``)
-3. Pre-computed ablation    -> ``experiments/rl_finetuning/outputs/
-                                 craftax_classic_final/analysis/``
-4. Notebook + project meta  -> ``demo.ipynb``, ``pyproject.toml``, ``README.md``
+2. Diffusion checkpoints    -> ``checkpoints/offline/...`` (offline BC, holds
+                                ``resume_metadata.json`` for ARCH_CFG) and
+                                ``checkpoints/online/...`` (DAgger params used
+                                at inference)
+3. PPO expert checkpoints   -> ``checkpoints/ppo_agents/...`` (Classic +
+                                Full Craftax PPO-RNN agents)
+4. Pre-computed ablation    -> ``experiments/rl_finetuning/outputs/
+                                 craftax_classic_final_results/analysis/``
+5. Notebook + project meta  -> ``demo_craftax.ipynb``, ``pyproject.toml``,
+                                ``README.md``
 
 What this script DOES NOT upload (filtered via ``ignore_patterns`` in
 :func:`huggingface_hub.HfApi.upload_folder`):
 
 - ``wandb/``, ``outputs/`` (other than the one ablation analysis dir)
 - ``__pycache__``, ``*.pyc``, ``.venv``, ``uv.lock``
-- ``tmp/``, ``checkpoints/`` (the legacy offline-BC checkpoints)
+- ``tmp/`` and any other checkpoint dirs not listed in ``CHECKPOINT_DIRS``
 - All ``.npz`` rollout dumps
 - Any ``.env`` / ``.git*`` files
 
 Run it with::
 
-    HF_TOKEN=hf_xxx uv run python scripts/upload_demo_bundle.py \\
+    HF_TOKEN=hf_xxx uv run python scripts/hf_upload_demo.py \\
         --repo-id  your-username/remdm-craftax-demo \\
         --private  false
 
@@ -47,36 +53,39 @@ logger = logging.getLogger(__name__)
 # Project-relative paths.  All sources are referenced relative to PROJECT_ROOT.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-CHECKPOINT_SRC = (
-    PROJECT_ROOT
-    / "artifacts"
-    / "Craftax-Classic-Symbolic-v1-policy-best-v4"
-)
+# Checkpoint subdirectories — paths are preserved verbatim in the bundle so
+# the notebook can read them at the same relative locations the project uses.
+CHECKPOINT_DIRS: list[str] = [
+    "checkpoints/offline/Craftax-Classic-Symbolic-v1-OfflineDiffusion-BC-100M",
+    "checkpoints/online/Craftax-Classic-Symbolic-v1-OnlineDiffusion-DAgger-50M",
+    "checkpoints/ppo_agents/Craftax-Classic-Symbolic-v1-PPO_RNN-1000M",
+    "checkpoints/ppo_agents/Craftax-Symbolic-v1-PPO_RNN-1000M",
+]
 
-ABLATION_SRC = (
-    PROJECT_ROOT
-    / "experiments"
-    / "rl_finetuning"
-    / "outputs"
-    / "craftax_classic_final"
-    / "analysis"
+# The notebook reads ablation assets from
+# ``.../craftax_classic_final_results/analysis/{figures,tables}/`` but on disk
+# the project keeps them one level up (no ``analysis/`` parent).  We stage
+# both subdirs under a synthetic ``analysis/`` dir so the notebook's hardcoded
+# paths resolve after ``snapshot_download``.
+ABLATION_OUT_REL = (
+    "experiments/rl_finetuning/outputs/craftax_classic_final_results"
 )
+ABLATION_SRC = PROJECT_ROOT / ABLATION_OUT_REL
 
 # (source_relative_to_root, destination_relative_to_staging)
 SOURCE_DIRS: list[tuple[Path, Path]] = [
     (PROJECT_ROOT / "src",               Path("src")),
     (PROJECT_ROOT / "Craftax_Baselines", Path("Craftax_Baselines")),
     (PROJECT_ROOT / "configs",           Path("configs")),
-    (CHECKPOINT_SRC,                     Path("checkpoint")),
-    (ABLATION_SRC,                       Path(
-        "experiments/rl_finetuning/outputs/craftax_classic_final/analysis"
-    )),
+    *((PROJECT_ROOT / d, Path(d)) for d in CHECKPOINT_DIRS),
+    (ABLATION_SRC / "figures",           Path(ABLATION_OUT_REL) / "analysis" / "figures"),
+    (ABLATION_SRC / "tables",            Path(ABLATION_OUT_REL) / "analysis" / "tables"),
 ]
 
 SOURCE_FILES: list[tuple[Path, Path]] = [
-    (PROJECT_ROOT / "demo.ipynb",     Path("demo.ipynb")),
-    (PROJECT_ROOT / "pyproject.toml", Path("pyproject.toml")),
-    (PROJECT_ROOT / "README.md",      Path("README.md")),
+    (PROJECT_ROOT / "demo_craftax.ipynb", Path("demo_craftax.ipynb")),
+    (PROJECT_ROOT / "pyproject.toml",     Path("pyproject.toml")),
+    (PROJECT_ROOT / "README.md",          Path("README.md")),
 ]
 
 # Patterns excluded from every directory copy.
@@ -225,7 +234,10 @@ def main() -> int:
             folder_path=str(staging_dir),
             repo_type="model",
             ignore_patterns=HUB_IGNORE_PATTERNS,
-            commit_message="Upload COMP0258 demo bundle (code + checkpoint + ablation assets)",
+            commit_message=(
+                "Upload COMP0258 demo bundle (code + diffusion/PPO checkpoints"
+                " + ablation assets)"
+            ),
         )
         logger.info("Upload complete: https://huggingface.co/%s", args.repo_id)
     return 0
