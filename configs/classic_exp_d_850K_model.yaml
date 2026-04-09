@@ -1,5 +1,5 @@
 # =============================================================================
-# Final Full Craftax DAgger — UCL RTX 4090 24 GB - EXP D - 0.85M model
+# Final Full Craftax DAgger — UCL RTX 4090 24 GB - EXP D - 850k model
 # Big transformer + full sampling recipe + slow beta decay.  Produces the Full
 # Craftax DAgger checkpoint used by the RL fine-tuning ablation suite.
 # =============================================================================
