@@ -8,23 +8,37 @@ A JAX implementation of **ReMDM** (Remasking Discrete Diffusion Model) for actio
 
 The planner starts from a fully-masked action sequence and iteratively unmasks tokens over `T` denoising steps, producing a `plan_horizon`-length plan. The ReMDM framework extends standard Masked Discrete Language Modelling (MDLM) with remasking strategies that allow committed tokens to be re-predicted, improving plan coherence.
 
-Training follows a four-stage pipeline:
+Two independent training pipelines are available — **Offline BC** and **Online DAgger** — both supervised by a pre-trained PPO expert but otherwise separate. Neither depends on the other; the paper compares them head-to-head.
 
 ```
-[Stage 1]  Train PPO agent          Craftax_Baselines/ppo_rnn.py | ppo_rnd.py
+[Shared]   Train PPO agent              Craftax_Baselines/ppo_rnn.py | ppo_rnd.py
                |
                v  checkpoint
-[Stage 2a] Collect trajectories     main.py --mode collect          (optional)
-               |
-               v  .npz file
-[Stage 2b] Train offline            main.py --mode offline
-               |  (from .npz or live PPO rollouts)
-               v  diffusion checkpoint
-[Stage 3]  Online fine-tuning       main.py --mode online
-               |
-               v  fine-tuned checkpoint
-[Stage 4]  Evaluate                 main.py --mode inference
+       ┌───────┴────────┐
+       │                │
+  [Offline BC]     [Online DAgger]
+  main.py              main.py
+  --mode offline        --mode online
+  (train on live        (train from scratch;
+   PPO rollouts)         mixed policy + expert
+       │                 labels into replay buffer)
+       v                 v
+   checkpoint        checkpoint
+       │                │
+       └───────┬────────┘
+               v
+[Evaluate] main.py --mode inference --checkpoint_path ...
 
+Optional: an offline BC checkpoint can warm-start DAgger
+via --offline_checkpoint_path (not used in the paper).
+
+  [Offline BC] ──checkpoint──> [Online DAgger]
+```
+
+**Optional utility modes:**
+```
+[Collect]     Save PPO rollouts to disk   main.py --mode collect
+[Smoke test]  Quick end-to-end check      main.py --mode smoke
 ```
 
 ---
@@ -147,9 +161,9 @@ python main.py --mode offline \
     --save_policy
 ```
 
-### Stage 3 — Online DAgger fine-tuning
+### Online DAgger Training
 
-The diffusion model (learner) is fine-tuned via DAgger (Dataset Aggregation). At each iteration a mixed policy blends the PPO expert and the diffusion learner (controlled by an exponentially decaying `beta`). The mixed policy rolls out trajectories; the expert labels every visited state with the action it would take. These `(obs, expert_plan)` pairs are appended to a growing circular replay buffer, and the diffusion model is retrained on the full buffer with the standard MDLM ELBO loss (pure behavioural cloning — no reward weighting).
+The diffusion model is trained **from scratch** via DAgger (Dataset Aggregation). At each iteration a mixed policy blends the PPO expert and the diffusion learner (controlled by an exponentially decaying `beta`). The mixed policy rolls out trajectories; the expert labels every visited state with the action it would take. These `(obs, expert_plan)` pairs are appended to a growing circular replay buffer, and the diffusion model is trained on the full buffer with the standard MDLM ELBO loss (pure behavioural cloning — no reward weighting).
 
 ```bash
 # From scratch (requires PPO expert checkpoint)
@@ -158,7 +172,8 @@ python main.py --mode online \
     --online_num_updates 1000 \
     --save_policy
 
-# Warm-start from an offline checkpoint
+# Optional: warm-start from a pre-trained offline checkpoint
+# (not used in the paper — both methods are compared independently)
 python main.py --mode online \
     --ppo_checkpoint_path /path/to/ppo_checkpoint \
     --offline_checkpoint_path /path/to/offline_checkpoint \
