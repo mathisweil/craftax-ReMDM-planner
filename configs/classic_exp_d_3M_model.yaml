@@ -1,7 +1,7 @@
 # =============================================================================
-# Final Full Craftax DAgger — UCL RTX 4090 24 GB - EXP C - 3M model
-# Big transformer + full sampling recipe + slow beta decay.  Produces the Full
-# Craftax DAgger checkpoint used by the RL fine-tuning ablation suite.
+# Final Craftax Classic DAgger — UCL RTX 3090 Ti 24 GB - EXP B - 3.2M model
+# Big transformer + slow beta decay. Produces the Classic DAgger checkpoint
+# used by the RL fine-tuning ablation suite.
 # =============================================================================
 
 # ── Environment ──────────────────────────────────────────────────────────────
@@ -10,12 +10,12 @@ use_optimistic_resets: false
 optimistic_reset_ratio: 16
 
 # ── Transformer architecture ─────────────────────────────────────────────────
-d_model: 128
+d_model: 256
 n_heads: 4
-n_layers: 3
-d_ff: 256
+n_layers: 4
+d_ff: 512
 obs_encoder_layers: 2
-obs_encoder_width: 256
+obs_encoder_width: 512
 dropout_rate: 0.1
 
 # ── Diffusion ────────────────────────────────────────────────────────────────
@@ -25,43 +25,43 @@ train_sigma: 0.0
 label_smoothing: 0.0
 
 # ── Reverse sampling ─────────────────────────────────────────────────────────
-diffusion_steps: 25
+diffusion_steps: 15
 diffusion_steps_eval: 10
 remask_strategy: "rescale"
 eta: 0.5
 use_loop: true
 t_on: 0.7
 t_off: 0.3
-temperature: 0.3
+temperature: 0.5
 top_p: 0.95
 
 # ── Optimisation ─────────────────────────────────────────────────────────────
-lr: 5.0e-4
+lr: 3.0e-4
 max_grad_norm: 1.0
-lr_warmup_frames: 7.86432e7         # = 300 update steps at this hardware (300 * 2048 * 128)
+lr_warmup_frames: 1.048576e8        # = 200 update steps at this hardware (200 * 4096 * 128)
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
-num_envs: 1304
+num_envs: 896
 num_steps: 128
 num_minibatches: 8
 update_epochs: 8
 num_repeats: 1
 
 # ── Offline training ─────────────────────────────────────────────────────────
-offline_total_timesteps: 1.0e+8
+offline_total_timesteps: 2.0e+8
 collect_temperature: 1.0
 return_weight_cap: 5.0
 
 # ── Online DAgger training ───────────────────────────────────────────────────
-online_total_timesteps: 1.0e+8
+online_total_timesteps: 2.0e+8
 dagger_beta_init: 1.0
-dagger_beta_final: 0.385            # 0.9995^1907 at this hardware; auto-resolves per fpu
-dagger_buffer_cycles: 0.76294       # ~200K samples on UCL = ~0.76 update cycles of history
+dagger_beta_final: 0.344            # 0.9993^1525 at this hardware; auto-resolves per fpu
+dagger_buffer_cycles: 1.90735       # ~1M samples on UCL = ~1.91 update cycles of history
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
 val_interval_frames: 1.0e+6
-val_diffusion_steps: 25
-val_replan_every: 2
+val_diffusion_steps: 50
+val_replan_every: 4
 val_steps: 256
 
 # ── Data collection ──────────────────────────────────────────────────────────
