@@ -41,7 +41,7 @@ max_grad_norm: 1.0
 lr_warmup_frames: 1.048576e8        # = 200 update steps at this hardware (200 * 4096 * 128)
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
-num_envs: 168
+num_envs: 896
 num_steps: 128
 num_minibatches: 8
 update_epochs: 8
