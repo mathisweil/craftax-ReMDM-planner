@@ -22,6 +22,7 @@ def load_ppo_params(
     num_envs: int,
     obs_shape: tuple,
     layer_size: int = 512,
+    seed: int = 0,
 ) -> Any:
     """Restore PPO parameters from an Orbax checkpoint.
 
@@ -37,7 +38,7 @@ def load_ppo_params(
         Restored parameter pytree.
     """
     path = str(Path(path).resolve())
-    rng = jax.random.PRNGKey(0)
+    rng = jax.random.PRNGKey(seed)  # C-001 (F-015/Q6): seed threaded from config, no hardcoded key
     if model_type == "ppo_rnn":
         init_x = (jnp.zeros((1, num_envs, *obs_shape)), jnp.zeros((1, num_envs)))
         abstract = network.init(rng, jnp.zeros((num_envs, layer_size)), init_x)
@@ -100,7 +101,10 @@ def load_ppo_agent(
         A fully initialised :class:`PPOAgent`.
     """
     net = build_ppo_network(model_type, num_actions, layer_size, config)
-    params = load_ppo_params(path, net, model_type, num_envs, (obs_dim,), layer_size)
+    params = load_ppo_params(
+        path, net, model_type, num_envs, (obs_dim,), layer_size,
+        seed=int(config.get("SEED") or 0),  # C-001 (F-015/Q6)
+    )
     return PPOAgent(net, params, model_type, layer_size)
 
 
