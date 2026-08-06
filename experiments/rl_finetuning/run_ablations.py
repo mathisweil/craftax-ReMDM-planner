@@ -39,6 +39,7 @@ import datetime
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -290,6 +291,8 @@ def _results_to_json(
                 "score_std": res.get("score_std", 0.0),
                 "all_scores": res.get("all_scores", [res["score"]]),
                 "history": res["history"].to_dict(),
+                # C-001 (D7): seeds and wall clock recorded when present
+                **{k: res[k] for k in ("base_seed", "seeds", "wall_clock_s") if k in res},
             }
             for name, res in results.items()
         },
@@ -320,6 +323,9 @@ def _results_from_json(path: str) -> tuple[dict, float, dict[str, float], dict]:
             "all_scores": res_data.get("all_scores", [res_data["score"]]),
             "history": AblationHistory.from_dict(res_data["history"]),
         }
+        for _k in ("base_seed", "seeds", "wall_clock_s"):  # C-001 (D7)
+            if _k in res_data:
+                results[name][_k] = res_data[_k]
     return results, pretrained_score, pretrained_ach_rates, config
 
 
@@ -365,9 +371,15 @@ def _merge_result_files(
                     "all_scores": list(res["all_scores"]),
                     "score": res["score"],
                     "score_std": res.get("score_std", 0.0),
+                    # C-001 (D7): carry seed and wall-clock records through merge
+                    **{k: list(res[k]) for k in ("seeds", "wall_clock_s") if k in res},
+                    **({"base_seed": res["base_seed"]} if "base_seed" in res else {}),
                 }
             else:
                 merged_results[name]["all_scores"].extend(res["all_scores"])
+                for _k in ("seeds", "wall_clock_s"):  # C-001 (D7)
+                    if _k in res:
+                        merged_results[name].setdefault(_k, []).extend(res[_k])
 
     # Recompute mean/std over the union of seeds
     for name, res in merged_results.items():
@@ -519,6 +531,7 @@ def main(argv: list[str] | None = None) -> None:
     ppo_params = load_ppo_params(
         merged["PPO_CHECKPOINT_PATH"], ppo_net, model_type,
         merged["NUM_ENVS"], obs_shape, layer_size,
+        seed=int(merged.get("SEED") or 0),  # C-001 (F-015/Q6)
     )
     ppo = PPOAgent(ppo_net, ppo_params, model_type, layer_size)
 
@@ -577,13 +590,17 @@ def main(argv: list[str] | None = None) -> None:
         spec = REGISTRY[abl_name]
         seed_scores: list[float] = []
         seed_histories: list[AblationHistory] = []
+        seeds_used: list[int] = []
+        seed_times: list[float] = []
         first_seed_params: Any = None
 
         for seed_idx in range(num_seeds):
-            abl_seed = seed + seed_idx * 1000
+            abl_seed = seed + seed_idx  # C-001 (D7): literal seed set base+idx (default 0, 1, 2)
             abl_rng = jax.random.PRNGKey(abl_seed)
+            seeds_used.append(abl_seed)
             logger.info("Running %s (seed %d/%d)...", abl_name, seed_idx + 1, num_seeds)
 
+            _t0 = time.monotonic()
             history, final_score, final_params = run_ablation(
                 spec=spec,
                 config=merged,
@@ -601,6 +618,7 @@ def main(argv: list[str] | None = None) -> None:
                 wandb_run=wandb_run,
                 output_dir=output_dir,
             )
+            seed_times.append(round(time.monotonic() - _t0, 1))  # C-001: per-seed wall clock
             seed_scores.append(final_score)
             seed_histories.append(history)
             if seed_idx == 0:
@@ -619,6 +637,9 @@ def main(argv: list[str] | None = None) -> None:
             "score": mean_score,
             "score_std": std_score,
             "all_scores": seed_scores,
+            "base_seed": seed,              # C-001 (D7)
+            "seeds": seeds_used,            # C-001 (D7)
+            "wall_clock_s": seed_times,     # C-001: per-seed wall clock
             "final_params": first_seed_params,  # in-memory only, not serialised
         }
 
