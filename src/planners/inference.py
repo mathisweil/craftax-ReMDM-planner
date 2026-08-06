@@ -123,6 +123,33 @@ def run_inference(config: dict[str, Any]) -> None:
         print(f"  [{icon}] {name}: {count}/{num_envs}")
     print(f"{'=' * 50}")
 
+    # C-006(a): machine-readable results for the re-evaluation wave (E-003).
+    out_path = config.get("INFERENCE_OUTPUT")
+    if out_path:
+        import json
+        from pathlib import Path
+        n_ach = min(len(ach_names), len(pct))
+        payload = {
+            "checkpoint": str(config.get("CHECKPOINT_PATH")),
+            "env_name": env_name,
+            "seed": int(config.get("SEED", 0)),
+            "eval_num_envs": int(num_envs),
+            "eval_steps": int(eval_steps),
+            "diffusion_steps_eval": int(diffusion_steps),
+            "temperature": float(temperature),
+            "top_p": float(top_p),
+            "mean_score": float(ep_rewards.mean()),
+            "best_score": float(ep_rewards.max()),
+            "mean_episode_length": float(ep_lengths.mean()),
+            "achievement_rates": {
+                ach_names[i][1]: float(pct[i]) / 100.0 for i in range(n_ach)
+            },
+        }
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w") as f:
+            json.dump(payload, f, indent=2)
+        print(f"Saved inference results to {out_path}")
+
     if config.get("USE_WANDB", True):
         wandb.init(
             project=config.get("WANDB_PROJECT", "remdm-craftax"),
