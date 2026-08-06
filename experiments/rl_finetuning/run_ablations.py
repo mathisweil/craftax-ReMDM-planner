@@ -264,6 +264,25 @@ def _apply_cli_overrides(config: dict, args: argparse.Namespace) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _history_finals(history: "AblationHistory") -> dict:
+    """C-002 (F-024/F-035): final logged value per history field for one seed.
+
+    Captures numeric finals, dict finals (e.g. per-achievement rates) and
+    numeric-list finals, so per-seed evaluation endpoints survive the merge
+    instead of only the first seed's history.
+    """
+    finals: dict = {}
+    for k, v in history.to_dict().items():
+        if isinstance(v, list) and v:
+            last = v[-1]
+            if isinstance(last, (int, float, dict)) or (
+                isinstance(last, list)
+                and all(isinstance(x, (int, float)) for x in last)
+            ):
+                finals[k] = last
+    return finals
+
+
 def _results_to_json(
     results: dict[str, dict],
     pretrained_score: float,
@@ -291,8 +310,8 @@ def _results_to_json(
                 "score_std": res.get("score_std", 0.0),
                 "all_scores": res.get("all_scores", [res["score"]]),
                 "history": res["history"].to_dict(),
-                # C-001 (D7): seeds and wall clock recorded when present
-                **{k: res[k] for k in ("base_seed", "seeds", "wall_clock_s") if k in res},
+                # C-001 (D7) / C-002: seeds, wall clock and per-seed finals when present
+                **{k: res[k] for k in ("base_seed", "seeds", "wall_clock_s", "per_seed_finals") if k in res},
             }
             for name, res in results.items()
         },
@@ -323,7 +342,7 @@ def _results_from_json(path: str) -> tuple[dict, float, dict[str, float], dict]:
             "all_scores": res_data.get("all_scores", [res_data["score"]]),
             "history": AblationHistory.from_dict(res_data["history"]),
         }
-        for _k in ("base_seed", "seeds", "wall_clock_s"):  # C-001 (D7)
+        for _k in ("base_seed", "seeds", "wall_clock_s", "per_seed_finals"):  # C-001/C-002
             if _k in res_data:
                 results[name][_k] = res_data[_k]
     return results, pretrained_score, pretrained_ach_rates, config
@@ -371,13 +390,13 @@ def _merge_result_files(
                     "all_scores": list(res["all_scores"]),
                     "score": res["score"],
                     "score_std": res.get("score_std", 0.0),
-                    # C-001 (D7): carry seed and wall-clock records through merge
-                    **{k: list(res[k]) for k in ("seeds", "wall_clock_s") if k in res},
+                    # C-001 (D7) / C-002: carry seed, wall-clock and per-seed final records
+                    **{k: list(res[k]) for k in ("seeds", "wall_clock_s", "per_seed_finals") if k in res},
                     **({"base_seed": res["base_seed"]} if "base_seed" in res else {}),
                 }
             else:
                 merged_results[name]["all_scores"].extend(res["all_scores"])
-                for _k in ("seeds", "wall_clock_s"):  # C-001 (D7)
+                for _k in ("seeds", "wall_clock_s", "per_seed_finals"):  # C-001/C-002
                     if _k in res:
                         merged_results[name].setdefault(_k, []).extend(res[_k])
 
@@ -640,6 +659,7 @@ def main(argv: list[str] | None = None) -> None:
             "base_seed": seed,              # C-001 (D7)
             "seeds": seeds_used,            # C-001 (D7)
             "wall_clock_s": seed_times,     # C-001: per-seed wall clock
+            "per_seed_finals": [_history_finals(h) for h in seed_histories],  # C-002
             "final_params": first_seed_params,  # in-memory only, not serialised
         }
 
