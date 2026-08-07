@@ -38,6 +38,7 @@ DEFAULT_CONFIGS = [
     "configs/craftax_exp_d_3M_model.yaml",
     "configs/craftax_exp_d_7M_model.yaml",
     "configs/final_classic_ucl.yaml",
+    "experiments/rl_finetuning/configs/ablations_final_craftax_ucl.yaml",
 ]
 
 _ENV_CACHE: dict[str, tuple] = {}
