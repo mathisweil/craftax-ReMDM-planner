@@ -214,6 +214,71 @@ python main.py --mode offline \
 
 Control the download location with `--wandb_download_dir` (defaults to `./artifacts/`).
 
+### Loading pre-trained checkpoints from the Hugging Face Hub
+
+The trained weights are too large for git — `checkpoints/` is gitignored — and are hosted on the Hugging Face Hub at [`MathisW78/remdm-craftax-checkpoints`](https://huggingface.co/MathisW78/remdm-craftax-checkpoints). The Hub repo mirrors the layout below, so downloading into the repository root puts every file exactly where the CLI expects it.
+
+| Checkpoint directory | Environment | Role | Trained for |
+|---|---|---|---|
+| `checkpoints/offline/Craftax-Classic-Symbolic-v1-OfflineDiffusion-BC-100M` | Craftax Classic | Offline BC planner | 1e8 env frames |
+| `checkpoints/offline/Craftax-Symbolic-v1-OfflineDiffusion-BC-100M` | Full Craftax | Offline BC planner | 1e8 env frames |
+| `checkpoints/online/Craftax-Classic-Symbolic-v1-OnlineDiffusion-DAgger-100M` | Craftax Classic | Online DAgger planner | 1e8 env frames |
+| `checkpoints/online/Craftax-Symbolic-v1-OnlineDiffusion-DAgger-100M` | Full Craftax | Online DAgger planner | 1e8 env frames |
+| `checkpoints/ppo_agents/Craftax-Classic-Symbolic-v1-PPO_RNN-1000M` | Craftax Classic | PPO-RNN expert | 1e9 env frames |
+| `checkpoints/ppo_agents/Craftax-Symbolic-v1-PPO_RNN-1000M` | Full Craftax | PPO-RNN expert | 1e9 env frames |
+
+Download all six (~470 MB):
+
+```bash
+uv run python -c "
+from huggingface_hub import snapshot_download
+snapshot_download(repo_id='MathisW78/remdm-craftax-checkpoints', local_dir='.')
+"
+```
+
+Or fetch a single checkpoint:
+
+```bash
+uv run python -c "
+from huggingface_hub import snapshot_download
+snapshot_download(
+    repo_id='MathisW78/remdm-craftax-checkpoints',
+    local_dir='.',
+    allow_patterns='checkpoints/online/Craftax-Classic-*/**',
+)
+"
+```
+
+**Pass the checkpoint directory, not the step subdirectory.** `orbax.checkpoint.CheckpointManager` resolves the latest step itself.
+
+**Match the config to the checkpoint.** The model is built from the config, not from the checkpoint, so loading a released checkpoint under `configs/defaults.yaml` (`d_model` 256, `n_layers` 4) fails with a shape mismatch during restore. All released diffusion checkpoints are `d_model` 384, `n_heads` 8, `n_layers` 6, `d_ff` 768 — use the matching final config, which also sets the correct `env_name`:
+
+```bash
+# Craftax Classic — online DAgger planner
+python main.py --mode inference \
+    --config configs/final_classic_ucl.yaml \
+    --checkpoint_path checkpoints/online/Craftax-Classic-Symbolic-v1-OnlineDiffusion-DAgger-100M
+
+# Full Craftax — offline BC planner
+python main.py --mode inference \
+    --config configs/final_craftax_ucl.yaml \
+    --checkpoint_path checkpoints/offline/Craftax-Symbolic-v1-OfflineDiffusion-BC-100M
+
+# Train a new planner against the released Full Craftax PPO expert
+python main.py --mode online \
+    --config configs/final_craftax_ucl.yaml \
+    --ppo_checkpoint_path checkpoints/ppo_agents/Craftax-Symbolic-v1-PPO_RNN-1000M \
+    --save_policy
+```
+
+Each diffusion checkpoint carries a `resume_metadata.json` sidecar holding the full config snapshot of the run that produced it; the PPO checkpoints carry `config.yaml` and `wandb-summary.json`. The sidecar is the authoritative record of a run's hyperparameters, and is what `--resume_checkpoint_path` reads to auto-detect `resume_step` and `resume_wandb_run_id`.
+
+Re-uploading after retraining is handled by `scripts/hf_upload.py`, which rediscovers every checkpoint, strips wandb environment metadata, and regenerates the model card:
+
+```bash
+HF_TOKEN=hf_xxx uv run python scripts/hf_upload.py --repo-id MathisW78/remdm-craftax-checkpoints
+```
+
 ### Resuming a Training Run
 
 A completed training checkpoint can be used as the starting point for a new run that continues where the previous one left off. This is useful when extending the training budget or when a preempted job needs to be restarted.
