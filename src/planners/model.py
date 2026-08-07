@@ -112,34 +112,44 @@ def load_checkpoint(
 ) -> Any:
     """Load diffusion model parameters from an Orbax checkpoint.
 
-    Args:
-        model:        Flax module (used to build the abstract state structure).
-        rng:          PRNG key for dummy initialisation.
-        obs_dim:      Observation dimensionality.
-        plan_horizon: Number of action steps in a plan.
-        path:         Path to the Orbax checkpoint directory.
+    This function is intended for inference, evaluation, or initialising
+    a new fine-tuning run. It restores model parameters only and deliberately
+    ignores optimiser state and the saved training step.
 
-    Returns:
-        Restored parameter pytree.
-
-    Raises:
-        FileNotFoundError: If the checkpoint directory contains no saved steps.
+    Use ``load_checkpoint_for_resume`` instead when continuing an interrupted
+    training run.
     """
     path = str(Path(path).resolve())
-    params = init_params(model, rng, obs_dim, plan_horizon)
-    abstract_state = create_train_state(model=model, params=params, lr=1e-4, max_grad_norm=1.0)
+
+    params = init_params(
+        model,
+        rng,
+        obs_dim,
+        plan_horizon,
+    )
 
     with ocp.CheckpointManager(path) as mgr:
         step = mgr.latest_step()
+
         if step is None:
-            raise FileNotFoundError(f"No checkpoint at {path}")
-        restored_state = mgr.restore(
+            raise FileNotFoundError(
+                f"No checkpoint at {path}"
+            )
+
+        restored = mgr.restore(
             step,
-            args=ocp.args.StandardRestore(item=abstract_state),
+            args=ocp.args.PyTreeRestore(
+                item={"params": params},
+                partial_restore=True,
+            ),
         )
 
-    print(f"Loaded diffusion checkpoint from '{path}' (step {step})")
-    return restored_state.params
+    print(
+        f"Loaded diffusion parameters from '{path}' "
+        f"(checkpoint step {step})"
+    )
+
+    return restored["params"]
 
 
 def create_train_state(
