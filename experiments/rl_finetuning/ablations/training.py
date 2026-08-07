@@ -798,9 +798,16 @@ def make_run_ablation(
         apply_train, schedule_fn, schedule_deriv_fn, num_actions, sigma_t,
     )
     repr_drift_fn = make_repr_drift_fn(apply_eval, schedule_fn, num_actions)
+    cka_batch_size: int = min(
+        int(config.get("CKA_BATCH_SIZE", 64)),
+        int(batch_size),
+    )
+
     cka_fn = make_cka_fn(
-        apply_eval, schedule_fn, num_actions,
-        cka_batch_size=config.get("CKA_BATCH_SIZE", 64),
+        apply_eval,
+        schedule_fn,
+        num_actions,
+        cka_batch_size=cka_batch_size,
     )
     t_analysis_fn = make_t_analysis_fn(
         apply_train, schedule_fn, schedule_deriv_fn, num_actions, sigma_t, n_t_bins,
