@@ -233,3 +233,7 @@ texture_cache*.pbz2
 #Claude specific
 .claude/
 CLAUDE.md
+
+# Chekpoints
+checkpoints/
+
