@@ -1,0 +1,2 @@
+Method,Group,Final_Score,Score_Std,Delta_vs_Pretrained,Delta_vs_Baseline_RL,Verdict
+kl_penalty,A,11.4445,0.0,-0.1155,-0.1155,COLLAPSE

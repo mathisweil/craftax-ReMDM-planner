@@ -1,0 +1,2 @@
+Ablation,Group,Hypothesis,Result,Conclusion
+kl_penalty,A,If this helps: catastrophic forgetting is the primary cause; soft regularisation...,COLLAPSE,Hypothesis REFUTED — intervention did not prevent collapse
