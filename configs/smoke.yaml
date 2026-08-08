@@ -1,0 +1,73 @@
+# =============================================================================
+# Smoke test overrides — fast end-to-end sanity check on CPU (--mode smoke).
+#
+# Overlaid on configs/defaults.yaml by main.build_config; only the keys that
+# need shrinking appear here.
+#
+# Sizing notes.  make_train_dagger asserts four invariants that are DERIVED
+# from these values, so they cannot be tuned independently:
+#
+#   1. num_steps % plan_horizon == 0   and   num_steps >= plan_horizon
+#   2. samples_per_update = num_envs * (num_steps - plan_horizon + 1)
+#      must be divisible by num_minibatches
+#   3. samples_per_update <= dagger_buffer_max
+#   4. num_updates = online_total_timesteps // (num_envs * num_steps)
+#
+# With the values below: n_cycles = 1, samples_per_update = 8,
+# num_updates = 6.  Shrinking online_total_timesteps alone would NOT shrink
+# the run, because the per-update cost is set by plan_horizon, diffusion_steps
+# and the validation rollout, not by the frame budget.
+# =============================================================================
+
+# ── Rollout ──────────────────────────────────────────────────────────────────
+num_envs: 8
+num_steps: 8                        # == plan_horizon -> n_cycles = 1
+num_minibatches: 2                  # divides samples_per_update (8)
+update_epochs: 1
+num_repeats: 1
+
+# ── Budget ───────────────────────────────────────────────────────────────────
+online_total_timesteps: 384         # // (8 * 8) -> 6 updates
+online_num_updates: null
+
+# ── Transformer architecture ─────────────────────────────────────────────────
+d_model: 32
+n_heads: 2
+n_layers: 1
+d_ff: 32
+obs_encoder_layers: 1
+obs_encoder_width: 32
+
+# ── Diffusion ────────────────────────────────────────────────────────────────
+plan_horizon: 8
+diffusion_steps: 2
+use_loop: false                     # single-phase sampler: one scan to compile
+
+# ── Validation ───────────────────────────────────────────────────────────────
+val_interval: 3
+val_interval_frames: null           # PRIMARY key would override val_interval
+val_diffusion_steps: 2
+val_replan_every: 1
+val_steps: 2                        # // val_replan_every -> 2 cycles
+
+# ── DAgger ───────────────────────────────────────────────────────────────────
+dagger_buffer_max: 64               # >= samples_per_update (8)
+dagger_buffer_cycles: null          # PRIMARY key would override buffer_max
+dagger_beta_final: null             # PRIMARY key would override beta_decay
+dagger_train_passes: 1
+
+# ── Optimisation ─────────────────────────────────────────────────────────────
+lr_warmup_frames: null              # PRIMARY key would override warmup_steps
+lr_warmup_steps: 0
+
+# ── Expert ───────────────────────────────────────────────────────────────────
+# Left unset so run_smoke generates a randomly initialised expert and the mode
+# runs on a clean clone with no downloads. Pass --ppo_checkpoint_path to use a
+# trained expert instead. Note the released PPO checkpoints were saved on GPU
+# and currently fail to restore on a CPU-only machine.
+ppo_checkpoint_path: null
+
+# ── Logging / checkpointing ──────────────────────────────────────────────────
+seed: 0
+use_wandb: false
+save_policy: false

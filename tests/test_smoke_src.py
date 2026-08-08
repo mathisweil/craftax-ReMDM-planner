@@ -366,8 +366,13 @@ def test_validate_config_requires_checkpoints() -> None:
 def test_dispatch_table_covers_every_mode() -> None:
     import main as main_module
 
-    assert set(main_module.DISPATCH) == {"collect", "offline", "online", "inference"}
+    modes = {"collect", "offline", "online", "inference", "smoke"}
+    assert set(main_module.DISPATCH) == modes
     assert all(callable(fn) for fn in main_module.DISPATCH.values())
+
+    parser = main_module._build_parser("configs/defaults.yaml")
+    choices = next(a.choices for a in parser._actions if a.dest == "mode")
+    assert set(choices) == modes, "--mode choices and DISPATCH disagree"
 
 
 # ---------------------------------------------------------------------------
@@ -450,3 +455,62 @@ def test_main_rejects_missing_mode(entry_point_runs) -> None:
     result = entry_point_runs["main no-mode"]
     assert result.returncode != 0
     assert "--mode" in result.stderr
+
+
+def test_smoke_mode_trains_end_to_end(entry_point_runs) -> None:
+    """`main.py --mode smoke` is the full pipeline: rollout, DAgger, validation."""
+    result = entry_point_runs["main --mode smoke"]
+    assert result.returncode == 0, result.stderr[-3000:]
+    assert "SMOKE TEST SUMMARY" in result.stdout
+    assert "all metrics finite   = True" in result.stdout
+
+
+def test_smoke_config_overlays_defaults() -> None:
+    """configs/smoke.yaml is overrides-only; main.build_config layers it on top."""
+    from conftest import load_config
+
+    defaults = load_config("configs/defaults.yaml")
+    smoke = load_config("configs/smoke.yaml")
+
+    import main as main_module
+
+    assert smoke, "smoke.yaml is empty"
+
+    # A key that is neither in defaults.yaml nor a CLI flag would be read by
+    # nothing and silently ignored.
+    parser = main_module._build_parser("configs/defaults.yaml")
+    cli_keys = {action.dest.upper() for action in parser._actions}
+    unknown = set(smoke) - set(defaults) - cli_keys
+    assert not unknown, f"smoke.yaml sets keys nothing reads: {unknown}"
+
+    merged = {**defaults, **smoke}
+    # The invariants make_train_dagger asserts on derived values.
+    num_envs, num_steps = merged["NUM_ENVS"], merged["NUM_STEPS"]
+    plan_horizon, num_minibatches = merged["PLAN_HORIZON"], merged["NUM_MINIBATCHES"]
+
+    assert num_steps >= plan_horizon
+    assert num_steps % plan_horizon == 0
+    samples_per_update = num_envs * (num_steps - plan_horizon + 1)
+    assert samples_per_update % num_minibatches == 0
+    assert samples_per_update <= merged["DAGGER_BUFFER_MAX"]
+
+
+def test_smoke_budget_resolves_to_a_short_run() -> None:
+    """Shrinking the frame budget alone would not shrink the run: check the
+    derived update count and the keys that would silently override it."""
+    from conftest import load_config
+
+    from src.planners.common import resolve_num_updates, resolve_scaled_hyperparams
+
+    config = {**load_config("configs/defaults.yaml"), **load_config("configs/smoke.yaml")}
+    resolve_num_updates(config, "online")
+    resolve_scaled_hyperparams(config, "online")
+
+    assert config["NUM_UPDATES"] <= 10, config["NUM_UPDATES"]
+    assert config["VAL_INTERVAL"] <= config["NUM_UPDATES"], (
+        "no validation rollout would run"
+    )
+    # PRIMARY env-frame keys silently override the update-step values above.
+    for primary in ("VAL_INTERVAL_FRAMES", "DAGGER_BUFFER_CYCLES",
+                    "DAGGER_BETA_FINAL", "LR_WARMUP_FRAMES"):
+        assert config[primary] is None, f"{primary} would override the smoke sizing"

@@ -655,11 +655,16 @@ def make_train_dagger(config: dict[str, Any]):
 # ---------------------------------------------------------------------------
 
 
-def run_online(config: dict[str, Any]) -> None:
+def run_online(config: dict[str, Any]) -> dict[str, Any]:
     """Configure, compile, and run DAgger online training.
 
     Args:
         config: Mixed-case hyperparameter dict from ``defaults.yaml`` / CLI.
+
+    Returns:
+        The training output: ``runner_state``, ``metrics`` and ``best_params``,
+        each with a leading ``NUM_REPEATS`` axis.  ``--mode online`` discards
+        this; ``--mode smoke`` uses it to print a summary.
     """
     config = {k.upper(): v for k, v in config.items()}
 
@@ -757,3 +762,5 @@ def run_online(config: dict[str, Any]) -> None:
         wandb.log_artifact(best_artifact)
 
         print("Uploaded final + best policy artifacts to wandb")
+
+    return out

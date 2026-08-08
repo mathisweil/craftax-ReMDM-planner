@@ -22,6 +22,7 @@ from src.planners.model import load_checkpoint_metadata, resolve_checkpoint_path
 from src.planners.offline import run_offline_diffusion
 from src.planners.online import run_online
 from src.planners.inference import run_inference
+from src.planners.smoke import run_smoke
 
 REMASK_STRATEGIES = ["rescale", "cap", "conf"]
 DIFFUSION_SCHEDULES = ["cosine", "linear"]
@@ -42,7 +43,7 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
 
     p.add_argument(
         "--mode", required=True,
-        choices=["collect", "offline", "online", "inference"],
+        choices=["collect", "offline", "online", "inference", "smoke"],
     )
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--jit", action=argparse.BooleanOptionalAction, default=True)
@@ -152,14 +153,22 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
 
 def build_config() -> dict[str, Any]:
     default_cfg = str(pathlib.Path(__file__).parent / "configs" / "defaults.yaml")
+    smoke_cfg = str(pathlib.Path(__file__).parent / "configs" / "smoke.yaml")
 
-    # Pre-parse config path
+    # Pre-parse config path and mode
     pre = argparse.ArgumentParser(add_help=False)
     pre.add_argument("--config", default=default_cfg)
+    pre.add_argument("--mode", default=None)
     pre_args, _ = pre.parse_known_args()
 
     with open(pre_args.config) as f:
         yaml_cfg = yaml.safe_load(f) or {}
+
+    # Smoke mode overlays configs/smoke.yaml on the defaults.  Only when the
+    # user did not name their own --config, so an explicit config always wins.
+    if pre_args.mode == "smoke" and pre_args.config == default_cfg:
+        with open(smoke_cfg) as f:
+            yaml_cfg.update(yaml.safe_load(f) or {})
 
     parser = _build_parser(default_cfg)
     args, rest = parser.parse_known_args()
@@ -295,6 +304,7 @@ DISPATCH = {
     "offline": run_offline_diffusion,
     "online": run_online,
     "inference": run_inference,
+    "smoke": run_smoke,
 }
 
 

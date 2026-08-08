@@ -123,6 +123,9 @@ def run_entry_point(args: list[str], timeout: int = 120) -> subprocess.Completed
 ENTRY_POINTS = {
     "main --help": ["main.py", "--help"],
     "main no-mode": ["main.py"],
+    # The only entry point that trains end to end without a real checkpoint:
+    # run_smoke generates a random expert when none is supplied.
+    "main --mode smoke": ["main.py", "--mode", "smoke"],
     "count_params --help": ["scripts/count_params.py", "--help"],
     "count_params run": ["scripts/count_params.py", "--configs", "configs/defaults.yaml"],
     "eval_ppo_expert --help": ["scripts/eval_ppo_expert.py", "--help"],
