@@ -62,7 +62,7 @@ _CRAFTAX_BASELINES = _PROJECT_ROOT / "Craftax_Baselines"
 if str(_CRAFTAX_BASELINES) not in sys.path:
     sys.path.insert(0, str(_CRAFTAX_BASELINES))
 
-from experiments.rl_finetuning.ablations.registry import REGISTRY, AblationSpec
+from experiments.rl_finetuning.ablations.registry import REGISTRY
 from experiments.rl_finetuning.ablations.training import AblationHistory, run_ablation
 from experiments.rl_finetuning.analysis.action_distribution import run_action_distribution_analysis
 from experiments.rl_finetuning.analysis.plots import generate_all_plots
@@ -520,7 +520,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # ── Environment and model setup ────────────────────────────────────────
     from src.planners.env import make_env
-    from src.planners.model import build_model, create_train_state, load_checkpoint, make_apply_fns
+    from src.planners.model import build_model, load_checkpoint, make_apply_fns
     from src.planners.ppo import PPOAgent, build_ppo_network, load_ppo_params
     from src.diffusion.schedules import SCHEDULE_MAP
 
