@@ -6,14 +6,14 @@ Usage::
     python experiments/rl_finetuning/run_ablations.py \\
         --config configs/defaults.yaml \\
         --ablations_config experiments/rl_finetuning/configs/ablations_default.yaml \\
-        --offline_checkpoint_path /path/to/pretrained \\
+        --checkpoint_path /path/to/pretrained \\
         --ppo_checkpoint_path /path/to/ppo \\
         --all
 
     # Run specific ablations
     python experiments/rl_finetuning/run_ablations.py \\
         --ablations kl_penalty ewc lora gradient_surgery \\
-        --offline_checkpoint_path /path/to/pretrained \\
+        --checkpoint_path /path/to/pretrained \\
         --ppo_checkpoint_path /path/to/ppo
 
     # Fast smoke test
@@ -152,10 +152,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     # Checkpoints
-    p.add_argument("--offline_checkpoint_path", type=str, default=None,
-                   help="Path to pretrained diffusion checkpoint (offline or DAgger).")
     p.add_argument("--checkpoint_path", type=str, default=None,
-                   help="Alias for --offline_checkpoint_path (accepts any diffusion ckpt).")
+                   help="Path to the pretrained diffusion checkpoint (offline, DAgger or online).")
     p.add_argument("--ppo_checkpoint_path", type=str, default=None,
                    help="Path to PPO checkpoint used for rollout collection.")
 
@@ -253,7 +251,7 @@ def _apply_cli_overrides(config: dict, args: argparse.Namespace) -> dict:
         "USE_WANDB": args.use_wandb,
         "WANDB_PROJECT": args.wandb_project,
         "WANDB_ENTITY": args.wandb_entity,
-        "OFFLINE_CHECKPOINT_PATH": args.offline_checkpoint_path,
+        "CHECKPOINT_PATH": args.checkpoint_path,
         "PPO_CHECKPOINT_PATH": args.ppo_checkpoint_path,
     }
     return {k: v if v is not None else config.get(k) for k, v in {**config, **{k: v for k, v in overrides.items() if v is not None}}.items()}
@@ -483,15 +481,6 @@ def main(argv: list[str] | None = None) -> None:
 
     # ── Training mode: load configs ────────────────────────────────────────
 
-    # Resolve --checkpoint_path alias
-    if args.checkpoint_path and args.offline_checkpoint_path:
-        parser.error(
-            "Cannot specify both --checkpoint_path and"
-            " --offline_checkpoint_path. Use one or the other."
-        )
-    if args.checkpoint_path:
-        args.offline_checkpoint_path = args.checkpoint_path
-
     main_cfg = _load_yaml(args.config)
     abl_cfg = _load_yaml(args.ablations_config)
     merged = _to_upper(_merge_configs(main_cfg, abl_cfg))
@@ -502,11 +491,8 @@ def main(argv: list[str] | None = None) -> None:
     merged = _apply_cli_overrides(merged, args)
 
     # Validate required paths
-    if not merged.get("OFFLINE_CHECKPOINT_PATH"):
-        parser.error(
-            "--offline_checkpoint_path (or --checkpoint_path)"
-            " is required for training mode."
-        )
+    if not merged.get("CHECKPOINT_PATH"):
+        parser.error("--checkpoint_path is required for training mode.")
     if not merged.get("PPO_CHECKPOINT_PATH"):
         parser.error("--ppo_checkpoint_path is required for training mode.")
 
@@ -514,7 +500,7 @@ def main(argv: list[str] | None = None) -> None:
     from src.planners.model import resolve_checkpoint_path
 
     download_dir = merged.get("WANDB_DOWNLOAD_DIR")
-    for key in ("OFFLINE_CHECKPOINT_PATH", "PPO_CHECKPOINT_PATH"):
+    for key in ("CHECKPOINT_PATH", "PPO_CHECKPOINT_PATH"):
         val = merged.get(key)
         if val and isinstance(val, str) and val.startswith("wandb:"):
             merged[key] = resolve_checkpoint_path(val, download_dir)
@@ -566,7 +552,7 @@ def main(argv: list[str] | None = None) -> None:
     rng, ckpt_rng = jax.random.split(rng)
     pretrained_params = load_checkpoint(
         net, ckpt_rng, obs_dim, merged["PLAN_HORIZON"],
-        merged["OFFLINE_CHECKPOINT_PATH"],
+        merged["CHECKPOINT_PATH"],
     )
 
     # Evaluate pretrained baseline
