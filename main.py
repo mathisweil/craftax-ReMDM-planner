@@ -143,6 +143,18 @@ def _cast_override(key: str, raw: str, current) -> object:
     if current is None or value is None:
         return value
 
+    # YAML 1.1 reads '1e-4' as a string; accept scientific notation for
+    # numeric keys.
+    if (
+        isinstance(current, (int, float))
+        and not isinstance(current, bool)
+        and isinstance(value, str)
+    ):
+        try:
+            value = float(value)
+        except ValueError:
+            pass
+
     if isinstance(current, bool):
         if not isinstance(value, bool):
             raise ValueError(f"'{key}' expects a boolean, got '{raw}'")

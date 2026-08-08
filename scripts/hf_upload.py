@@ -184,7 +184,7 @@ From a clone of the code repository, after downloading into it:
 
 ```bash
 uv run python main.py --mode inference \\
-    --checkpoint_path checkpoints/online/Craftax-Classic-Symbolic-v1-OnlineDiffusion-DAgger-100M
+    --checkpoint checkpoints/online/Craftax-Classic-Symbolic-v1-OnlineDiffusion-DAgger-100M
 ```
 
 Programmatic loading uses `src.planners.model.load_checkpoint` for the
