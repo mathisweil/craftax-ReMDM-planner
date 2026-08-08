@@ -206,27 +206,6 @@ def make_optimizer_frozen_paths(
 # ---------------------------------------------------------------------------
 
 
-def _lora_target_paths(params: Any, path_fragment: str = "MultiHeadDotProductAttention") -> list[str]:
-    """Return canonical path strings for attention kernel params.
-
-    Args:
-        params:        Parameter pytree.
-        path_fragment: Substring identifying LoRA target layers.
-
-    Returns:
-        Sorted list of path strings for matching kernel parameters.
-    """
-    target_paths: list[str] = []
-
-    def _collect(path: tuple, leaf):
-        path_str = "/".join(str(k.key) if hasattr(k, "key") else str(k) for k in path)
-        if path_fragment in path_str and "kernel" in path_str:
-            target_paths.append(path_str)
-
-    jax.tree_util.tree_map_with_path(_collect, params)
-    return sorted(target_paths)
-
-
 def make_lora_params(
     params: Any,
     rank: int,
