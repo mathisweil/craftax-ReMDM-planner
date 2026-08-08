@@ -169,6 +169,64 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
         config["DAGGER_BUFFER_MAX"] = max(1, int(round(float(buffer_cycles) * fpu)))
 
 
+def dagger_sizing(config: dict[str, Any], num_updates: int) -> dict[str, int]:
+    """Derive the DAgger loop sizes.
+
+    Single source of truth for :func:`src.planners.online.make_train_dagger`
+    and :func:`print_config_snapshot`.  The two used to derive
+    ``n_train_passes`` independently and disagreed: the snapshot reported
+    ``dagger_buffer_max // samples_per_update`` while the runner used 1,
+    overstating ``total_grad_steps`` by 2x on ``defaults.yaml`` and both
+    ``final_classic_*`` configs, and by 23x on
+    ``classic_exp_c_full_recipe.yaml``.
+
+    Sliding windows (B3): a rollout of ``num_steps`` transitions yields
+    ``num_steps - plan_horizon + 1`` windows per environment, not one window
+    per plan cycle.
+
+    Buffer capacity (B1): the theoretical maximum is
+    ``num_updates * samples_per_update``; ``DAGGER_BUFFER_MAX`` caps it to
+    stay inside GPU memory.
+
+    Training passes (B1): each pass redraws a fresh sample of size
+    ``samples_per_update`` from the filled portion of the buffer.  The
+    default of 1 makes DAgger do exactly the same gradient work per update
+    as offline BC (``update_epochs * num_minibatches`` gradient steps over
+    ``samples_per_update`` samples), which keeps the compute comparison
+    fair.  After the B3 sliding-window fix ``samples_per_update`` is already
+    ~16x the legacy cycle-only count, so one pass yields ~34% buffer
+    coverage and cumulative coverage across a few updates approaches 100%.
+    Set ``DAGGER_TRAIN_PASSES`` above 1 to trade BC fairness for higher
+    per-update buffer coverage.
+
+    Args:
+        config:      Upper-cased config dict.  Must contain ``NUM_ENVS``,
+                     ``NUM_STEPS`` and ``PLAN_HORIZON``.
+        num_updates: Resolved update count from :func:`resolve_num_updates`.
+
+    Returns:
+        Dict with ``n_cycles``, ``valid_per_rollout``, ``samples_per_update``,
+        ``max_buffer_size`` and ``n_train_passes``.
+    """
+    num_envs = int(config["NUM_ENVS"])
+    num_steps = int(config["NUM_STEPS"])
+    plan_horizon = int(config["PLAN_HORIZON"])
+
+    valid_per_rollout = num_steps - plan_horizon + 1
+    samples_per_update = num_envs * valid_per_rollout
+
+    return {
+        "n_cycles": num_steps // plan_horizon,
+        "valid_per_rollout": valid_per_rollout,
+        "samples_per_update": samples_per_update,
+        "max_buffer_size": min(
+            num_updates * samples_per_update,
+            int(config.get("DAGGER_BUFFER_MAX", 100_000)),
+        ),
+        "n_train_passes": int(config.get("DAGGER_TRAIN_PASSES") or 1),
+    }
+
+
 def print_config_snapshot(config: dict[str, Any], mode: str) -> None:
     """Print a structured banner of training-critical hyperparameters.
 
@@ -214,28 +272,28 @@ def print_config_snapshot(config: dict[str, Any], mode: str) -> None:
         beta_init = float(config.get("DAGGER_BETA_INIT", 1.0))
         beta_decay = float(config["DAGGER_BETA_DECAY"])
         final_beta = beta_init * beta_decay ** num_updates
-        buffer_max = int(config["DAGGER_BUFFER_MAX"])
+        # Derived exactly as the runner derives them; see dagger_sizing.
+        sizing = dagger_sizing(config, num_updates)
+        samples_per_update = sizing["samples_per_update"]
+        buffer_max = sizing["max_buffer_size"]
+        n_passes = sizing["n_train_passes"]
         cycles = buffer_max / fpu
-        # Mirrors the n_train_passes default in run_online: drawn fresh per
-        # update, capped at samples_per_update for memory.
-        plan_h = int(config["PLAN_HORIZON"])
-        samples_per_update = int(config["NUM_ENVS"]) * (
-            int(config["NUM_STEPS"]) - plan_h + 1
-        )
-        n_passes = config.get("DAGGER_TRAIN_PASSES") or max(
-            1, buffer_max // max(1, samples_per_update)
+        configured_max = int(config["DAGGER_BUFFER_MAX"])
+        cap_note = (
+            "" if buffer_max >= configured_max
+            else f"  (capped from {configured_max:,} by num_updates)"
         )
         expert_det = bool(config.get("DAGGER_EXPERT_DETERMINISTIC", True))
         total_grad_steps = (
-            num_updates * int(n_passes)
+            num_updates * n_passes
             * int(config["UPDATE_EPOCHS"]) * int(config["NUM_MINIBATCHES"])
         )
-        passes_tag = "auto" if config.get("DAGGER_TRAIN_PASSES") is None else "override"
+        passes_tag = "default" if config.get("DAGGER_TRAIN_PASSES") is None else "override"
         print("  -- DAgger --")
         print(f"    {'dagger_beta_init':<24} = {beta_init}")
         print(f"    {'dagger_beta_decay':<24} = {beta_decay:.10f}")
         print(f"    {'final beta':<24} = {final_beta:.4f}  (init * decay^N)")
-        print(f"    {'dagger_buffer_max':<24} = {buffer_max:,}  (~{cycles:.2f} update cycles)")
+        print(f"    {'buffer size (effective)':<24} = {buffer_max:,}  (~{cycles:.2f} update cycles){cap_note}")
         print(f"    {'samples_per_update':<24} = {samples_per_update:,}")
         print(f"    {'dagger_train_passes':<24} = {n_passes}  ({passes_tag})")
         print(f"    {'dagger_expert_determ':<24} = {expert_det}")

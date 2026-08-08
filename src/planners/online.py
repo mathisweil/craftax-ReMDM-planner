@@ -28,6 +28,7 @@ from src.diffusion.sampling import sample_plan
 from src.diffusion.schedules import SCHEDULE_MAP
 
 from .common import (
+    dagger_sizing,
     make_grad_step,
     make_validate,
     print_config_snapshot,
@@ -162,40 +163,25 @@ def make_train_dagger(config: dict[str, Any]):
     assert num_steps >= plan_horizon, (
         f"NUM_STEPS ({num_steps}) must be >= PLAN_HORIZON ({plan_horizon})"
     )
-    n_cycles = num_steps // plan_horizon
-    valid_per_rollout = num_steps - plan_horizon + 1
-    samples_per_update = num_envs * valid_per_rollout
+    # B1/B3: sliding windows, buffer capacity and pass count.  Derived in
+    # common.dagger_sizing so print_config_snapshot reports exactly what
+    # runs here; the two used to disagree on n_train_passes.
+    sizing = dagger_sizing(config, num_updates)
+    n_cycles = sizing["n_cycles"]
+    valid_per_rollout = sizing["valid_per_rollout"]
+    samples_per_update = sizing["samples_per_update"]
+    max_buffer_size = sizing["max_buffer_size"]
+    n_train_passes = sizing["n_train_passes"]
 
     assert samples_per_update % num_minibatches == 0, (
         f"samples_per_update ({samples_per_update}) not divisible by"
         f" num_minibatches ({num_minibatches})"
-    )
-
-    # B1: circular replay buffer sizing.
-    # Theoretical max = num_updates * samples_per_update; cap to stay in
-    # GPU memory.  Each sample stores obs (float32) + plan (int32) + valid.
-    max_buffer_size = min(
-        num_updates * samples_per_update,
-        config.get("DAGGER_BUFFER_MAX", 100_000),
     )
     assert samples_per_update <= max_buffer_size, (
         f"samples_per_update ({samples_per_update}) exceeds"
         f" max_buffer_size ({max_buffer_size}); raise DAGGER_BUFFER_MAX"
         f" or shrink NUM_ENVS / NUM_STEPS"
     )
-
-    # B1: multi-pass training over the buffer.  Each pass redraws a
-    # fresh sample of size ``samples_per_update`` from the filled portion
-    # of D.  Default = 1 so DAgger does exactly the same gradient work
-    # per update as offline BC (``update_epochs * num_minibatches`` grad
-    # steps over a sample of size ``samples_per_update``) — fair compute
-    # comparison.  After the Bug 3 sliding-window fix, ``samples_per_update``
-    # is already 16x larger than the legacy cycle-only count, so a single
-    # pass already yields ~34% buffer coverage and cumulative coverage
-    # across a few updates approaches 100%.  Set DAGGER_TRAIN_PASSES > 1
-    # explicitly to trade BC fairness for higher per-update D coverage.
-    _default_passes = 1
-    n_train_passes = config.get("DAGGER_TRAIN_PASSES") or _default_passes
 
     # B2: deterministic-by-default expert.  Sampling from ``pi.logits``
     # injects label noise — two queries to the same state can return

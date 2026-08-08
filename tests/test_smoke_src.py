@@ -351,6 +351,60 @@ def test_resolve_num_updates_rejects_unknown_mode(real_config) -> None:
         resolve_num_updates({**real_config}, "nonsense")
 
 
+def test_dagger_sizing_defaults_to_one_train_pass(real_config) -> None:
+    """The runner's default is 1 pass, keeping DAgger's per-update gradient
+    work equal to offline BC's."""
+    from src.planners.common import dagger_sizing
+
+    config = {**real_config, "NUM_ENVS": 8, "NUM_STEPS": 8, "PLAN_HORIZON": 4,
+              "DAGGER_BUFFER_MAX": 1_000_000, "DAGGER_TRAIN_PASSES": None}
+    sizing = dagger_sizing(config, num_updates=10)
+
+    assert sizing["n_train_passes"] == 1
+    assert sizing["valid_per_rollout"] == 5
+    assert sizing["samples_per_update"] == 40
+    assert sizing["n_cycles"] == 2
+    # Capped by the run length, not by DAGGER_BUFFER_MAX.
+    assert sizing["max_buffer_size"] == 400
+
+    assert dagger_sizing({**config, "DAGGER_TRAIN_PASSES": 4}, 10)["n_train_passes"] == 4
+
+
+def test_snapshot_reports_the_gradient_steps_that_actually_run(real_config, capsys) -> None:
+    """Regression: print_config_snapshot used to derive n_train_passes as
+    ``buffer_max // samples_per_update`` while the runner used 1, overstating
+    total_grad_steps by 2x on defaults.yaml and 23x on classic_exp_c."""
+    from src.planners.common import (
+        dagger_sizing,
+        print_config_snapshot,
+        resolve_num_updates,
+        resolve_scaled_hyperparams,
+    )
+
+    config = {**real_config}
+    resolve_num_updates(config, "online")
+    resolve_scaled_hyperparams(config, "online")
+    print_config_snapshot(config, "online")
+    out = capsys.readouterr().out
+
+    sizing = dagger_sizing(config, config["NUM_UPDATES"])
+    expected = (
+        config["NUM_UPDATES"] * sizing["n_train_passes"]
+        * config["UPDATE_EPOCHS"] * config["NUM_MINIBATCHES"]
+    )
+    assert f"total_grad_steps         = {expected:,}" in out, out
+
+    # The stale formula on defaults.yaml; assert we are not printing it.
+    stale_passes = max(
+        1, int(config["DAGGER_BUFFER_MAX"]) // sizing["samples_per_update"]
+    )
+    assert stale_passes > sizing["n_train_passes"], (
+        "defaults.yaml no longer exercises the divergence; pick another config"
+    )
+    stale = expected * stale_passes
+    assert f"{stale:,}" not in out
+
+
 def test_validate_config_requires_checkpoints() -> None:
     import main as main_module
 
