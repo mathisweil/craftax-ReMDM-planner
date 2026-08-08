@@ -194,6 +194,21 @@ python main.py --mode inference \
 
 Prints mean episode return, completed episodes, steps per second, and per-achievement unlock counts. Uses historical inpainting: the first `hist_len` plan positions are locked to observed history.
 
+### Smoke test
+
+```bash
+python main.py --mode smoke
+```
+
+Runs the full DAgger pipeline — rollout, expert labelling, gradient updates, validation — under the shrunken overrides in `configs/smoke.yaml`, then prints the final loss, returns and achievement metrics. Roughly 25 seconds on CPU. `src/planners/smoke.py` delegates the training loop to `run_online`; it does not reimplement it.
+
+Two things to know before reading the output:
+
+- **The expert is random unless you supply one.** With no `--ppo_checkpoint_path`, the mode generates a randomly initialised PPO expert so it runs on a clean clone with no downloads. It proves the pipeline executes; it says nothing about learning. Pass `--ppo_checkpoint_path` to use a trained expert.
+- **Returns and achievements read `0.000`.** Those metrics are episode-weighted, and a smoke run is far shorter than a Craftax episode, so no episode terminates. Watch `mean step reward`, `loss` and `all metrics finite` instead.
+
+`configs/smoke.yaml` holds overrides only and is layered on top of `configs/defaults.yaml`. Sizing is constrained by invariants `make_train_dagger` asserts on *derived* values (`num_steps % plan_horizon`, `samples_per_update % num_minibatches`, `samples_per_update <= dagger_buffer_max`), so shrinking the frame budget alone does not shrink the run — see the comments in the file.
+
 ### Loading checkpoints from W&B artifacts
 
 Any checkpoint path argument (`--checkpoint_path`, `--offline_checkpoint_path`, `--ppo_checkpoint_path`) accepts a W&B artifact reference prefixed with `wandb:`. The artifact is downloaded automatically before training or evaluation begins.
@@ -546,7 +561,8 @@ craftax-ReMDM-planner/
 │       ├── model.py               # Diffusion model lifecycle
 │       ├── offline.py             # --mode offline: make_train (live PPO rollouts)
 │       ├── online.py              # --mode online: DAgger fine-tuning
-│       └── ppo.py                 # PPO agent adapter and checkpoint loading utilities            
+│       ├── ppo.py                 # PPO agent adapter and checkpoint loading utilities
+│       └── smoke.py               # --mode smoke: shrunken end-to-end run via run_online
 ├── experiments/
 │   └── rl_finetuning/             # RL fine-tuning ablation suite (see experiments/README.md)
 │       ├── run_ablations.py       # CLI entry point
