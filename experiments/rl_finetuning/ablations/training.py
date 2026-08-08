@@ -419,7 +419,7 @@ def build_rollout_fn(
     num_envs = config["NUM_ENVS"]
     num_steps = config["NUM_STEPS"]
     plan_horizon = config["PLAN_HORIZON"]
-    collect_temp = config.get("COLLECT_TEMP", 1.0)
+    collect_temperature = config.get("COLLECT_TEMPERATURE", 1.0)
     valid_per_rollout = num_steps - plan_horizon + 1
 
     from src.planners.env import Transition
@@ -447,7 +447,7 @@ def build_rollout_fn(
         def _env_step(carry: tuple, _: None) -> tuple:
             es, ob, dn, hs, r = carry
             r, act_rng, step_rng = jax.random.split(r, 3)
-            action, new_hs = ppo.act(ob, dn, hs, act_rng, temperature=collect_temp)
+            action, new_hs = ppo.act(ob, dn, hs, act_rng, temperature=collect_temperature)
             new_obs, es, reward, new_done, info = env.step(step_rng, es, action, env_params)
             t = Transition(done=dn, action=action, reward=reward, obs=ob, info=info)
             return (es, new_obs, new_done, new_hs, r), t

@@ -136,7 +136,7 @@ ENTRY_POINTS = {
     "run_ablations no-checkpoint": [
         "experiments/rl_finetuning/run_ablations.py", "--ablations", "baseline_rl",
         # run_ablations creates its output dir before validating arguments.
-        "--output_dir", "<TMP>",
+        "--output-dir", "<TMP>",
     ],
 }
 

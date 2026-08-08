@@ -547,4 +547,4 @@ def test_run_ablations_list(entry_point_runs) -> None:
 def test_run_ablations_requires_checkpoints(entry_point_runs) -> None:
     result = entry_point_runs["run_ablations no-checkpoint"]
     assert result.returncode != 0
-    assert "checkpoint_path" in result.stderr
+    assert "checkpoint" in result.stderr
