@@ -495,15 +495,6 @@ Controlled by `--remask_strategy`. All strategies operate on top of the three-ph
 | `BatchEnvWrapper` | Vmaps `reset` and `step` over `num_envs` environments |
 | `OptimisticResetVecEnvWrapper` | Batched resets with reduced overhead; enable via `--use_optimistic_resets` |
 
-**From `src/envs/wrappers.py`**:
-
-| Wrapper | Purpose |
-|---------|---------|
-| `SequenceHistoryWrapper` | Maintains a sliding window of past observations and actions in the env state |
-| `DiscreteTokenizationWrapper` | Quantizes continuous observations into discrete token indices |
-| `PlannerWrapper` | Manages the plan/replan cycle for the diffusion planner |
-| `OfflineTrajectoryWrapper` | Accumulates transitions into a fixed-size circular replay buffer |
-
 **Wrapper stacks:**
 
 ```
@@ -546,8 +537,6 @@ craftax-ReMDM-planner/
 │   │   └── schedules.py           # Linear and cosine noise schedules
 │   ├── models/
 │   │   └── denoiser.py            # DenoisingTransformer (obs encoder + transformer)
-│   ├── envs/
-│   │   └── wrappers.py            # Sequence, tokenization, planner, and trajectory wrappers
 │   └── planners/
 │       ├── collect.py             # --mode collect: PPO rollouts -> .npz
 │       ├── common.py              # Shared utilities
