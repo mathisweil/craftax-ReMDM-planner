@@ -664,7 +664,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # ── Save checkpoints ───────────────────────────────────────────────────
     # (params not saved here to keep the results JSON small;
-    #  enable via --save_checkpoints if needed)
+    #  enable via save_checkpoints in the ablations config if needed)
 
     # ── Action distribution analysis ─────────────────────────────────────
     logger.info("Running action distribution analysis...")

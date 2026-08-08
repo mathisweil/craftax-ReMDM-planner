@@ -217,7 +217,7 @@ def run_smoke(config: dict[str, Any]) -> None:
             f"\n{_BAR}\n"
             "  No expert checkpoint given: using a RANDOMLY INITIALISED PPO expert.\n"
             "  This checks that the pipeline runs; the resulting numbers are\n"
-            "  meaningless. Pass --ppo_checkpoint_path to use a trained expert.\n"
+            "  meaningless. Pass --ppo-checkpoint to use a trained expert.\n"
             f"{_BAR}"
         )
     else:

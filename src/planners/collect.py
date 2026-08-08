@@ -22,7 +22,7 @@ def collect_offline_data(config: dict[str, Any]) -> None:
             ``COLLECT_NUM_STEPS``, and ``COLLECT_NUM_ENVS``.
     """
     assert config.get("PPO_CHECKPOINT_PATH"), (
-        "--ppo_checkpoint_path is required for --mode collect."
+        "--ppo-checkpoint is required for --mode collect."
     )
 
     num_envs: int = config["COLLECT_NUM_ENVS"]
