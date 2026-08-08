@@ -249,20 +249,28 @@ def test_one_finetuning_step(loss_ctx, abl_config, params, batch) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "make_lora_params only targets 2-D kernels, but every attention kernel in "
-        "DenoisingTransformer is 3-D (query/key/value [d_model, n_heads, head_dim], "
-        "out [n_heads, head_dim, d_model]). It returns {} for the real config too, so "
-        "the 'lora' ablation trains no parameters at all. Remove this marker once fixed."
-    ),
-)
 def test_lora_targets_the_attention_kernels(abl_config, params) -> None:
+    """Attention kernels are 3-D; targeting only 2-D matched nothing at all."""
     from experiments.rl_finetuning.ablations.optimizers import make_lora_params
 
     lora = make_lora_params(params, abl_config["LORA_RANK"], jax.random.PRNGKey(SEED))
+
     assert lora, "no LoRA targets found in the parameter tree"
+    assert all("MultiHeadDotProductAttention" in path for path in lora)
+    assert any(path.endswith("out/kernel") for path in lora), "out projection missed"
+    assert any(path.endswith("query/kernel") for path in lora), "query projection missed"
+
+    # Every factorisation must reconstruct its kernel's exact shape.
+    shapes = {
+        "/".join(str(k.key) for k in path): leaf.shape
+        for path, leaf in jax.tree_util.tree_flatten_with_path(params)[0]
+    }
+    for path, ab in lora.items():
+        assert ab["A"].shape[1] == abl_config["LORA_RANK"]
+        assert ab["B"].shape[0] == abl_config["LORA_RANK"]
+        delta = ab["A"] @ ab["B"]
+        assert delta.size == int(jnp.prod(jnp.array(shapes[path]))), path
+        assert float(jnp.max(jnp.abs(delta))) == 0.0, "B must be zero-initialised"
 
 
 def test_lora_apply_and_optimizer_run(abl_config, apply_fns, params, batch) -> None:
@@ -303,21 +311,11 @@ def test_lora_apply_and_optimizer_run(abl_config, apply_fns, params, batch) -> N
     assert all(_finite(p) for p in jax.tree_util.tree_leaves(updated["base"]))
 
 
-_FREEZE_BUG = (
-    "optax.masked passes NON-selected leaves through UNCHANGED, it does not zero them. "
-    "Both freezing optimizers mask in trainable params, so every 'frozen' parameter "
-    "receives its raw clipped gradient as the update - roughly SGD at lr=1.0, in the "
-    "ascent direction. Measured on a 2x2 leaf with grad 0.5: trainable moves -3.0e-4, "
-    "'frozen' moves +0.354. Nothing else masks gradients (frozen_path_fragments is "
-    "never read in training.py; the Group C losses are plain baseline). Affects "
-    "frozen_backbone, head_only, attention_only, ffn_only, layer_ablation_top1/2/3 and "
-    "lora. Fix: optax.multi_transform with optax.set_to_zero() for the frozen label. "
-    "Remove this marker once fixed."
-)
-
-
-@pytest.mark.xfail(strict=True, reason=_FREEZE_BUG)
 def test_frozen_paths_receive_no_update(abl_config, params) -> None:
+    """Regression: optax.masked passes NON-selected leaves through unchanged
+    rather than zeroing them, so masking in the trainable params handed every
+    'frozen' parameter its raw clipped gradient. Now multi_transform +
+    set_to_zero."""
     from experiments.rl_finetuning.ablations.optimizers import make_optimizer_frozen_paths
 
     fragments = ["TransformerBlock"]
@@ -336,7 +334,6 @@ def test_frozen_paths_receive_no_update(abl_config, params) -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason=_FREEZE_BUG)
 def test_lora_optimizer_freezes_the_base(abl_config, apply_fns, params) -> None:
     from experiments.rl_finetuning.ablations.optimizers import (
         make_lora_params,

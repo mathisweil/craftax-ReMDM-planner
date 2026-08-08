@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import optax
 
 
@@ -187,16 +188,22 @@ def make_optimizer_frozen_paths(
         path_str = "/".join(str(k.key) if hasattr(k, "key") else str(k) for k in path)
         return any(frag in path_str for frag in frozen_path_fragments)
 
-    # Build a mask tree: True = trainable, False = frozen
-    mask_tree = jax.tree_util.tree_map_with_path(
-        lambda path, _: not should_freeze(path), params
+    # multi_transform, not masked: optax.masked leaves NON-selected updates
+    # untouched rather than zeroing them, so masking in the trainable params
+    # would hand every frozen parameter its raw clipped gradient as an update
+    # (roughly SGD at lr=1.0, in the ascent direction).
+    label_tree = jax.tree_util.tree_map_with_path(
+        lambda path, _: "frozen" if should_freeze(path) else "trainable", params
     )
 
     return optax.chain(
         optax.clip_by_global_norm(max_grad_norm),
-        optax.masked(
-            optax.adamw(lr, weight_decay=weight_decay, eps=1e-5),
-            mask_tree,
+        optax.multi_transform(
+            {
+                "trainable": optax.adamw(lr, weight_decay=weight_decay, eps=1e-5),
+                "frozen": optax.set_to_zero(),
+            },
+            label_tree,
         ),
     )
 
@@ -204,6 +211,27 @@ def make_optimizer_frozen_paths(
 # ---------------------------------------------------------------------------
 # Group A: LoRA
 # ---------------------------------------------------------------------------
+
+
+def _num_input_axes(path_str: str, ndim: int) -> int:
+    """Number of leading kernel axes that index the input of a linear map.
+
+    Flax ``DenseGeneral`` kernels inside ``MultiHeadDotProductAttention`` are
+    3-D and split differently at each end of the block::
+
+        query/key/value  (d_model, n_heads, head_dim)  -> 1 input axis
+        out              (n_heads, head_dim, d_model)  -> 2 input axes
+
+    A plain ``Dense`` kernel is ``(d_in, d_out)`` and takes the general case.
+
+    Args:
+        path_str: Canonical ``/``-joined parameter path.
+        ndim:     Rank of the kernel array.
+
+    Returns:
+        Count of leading axes forming the input dimension.
+    """
+    return ndim - 1 if path_str.endswith("out/kernel") else 1
 
 
 def make_lora_params(
@@ -214,9 +242,16 @@ def make_lora_params(
 ) -> dict[str, dict[str, jax.Array]]:
     """Create LoRA A and B matrices for all target attention kernels.
 
-    For a kernel of shape ``[d_in, d_out]``:
+    A kernel of shape ``S`` is treated as a ``[d_in, d_out]`` matrix, where
+    ``d_in`` is the product of its input axes (see :func:`_num_input_axes`)
+    and ``d_out`` the product of the rest:
+
     - A: ``[d_in, rank]`` — Gaussian initialised
     - B: ``[rank, d_out]`` — zero initialised (so initial LoRA delta = 0)
+
+    Kernels of any rank are supported.  Restricting this to 2-D matched no
+    parameter in ``DenoisingTransformer``, whose attention kernels are all
+    3-D, so the LoRA ablation previously trained nothing at all.
 
     Args:
         params:        Parameter pytree to inspect for target shapes.
@@ -231,9 +266,11 @@ def make_lora_params(
 
     def _init(path: tuple, leaf):
         path_str = "/".join(str(k.key) if hasattr(k, "key") else str(k) for k in path)
-        if path_fragment in path_str and "kernel" in path_str and leaf.ndim == 2:
+        if path_fragment in path_str and "kernel" in path_str and leaf.ndim >= 2:
             nonlocal rng
-            d_in, d_out = leaf.shape
+            split = _num_input_axes(path_str, leaf.ndim)
+            d_in = int(np.prod(leaf.shape[:split]))
+            d_out = int(np.prod(leaf.shape[split:]))
             rng, a_rng = jax.random.split(rng)
             lora[path_str] = {
                 "A": jax.random.normal(a_rng, (d_in, rank)) * 0.02,
@@ -283,8 +320,10 @@ def apply_fn_with_lora(
         path_str = "/".join(str(k.key) if hasattr(k, "key") else str(k) for k in path)
         if path_str in lora_params:
             ab = lora_params[path_str]
-            # A: [d_in, rank], B: [rank, d_out] → delta: [d_in, d_out]
-            return param + scale * (ab["A"] @ ab["B"])
+            # A: [d_in, rank], B: [rank, d_out] → delta: [d_in, d_out],
+            # reshaped back to the kernel's own (possibly 3-D) shape.
+            delta = (ab["A"] @ ab["B"]).reshape(param.shape)
+            return param + scale * delta
         return param
 
     effective_params = jax.tree_util.tree_map_with_path(inject, base_params)
@@ -313,16 +352,21 @@ def make_optimizer_lora_only(
     max_grad_norm = config.get("MAX_GRAD_NORM", 1.0)
     weight_decay = config.get("WEIGHT_DECAY", 1e-4)
 
-    mask_tree = {
-        "base": jax.tree.map(lambda _: False, base_params),
-        "lora": jax.tree.map(lambda _: True, lora_params),
+    # multi_transform, not masked: see make_optimizer_frozen_paths.  With
+    # optax.masked the base parameters would receive their raw gradients.
+    label_tree = {
+        "base": jax.tree.map(lambda _: "frozen", base_params),
+        "lora": jax.tree.map(lambda _: "trainable", lora_params),
     }
 
     return optax.chain(
         optax.clip_by_global_norm(max_grad_norm),
-        optax.masked(
-            optax.adamw(lr, weight_decay=weight_decay, eps=1e-5),
-            mask_tree,
+        optax.multi_transform(
+            {
+                "trainable": optax.adamw(lr, weight_decay=weight_decay, eps=1e-5),
+                "frozen": optax.set_to_zero(),
+            },
+            label_tree,
         ),
     )
 
