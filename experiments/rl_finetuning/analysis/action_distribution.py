@@ -79,7 +79,7 @@ def _build_action_collector(
             rng:    PRNG key.
 
         Returns:
-            Tuple of (actions, rewards, dones, returned_episode) each
+            Tuple of (actions, rewards, dones) each
             with shape ``[n_cycles * replan_steps, num_envs]``.
         """
         rng, env_rng = jax.random.split(rng)
@@ -109,7 +109,7 @@ def _build_action_collector(
                 obs_next, es_next, reward, done, info = env.step(
                     s_rng, es_i, action, env_params,
                 )
-                return (es_next, obs_next, r_i), (action, reward, done, info["returned_episode"])
+                return (es_next, obs_next, r_i), (action, reward, done)
 
             (es_c, obs_c, r), step_data = jax.lax.scan(
                 _step, (es_c, obs_c, r), jnp.arange(config["EVAL_REPLAN"]),
@@ -118,13 +118,12 @@ def _build_action_collector(
 
         _, cycle_data = jax.lax.scan(_cycle, (es, obs, rng), None, n_cycles)
         # cycle_data: each element is [n_cycles, replan_steps, num_envs]
-        actions, rewards, dones, returned = cycle_data
+        actions, rewards, dones = cycle_data
         # Flatten cycles: [n_cycles * replan_steps, num_envs]
         actions = actions.reshape(-1, actions.shape[-1])
         rewards = rewards.reshape(-1, rewards.shape[-1])
         dones = dones.reshape(-1, dones.shape[-1])
-        returned = returned.reshape(-1, returned.shape[-1])
-        return actions, rewards, dones, returned
+        return actions, rewards, dones
 
     return collect
 
@@ -185,7 +184,6 @@ def _compute_metrics(
     actions: np.ndarray,
     rewards: np.ndarray,
     dones: np.ndarray,
-    returned_episode: np.ndarray,
     num_actions: int,
     win_threshold: float,
 ) -> ActionDistMetrics:
@@ -195,7 +193,6 @@ def _compute_metrics(
         actions:          ``[T, E]`` int32 actions taken.
         rewards:          ``[T, E]`` per-step rewards.
         dones:            ``[T, E]`` done flags.
-        returned_episode: ``[T, E]`` returned-episode flags.
         num_actions:      Size of action space.
         win_threshold:    Minimum return to count as a win.
 
@@ -227,7 +224,7 @@ def _compute_metrics(
     row_sums = trans.sum(axis=1, keepdims=True)
     trans_normed = trans / np.maximum(row_sums, 1.0)
 
-    # Episode returns: use returned_episode flag to extract completed episodes
+    # Episode returns: total reward per env over the rollout
     ep_returns_flat = rewards.sum(axis=0)  # per-env total reward
     mean_return = float(np.mean(ep_returns_flat))
     win_rate = float(np.mean(ep_returns_flat > win_threshold))
@@ -310,21 +307,19 @@ def collect_action_statistics(
     collector = _build_action_collector(env, env_params, apply_eval, config)
 
     rng, pre_rng, post_rng = jax.random.split(rng, 3)
-    pre_actions, pre_rewards, pre_dones, pre_ret = collector(pretrained_params, pre_rng)
-    post_actions, post_rewards, post_dones, post_ret = collector(finetuned_params, post_rng)
+    pre_actions, pre_rewards, pre_dones = collector(pretrained_params, pre_rng)
+    post_actions, post_rewards, post_dones = collector(finetuned_params, post_rng)
 
     # Move to host
     pre_actions = np.asarray(jax.device_get(pre_actions))
     pre_rewards = np.asarray(jax.device_get(pre_rewards))
     pre_dones = np.asarray(jax.device_get(pre_dones))
-    pre_ret = np.asarray(jax.device_get(pre_ret))
     post_actions = np.asarray(jax.device_get(post_actions))
     post_rewards = np.asarray(jax.device_get(post_rewards))
     post_dones = np.asarray(jax.device_get(post_dones))
-    post_ret = np.asarray(jax.device_get(post_ret))
 
-    pre_metrics = _compute_metrics(pre_actions, pre_rewards, pre_dones, pre_ret, num_actions, win_threshold)
-    post_metrics = _compute_metrics(post_actions, post_rewards, post_dones, post_ret, num_actions, win_threshold)
+    pre_metrics = _compute_metrics(pre_actions, pre_rewards, pre_dones, num_actions, win_threshold)
+    post_metrics = _compute_metrics(post_actions, post_rewards, post_dones, num_actions, win_threshold)
     js, kl_pq, kl_qp, tv = _compute_divergences(pre_metrics, post_metrics)
 
     return ActionDistComparison(
