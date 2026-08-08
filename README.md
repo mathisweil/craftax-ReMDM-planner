@@ -230,23 +230,13 @@ The trained weights are too large for git — `checkpoints/` is gitignored — a
 Download all six (~470 MB):
 
 ```bash
-uv run python -c "
-from huggingface_hub import snapshot_download
-snapshot_download(repo_id='MathisW78/remdm-craftax-checkpoints', local_dir='.')
-"
+uv run hf download MathisW78/remdm-craftax-checkpoints --include "checkpoints/**" --local-dir .
 ```
 
 Or fetch a single checkpoint:
 
 ```bash
-uv run python -c "
-from huggingface_hub import snapshot_download
-snapshot_download(
-    repo_id='MathisW78/remdm-craftax-checkpoints',
-    local_dir='.',
-    allow_patterns='checkpoints/online/Craftax-Classic-*/**',
-)
-"
+uv run hf download MathisW78/remdm-craftax-checkpoints --include "checkpoints/online/Craftax-*/**" --local-dir .
 ```
 
 **Pass the checkpoint directory, not the step subdirectory.** `orbax.checkpoint.CheckpointManager` resolves the latest step itself.
