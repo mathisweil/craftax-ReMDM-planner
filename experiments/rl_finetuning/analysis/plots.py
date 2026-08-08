@@ -275,7 +275,7 @@ def plot_final_score_comparison(
 
     with plt.rc_context(_STYLE):
         fig, ax = plt.subplots(figsize=(max(8.0, len(names) * 0.7), 5))
-        bars = ax.bar(range(len(names)), scores, color=colors, alpha=0.8, edgecolor="white")
+        ax.bar(range(len(names)), scores, color=colors, alpha=0.8, edgecolor="white")
         ax.axhline(pretrained_score, linestyle="--", color="black", alpha=0.6, label="pretrained")
         ax.set_xticks(range(len(names)))
         ax.set_xticklabels(names, rotation=45, ha="right")
