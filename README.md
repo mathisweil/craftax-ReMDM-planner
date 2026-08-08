@@ -1,14 +1,12 @@
-# ReMDM Planner — Discrete Diffusion Planning on Craftax
+# ReMDM Planner for Craftax
 
-A JAX implementation of **ReMDM** (Remasking Discrete Diffusion Model) for action-sequence planning in the [Craftax](https://github.com/MichaelTMatthews/Craftax) environment. A bidirectional transformer learns to generate action plans by iteratively denoising masked token sequences, conditioned on the current environment observation.
+JAX implementation of **ReMDM** (Remasking Discrete Diffusion Model) for action-sequence planning in [Craftax](https://github.com/MichaelTMatthews/Craftax), a JAX-accelerated, procedurally generated open-world survival game. A bidirectional transformer generates `plan_horizon`-length action plans by iteratively denoising masked token sequences, conditioned on the current symbolic observation. Trained under a pre-trained PPO expert, either offline (behavioural cloning on live rollouts) or online (DAgger).
 
----
+The sibling repository [`minihack-ReMDM-planner`](../minihack-ReMDM-planner) implements the same method in PyTorch on MiniHack. Both repos share the same CLI, config layout and README structure; commands transfer between them by swapping the repo name and benchmark-specific values.
 
-## Description
+## Method
 
-The planner starts from a fully-masked action sequence and iteratively unmasks tokens over `T` denoising steps, producing a `plan_horizon`-length plan. ReMDM extends MDLM with remasking strategies that let committed tokens be re-predicted, improving plan coherence.
-
-**Offline BC** and **Online DAgger** are independent pipelines, both supervised by a pre-trained PPO expert. Neither depends on the other; the paper compares them head-to-head.
+The planner starts from a fully-masked action sequence and iteratively unmasks tokens over `T` denoising steps; ReMDM extends MDLM with remasking strategies that let committed tokens be re-predicted, improving plan coherence. Two independent training pipelines are compared head-to-head in the accompanying paper (under submission; citation to follow), both supervised by a pre-trained PPO expert:
 
 ```
 [Shared]   Train PPO agent              Craftax_Baselines/ppo_rnn.py | ppo_rnd.py
@@ -26,204 +24,217 @@ The planner starts from a fully-masked action sequence and iteratively unmasks t
        │                │
        └───────┬────────┘
                v
-[Evaluate] --mode inference --checkpoint_path ...
+[Evaluate] --mode inference --checkpoint ...
 ```
 
-| Mode | Purpose |
-|---|---|
-| `--mode collect` | Save PPO rollouts to disk |
-| `--mode smoke` | Quick end-to-end check |
-| `--offline_checkpoint_path` | Warm-start DAgger from an offline BC checkpoint (not used in the paper) |
+## Setup
 
----
-
-## Installation
-
-### Prerequisites (system-level)
-
-`uv` manages Python packages only. The following must be installed at the OS level before
-running on a GPU node — they are **not** in `pyproject.toml`:
-
-- **CUDA 13** driver and toolkit (`libcuda.so`, `libcudnn`)
-
-On HPC clusters these are typically loaded via `module load cuda/13.x`.
-
-### 1. Create the virtual environment
+Prerequisites: Python 3.12+, [uv](https://docs.astral.sh/uv/). For GPU nodes, a **CUDA 13** driver and toolkit (`libcuda.so`, `libcudnn`) must be installed at OS level (on HPC clusters typically `module load cuda/13.x`); they are not in `pyproject.toml`.
 
 ```bash
-# CPU-only (local development / macOS)
+git clone --recurse-submodules https://github.com/MathisW78/craftax-ReMDM-planner.git
+cd craftax-ReMDM-planner
+# Or, if already cloned without submodules:
+git submodule update --init --recursive
+
+# Base environment (CPU / macOS). Installs the dev group (pytest) too.
 uv sync
 
-# NVIDIA CUDA 13 (GPU node — Linux only)
+# GPU (NVIDIA CUDA 13, Linux only): jax[cuda13]
 uv sync --extra cuda
-
-# Activate
-source .venv/bin/activate
 ```
 
-`uv sync` reads `pyproject.toml`, resolves a fully-reproducible lockfile (`uv.lock`),
-and installs into `.venv/`. Commit `uv.lock` to pin the exact dependency graph.
+Extras: `cuda` is the only extra; it adds the CUDA 13 JAX build. The same extra name exists in the minihack repo (where it installs CUDA torch).
 
-### 2. Initialise the submodule
+## Repo layout
 
-```bash
-git submodule update --init --recursive
+```
+craftax-ReMDM-planner/
+├── Craftax_Baselines/       Git submodule — PPO expert training and env wrappers
+├── configs/                 Experiment configs (defaults.yaml + presets, see Configuration)
+├── src/                     Model, diffusion, planner pipelines
+├── experiments/
+│   └── rl_finetuning/       RL fine-tuning ablation suite (run_ablations.py)
+├── scripts/                 Param counter, PPO evaluator, HF upload utilities
+├── tests/                   Smoke suite — uv run pytest
+├── checkpoints/             Gitignored — offline/, online/, ppo_agents/ (see Checkpoints)
+├── demo_craftax.ipynb       Demo notebook
+├── main.py                  CLI entry point
+└── pyproject.toml           uv project — deps, cuda extra, dev group
 ```
 
----
+## Quickstart
 
-## Dependencies
-
-| Package | Version | Role |
-|---------|---------|------|
-| `jax` | >=0.9.2 | JIT compilation and functional arrays |
-| `flax` | >=0.12.6 | Neural network definitions |
-| `optax` | >=0.2.8 | Adam optimiser and gradient clipping |
-| `craftax` | >=1.5.0 | Procedurally-generated Minecraft-like environment |
-| `chex` | >=0.1.91 | JAX testing and assertion utilities |
-| `distrax` | >=0.1.7 | Probability distributions |
-| `orbax` | >=0.1.9 | Model checkpointing |
-| `wandb` | >=0.25.1 | Experiment logging |
-| `numpy` | >=2.4.4 | Array operations |
-| `matplotlib` | >=3.10.8 | Plotting |
-| `polars` | >=1.39.3 | DataFrame analysis |
-| `orjson` | >=3.11.8 | Fast JSON serialisation |
-| `pyyaml` | >=6.0.3 | Config file parsing |
-| `huggingface-hub` | >=1.9.1 | Checkpoint download and upload |
-
-Full specification in `pyproject.toml`; exact transitive pins in `uv.lock`. The `dev` group adds `pytest` and is installed by `uv sync`.
-
----
-
-## Usage
-
-All modes share the same entry point. Defaults are loaded from `configs/defaults.yaml`; any value can be overridden on the command line.
-
-```bash
-python main.py --mode <MODE> [--config PATH] [OVERRIDES...]
-```
-
-Pass `--no-jit` to disable JIT compilation (useful for debugging):
-
-```bash
-python main.py --mode offline --no-jit --num_envs 4
-```
-
-### Stage 1 — Train a PPO agent
-
-PPO training is handled by the `Craftax_Baselines` submodule and produces the checkpoint consumed by all downstream stages.
-
-```bash
-cd Craftax_Baselines
-
-# PPO with GRU hidden state (recommended)
-python ppo_rnn.py \
-    --env_name Craftax-Classic-Symbolic-v1 \
-    --total_timesteps 500000000 \
-    --save_policy --use_wandb
-
-# PPO with Random Network Distillation
-python ppo_rnd.py \
-    --env_name Craftax-Classic-Symbolic-v1 \
-    --total_timesteps 500000000 \
-    --save_policy --use_wandb
-
-cd ..
-```
-
-### Stage 2a — Collect trajectories to disk
-
-Roll out the PPO checkpoint and save `(obs, actions, rewards, dones)` as a `.npz` file for reuse across multiple diffusion training runs.
-
-```bash
-python main.py --mode collect \
-    --ppo_checkpoint_path /path/to/ppo_checkpoint \
-    --offline_data_path data/trajectories.npz \
-    --collect_num_steps 1000000 \
-    --collect_num_envs 128
-```
-
-Arrays are shaped `[num_envs, num_iters, ...]`, preserving per-environment contiguity so episode boundaries survive window sampling.
-
-### Stage 2b — Train offline (BC)
-
-Rolls out the PPO agent live at each update. Windows crossing an episode boundary are masked out; the rest are weighted by cumulative reward, clipped to `[0.1, return_weight_cap]`.
-
-```bash
-python main.py --mode offline \
-    --ppo_checkpoint_path /path/to/ppo_checkpoint \
-    --offline_total_timesteps 100000000 \
-    --save_policy
-```
-
-### Stage 3 — Train online (DAgger)
-
-Trained **from scratch**. Per iteration: a mixed policy (expert vs learner, ratio `beta`, exponentially decayed) rolls out; the expert labels every visited state; `(obs, expert_plan)` pairs enter a circular replay buffer; the model trains on the whole buffer with the MDLM ELBO — pure BC, no reward weighting.
-
-```bash
-# From scratch (requires PPO expert checkpoint)
-python main.py --mode online \
-    --ppo_checkpoint_path /path/to/ppo_checkpoint \
-    --online_num_updates 1000 \
-    --save_policy
-
-# Optional: warm-start from a pre-trained offline checkpoint
-# (not used in the paper — both methods are compared independently)
-python main.py --mode online \
-    --ppo_checkpoint_path /path/to/ppo_checkpoint \
-    --offline_checkpoint_path /path/to/offline_checkpoint \
-    --online_num_updates 1000 \
-    --save_policy
-```
-
-With `save_policy=true` this uploads two W&B artifacts, either consumable via `--checkpoint_path wandb:…`: `{env_name}-policy` (final) and `{env_name}-policy-best` (highest validation return).
-
-### Stage 4 — Evaluate
-
-```bash
-python main.py --mode inference \
-    --checkpoint_path /path/to/checkpoint \
-    --eval_steps 10000 \
-    --eval_num_envs 32
-```
-
-Prints mean episode return, completed episodes, steps per second, and per-achievement unlock counts. Uses historical inpainting: the first `hist_len` plan positions are locked to observed history.
-
-### Smoke test
+Full DAgger pipeline (rollout, expert labelling, gradient updates, validation) under `configs/smoke.yaml`, ~25 s on CPU. The expert is randomly initialised unless `--ppo-checkpoint` is given, so this runs on a clean clone with no downloads; returns read `0.000` because no episode terminates in so short a run — watch `mean step reward`, `loss`, `all metrics finite`.
 
 ```bash
 python main.py --mode smoke
 ```
 
-Full DAgger pipeline (rollout, expert labelling, gradient updates, validation) under `configs/smoke.yaml`, ~25 s on CPU. `src/planners/smoke.py` delegates to `run_online`.
+## Training
 
-- **Expert is random** unless `--ppo_checkpoint_path` is given, so the mode runs on a clean clone with no downloads. It proves the pipeline executes, nothing about learning.
-- **Returns and achievements read `0.000`** — they are episode-weighted and no episode terminates in so short a run. Watch `mean step reward`, `loss`, `all metrics finite`.
-- `smoke.yaml` holds overrides only, layered on `defaults.yaml`. Sizing obeys invariants `make_train_dagger` asserts on *derived* values, so shrinking the frame budget alone does not shorten the run — see the comments in the file.
+Two independent training methods; neither depends on the other. An offline BC checkpoint can warm-start DAgger via `--checkpoint`, but this was not used for the paper results. All training modes need a PPO expert checkpoint.
 
-### Loading checkpoints from W&B artifacts
-
-Any checkpoint path argument (`--checkpoint_path`, `--offline_checkpoint_path`, `--ppo_checkpoint_path`) accepts a W&B artifact reference prefixed with `wandb:`. The artifact is downloaded automatically before training or evaluation begins.
+### Stage 1 — Train the PPO expert (submodule)
 
 ```bash
-# Fully qualified: entity/project/artifact_name:version_or_alias
-python main.py --mode inference \
-    --checkpoint_path wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy:latest
-
-# Online fine-tuning from a W&B offline checkpoint
-python main.py --mode online \
-    --offline_checkpoint_path wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy:v3
-
-# PPO checkpoint from W&B
-python main.py --mode offline \
-    --ppo_checkpoint_path wandb:my-team/ppo-craftax/ppo-rnn-policy:best
+cd Craftax_Baselines
+python ppo_rnn.py --env_name Craftax-Classic-Symbolic-v1 \
+    --total_timesteps 500000000 --save_policy --use_wandb
+cd ..
 ```
 
-Control the download location with `--wandb_download_dir` (defaults to `./artifacts/`).
+(`ppo_rnd.py` for Random Network Distillation. The submodule keeps its own upstream CLI.) Released experts are on the HF Hub, see [Checkpoints](#checkpoints).
 
-### Loading pre-trained checkpoints from the Hugging Face Hub
+### Offline BC
 
-`checkpoints/` is gitignored; the weights live on the Hub at [`MathisW78/remdm-craftax-checkpoints`](https://huggingface.co/MathisW78/remdm-craftax-checkpoints), mirroring the layout below. Download into the repository root and every file lands where the CLI expects it.
+Rolls out the PPO agent live at each update; windows crossing an episode boundary are masked out, the rest weighted by cumulative reward.
+
+```bash
+python main.py --mode offline --ppo-checkpoint /path/to/ppo_checkpoint
+python main.py --mode offline --ppo-checkpoint /path/to/ppo_checkpoint \
+    --override offline_total_timesteps=100000000
+```
+
+### Online DAgger
+
+Trained from scratch. Per iteration: a mixed policy (expert vs learner, ratio `beta`, exponentially decayed) rolls out; the expert labels every visited state; the model trains on the aggregated buffer with the MDLM ELBO.
+
+```bash
+python main.py --mode online --ppo-checkpoint /path/to/ppo_checkpoint
+python main.py --mode online --ppo-checkpoint /path/to/ppo_checkpoint \
+    --override online_num_updates=1000
+
+# Optional: warm-start from a pre-trained offline checkpoint
+python main.py --mode online --ppo-checkpoint /path/to/ppo_checkpoint \
+    --checkpoint /path/to/offline_checkpoint
+```
+
+With `save_policy: true` (default) and W&B on, training uploads two artifacts, either consumable via `--checkpoint wandb:…`: `{env_name}-policy` (final) and `{env_name}-policy-best` (highest validation return).
+
+### Collect trajectories to disk
+
+Rolls out the PPO checkpoint and saves `(obs, actions, rewards, dones)` as `.npz`, for inspection; `--mode offline` does not consume it (it rolls out live).
+
+```bash
+python main.py --mode collect --ppo-checkpoint /path/to/ppo_checkpoint \
+    --data data/trajectories.npz \
+    --override collect_num_steps=1000000 --override collect_num_envs=128
+```
+
+### Resuming a training run
+
+```bash
+# Offline. --resume also accepts a wandb: artifact reference.
+python main.py --mode offline --ppo-checkpoint /path/to/ppo_checkpoint \
+    --resume /path/to/completed_offline_checkpoint \
+    --override offline_total_timesteps=200000000
+
+# Online. --resume-step / --resume-wandb-run-id override the metadata sidecar.
+python main.py --mode online --ppo-checkpoint /path/to/ppo_checkpoint \
+    --resume /path/to/completed_online_checkpoint \
+    --override online_num_updates=2000
+```
+
+The DAgger replay buffer is not persisted; it refills within a few iterations. The cosine LR schedule spans the full `num_updates`, with the step counter offset so the LR resumes exactly where it stopped. With a metadata sidecar, `resume_step` and `resume_wandb_run_id` are auto-detected; without one, pass `--resume-step`.
+
+## Evaluation from a checkpoint
+
+```bash
+python main.py --mode inference --checkpoint /path/to/checkpoint --output results.json
+
+# Released checkpoints need their matching config (see Checkpoints)
+python main.py --mode inference \
+    --config configs/final_classic_ucl.yaml \
+    --checkpoint checkpoints/online/Craftax-Classic-Symbolic-v1-OnlineDiffusion-DAgger-100M
+```
+
+Prints mean episode return, completed episodes, steps per second, and per-achievement unlock counts; `--output` also writes them as JSON. Uses historical inpainting: the first `hist_len` plan positions are locked to observed history. Evaluation length is set by the `eval_steps` / `eval_num_envs` config keys.
+
+Any checkpoint flag (`--checkpoint`, `--ppo-checkpoint`, `--resume`) accepts a W&B artifact reference prefixed `wandb:`; the artifact downloads automatically (location: `wandb_download_dir`, default `./artifacts/`).
+
+```bash
+python main.py --mode inference \
+    --checkpoint wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy:latest
+```
+
+## Baselines and ablations
+
+### RL baselines
+
+PPO baselines (the expert family: `ppo`, `ppo_rnn`, `ppo_rnd`) train in the `Craftax_Baselines` submodule, see [Training](#stage-1--train-the-ppo-expert-submodule). Evaluate an expert with `scripts/eval_ppo_expert.py`:
+
+```bash
+uv run python scripts/eval_ppo_expert.py \
+    --path checkpoints/ppo_agents/Craftax-Classic-Symbolic-v1-PPO_RNN-1000M \
+    --env-name Craftax-Classic-Symbolic-v1
+```
+
+### Method ablations (named configs)
+
+Each paper experiment is a named config; pass it via `--config`:
+
+```bash
+python main.py --mode online --ppo-checkpoint <ppo> --config configs/classic_exp_a_beta_fix.yaml
+python main.py --mode online --ppo-checkpoint <ppo> --config configs/classic_exp_b_beta_big_model.yaml
+python main.py --mode online --ppo-checkpoint <ppo> --config configs/classic_exp_c_full_recipe.yaml
+python main.py --mode online --ppo-checkpoint <ppo> --config configs/classic_exp_d_850K_model.yaml
+```
+
+`{classic,craftax}_exp_{a,b,c}` isolate the DAgger recipe changes (beta fix, larger model, training dynamics); `*_exp_d_*` are the model-size scaling sweeps.
+
+### RL fine-tuning ablation suite
+
+25 registered ablations (same names as in the minihack repo). See `experiments/README.md`.
+
+```bash
+python experiments/rl_finetuning/run_ablations.py --list
+python experiments/rl_finetuning/run_ablations.py \
+    --checkpoint $PRETRAINED_CKPT --ppo-checkpoint $PPO_CKPT --all
+python experiments/rl_finetuning/run_ablations.py \
+    --checkpoint wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy-best:latest \
+    --ppo-checkpoint wandb:my-team/ppo-craftax/ppo-rnn-policy:best \
+    --ablations baseline_rl kl_penalty --fast
+```
+
+## Configuration
+
+One YAML config holds the experiment; the CLI holds the run.
+
+- **Config files** (`configs/*.yaml`): hyperparameters, model and method settings, ablation definitions. Any file passed via `--config` is deep-merged onto `configs/defaults.yaml`, so presets contain only their deltas.
+- **CLI flags**: per-invocation values — `--seed`, `--checkpoint`, `--ppo-checkpoint`, `--data`, `--output`, `--resume*`, `--jit/--no-jit` (disable JIT for debugging).
+- **`--override KEY=VALUE`** (repeatable): ad hoc config overrides. Keys are validated against `defaults.yaml` and values are cast to the key's type; a typo is an error, not a silent no-op.
+
+Precedence, lowest to highest: `configs/defaults.yaml` < `--config` file < `--override` and run flags.
+
+```bash
+python main.py --mode offline --ppo-checkpoint <ppo> \
+    --override lr=1e-4 --override plan_horizon=64 --override num_minibatches=16
+python main.py --mode offline --ppo-checkpoint <ppo> --no-jit --override num_envs=4
+```
+
+| Preset | Purpose |
+|---|---|
+| `configs/defaults.yaml` | Base defaults for all modes |
+| `configs/smoke.yaml` | `--mode smoke` overrides (see the sizing invariants commented in the file) |
+| `configs/{classic,craftax}_exp_a_beta_fix.yaml` | DAgger — beta decay fix only (isolates data quality) |
+| `configs/{classic,craftax}_exp_b_beta_big_model.yaml` | DAgger — beta fix + larger transformer |
+| `configs/{classic,craftax}_exp_c_full_recipe.yaml` | DAgger — beta + big model + training dynamics |
+| `configs/classic_exp_d_{100K,250K,850K,3M}_model.yaml` | Craftax Classic model-size scaling sweep |
+| `configs/craftax_exp_d_{500K,1M,3M,7M}_model.yaml` | Full Craftax model-size scaling sweep |
+| `configs/final_classic_ucl.yaml` | Final Classic DAgger — UCL 3090 Ti, seed 42 (feeds the ablation suite) |
+| `configs/final_craftax_ucl.yaml` | Final Full Craftax DAgger — UCL 4090, seed 42 (feeds the ablation suite) |
+| `configs/final_{classic,craftax}_qmul.yaml` | Env-frame-matched second seeds — QMUL H200, seed 43 |
+
+`final_*_qmul.yaml` differs from its UCL counterpart only in `num_envs` and `seed`; fairness-critical values are env-frame denominated (**PRIMARY** keys `*_total_timesteps`, `lr_warmup_frames`, `val_interval_frames`, `dagger_beta_final`, `dagger_buffer_cycles`) and rescaled by `resolve_scaled_hyperparams()` at load, so one config runs on any hardware tier. Key hyperparameters are documented inline in `configs/defaults.yaml`; the [appendix](#key-hyperparameters) tabulates them. Ablation-suite hyperparameters live in `experiments/rl_finetuning/configs/`, loaded by `run_ablations.py`, not `main.py`.
+
+## Checkpoints
+
+With W&B on and `save_policy: true` (both defaults), training saves Orbax checkpoints to `wandb.run.dir/policies` (final) and `wandb.run.dir/policies_best` (highest validation return) and uploads them as W&B artifacts named `{env_name}-policy` and `{env_name}-policy-best`. Diffusion checkpoints carry a `resume_metadata.json` sidecar — the authoritative record of the producing run's config, and what `--resume` reads to auto-detect `resume_step` and `resume_wandb_run_id`. PPO checkpoints carry `config.yaml` and `wandb-summary.json`.
+
+**Pass the checkpoint directory, not the step subdirectory** — `CheckpointManager` resolves the latest step itself.
+
+`checkpoints/` is gitignored; released weights live on the Hub at [`MathisW78/remdm-craftax-checkpoints`](https://huggingface.co/MathisW78/remdm-craftax-checkpoints), mirroring the layout below.
 
 | Checkpoint directory | Environment | Role | Trained for |
 |---|---|---|---|
@@ -239,23 +250,18 @@ Control the download location with `--wandb_download_dir` (defaults to `./artifa
 uv run hf download MathisW78/remdm-craftax-checkpoints --include "checkpoints/**" --local-dir .
 ```
 
-**Pass the checkpoint directory, not the step subdirectory** — `CheckpointManager` resolves the latest step itself.
-
 **Match the config to the checkpoint.** The model is built from the config, not the checkpoint, so a released checkpoint under `defaults.yaml` (`d_model` 256, `n_layers` 4) fails with a shape mismatch. All released diffusion checkpoints are `d_model` 384, `n_heads` 8, `n_layers` 6, `d_ff` 768 — use the matching `final_*` config, which also sets the right `env_name`:
 
 ```bash
 python main.py --mode inference \
     --config configs/final_classic_ucl.yaml \
-    --checkpoint_path checkpoints/online/Craftax-Classic-Symbolic-v1-OnlineDiffusion-DAgger-100M
+    --checkpoint checkpoints/online/Craftax-Classic-Symbolic-v1-OnlineDiffusion-DAgger-100M
 
 # Train a new planner against the released Full Craftax PPO expert
 python main.py --mode online \
     --config configs/final_craftax_ucl.yaml \
-    --ppo_checkpoint_path checkpoints/ppo_agents/Craftax-Symbolic-v1-PPO_RNN-1000M \
-    --save_policy
+    --ppo-checkpoint checkpoints/ppo_agents/Craftax-Symbolic-v1-PPO_RNN-1000M
 ```
-
-Diffusion checkpoints carry a `resume_metadata.json` sidecar — the authoritative record of the producing run's config, and what `--resume_checkpoint_path` reads to auto-detect `resume_step` and `resume_wandb_run_id`. PPO checkpoints carry `config.yaml` and `wandb-summary.json`.
 
 Re-upload after retraining with `scripts/hf_upload.py` (rediscovers checkpoints, strips wandb environment metadata, regenerates the model card):
 
@@ -263,89 +269,39 @@ Re-upload after retraining with `scripts/hf_upload.py` (rediscovers checkpoints,
 HF_TOKEN=hf_xxx uv run python scripts/hf_upload.py --repo-id MathisW78/remdm-craftax-checkpoints
 ```
 
-### Resuming a Training Run
+## Results, citation, licence
 
-Continue a completed run — for extending the training budget or restarting a preempted job.
-
-```bash
-# Offline. --resume_checkpoint_path also accepts a wandb: artifact reference.
-python main.py --mode offline \
-    --ppo_checkpoint_path /path/to/ppo_checkpoint \
-    --resume_checkpoint_path /path/to/completed_offline_checkpoint \
-    --offline_total_timesteps 200000000 \
-    --save_policy
-
-# Online. Add --resume_step / --resume_wandb_run_id to override the sidecar.
-python main.py --mode online \
-    --ppo_checkpoint_path /path/to/ppo_checkpoint \
-    --resume_checkpoint_path /path/to/completed_online_checkpoint \
-    --online_num_updates 2000 \
-    --save_policy
-```
-
-**Notes:**
-- The DAgger replay buffer is **not** persisted; it refills within a few iterations.
-- JIT is preserved — resume only affects initialisation outside `jax.jit`.
-- The cosine LR schedule spans the full `num_updates`; the step counter is offset so the LR resumes exactly where it stopped.
-- With a metadata sidecar, `resume_step` and `resume_wandb_run_id` are auto-detected; CLI flags override. Without one, pass `--resume_step`.
-
+Results tables and the full method description are in the accompanying paper (under submission); `demo_craftax.ipynb` reproduces the headline evaluation. Citation to be added on publication. Licence: MIT, see `LICENSE`.
 
 ---
 
-## Testing
+# Appendix: benchmark-specific detail
 
-```bash
-uv run pytest
-```
+## Environments
 
-141 smoke tests, ~55 s, CPU-only. `pytest` ships in the `dev` group, so `uv sync` installs it. Tiny synthetic data and a shrunken model throughout — no real checkpoints, datasets or network calls, and nothing written outside `tmp_path`. The suite asserts that things **run**, not that results are correct.
+| Environment | Achievements | Actions | Notes |
+|---|---|---|---|
+| `Craftax-Classic-Symbolic-v1` | 22 | 17 | Crafter ported to JAX |
+| `Craftax-Symbolic-v1` | 65 | 43 | + NetHack mechanics, 9 floors |
 
-| File | Covers |
-|------|--------|
-| `tests/test_smoke_src.py` | `src/`: module imports, model built from the real config, forward pass, one gradient step, checkpoint round-trip, samplers, config resolvers, and every CLI entry point (including `--mode smoke` end to end) |
-| `tests/test_smoke_experiments.py` | `experiments/rl_finetuning/`: all 25 ablations' losses and optimizers, the LoRA path, diagnostics, and the analysis/report stage |
+Set via the `env_name` config key.
 
----
+## Remasking strategies
 
-## Configuration
+Controlled by the `remask_strategy` key. All strategies operate on top of the three-phase loop controlled by `use_loop`, `t_on`, and `t_off`.
 
-All hyperparameters are in `configs/defaults.yaml`. Override any value on the command line:
+| Strategy | Formula | Description |
+|---|---|---|
+| `rescale` | `sigma = eta * sigma_max` | Scales maximum remasking probability proportionally |
+| `cap` | `sigma = min(eta, sigma_max)` | Caps remasking at a fixed rate |
+| `conf` | `sigma = eta * sigma_max * (1 - confidence)` | High-confidence tokens are remasked less |
 
-```bash
-python main.py --mode offline --lr 1e-4 --plan_horizon 64 --num_minibatches 16
-```
-
-Point to a custom config file:
-
-```bash
-python main.py --mode online --config configs/my_experiment.yaml
-```
-
-Preset configs for larger runs are provided in `configs/`:
-
-| File | Purpose |
-|------|---------|
-| `defaults.yaml` | Base defaults for all modes |
-| `smoke.yaml` | `--mode smoke` overrides, layered on `defaults.yaml` |
-| `{classic,craftax}_exp_a_beta_fix.yaml` | DAgger — beta decay fix only (isolates data quality) |
-| `{classic,craftax}_exp_b_beta_big_model.yaml` | DAgger — beta fix + larger transformer (3.5× on Classic) |
-| `{classic,craftax}_exp_c_full_recipe.yaml` | DAgger — beta + big model + training dynamics |
-| `classic_exp_d_{100K,250K,850K,3M}_model.yaml` | Craftax Classic model-size scaling sweep |
-| `craftax_exp_d_{500K,1M,3M,7M}_model.yaml` | Full Craftax model-size scaling sweep |
-| `final_classic_ucl.yaml` | Final Classic DAgger — UCL 3090 Ti, seed 42 (feeds the ablation suite) |
-| `final_craftax_ucl.yaml` | Final Full Craftax DAgger — UCL 4090, seed 42 (feeds the ablation suite) |
-| `final_{classic,craftax}_qmul.yaml` | Env-frame-matched second seeds — QMUL H200, seed 43 |
-
-`final_*_qmul.yaml` differs from its UCL counterpart only in `num_envs` and `seed`; fairness-critical values are env-frame denominated and rescaled by `resolve_scaled_hyperparams()` at load, so no manual derivation is needed across hardware tiers.
-
-Ablation hyperparameters live in `experiments/rl_finetuning/configs/`, loaded by `run_ablations.py`, not `main.py`. See `experiments/README.md`.
-
-### Key hyperparameters
+## Key hyperparameters
 
 **Environment**
 
 | Parameter | Default | Description |
-|-----------|---------|-------------|
+|---|---|---|
 | `env_name` | `Craftax-Classic-Symbolic-v1` | Craftax environment ID. Use `Craftax-Symbolic-v1` for Full Craftax. |
 | `use_optimistic_resets` | `false` | Use `OptimisticResetVecEnvWrapper` instead of `AutoResetEnvWrapper` |
 | `optimistic_reset_ratio` | 16 | Fraction of envs reset per step when optimistic resets are enabled |
@@ -353,9 +309,10 @@ Ablation hyperparameters live in `experiments/rl_finetuning/configs/`, loaded by
 **Diffusion model**
 
 | Parameter | Default | Description |
-|-----------|---------|-------------|
+|---|---|---|
 | `plan_horizon` | 32 | Action plan length H |
-| `diffusion_steps` | 15 | Denoising steps T at inference |
+| `diffusion_steps` | 15 | Denoising steps T during training |
+| `diffusion_steps_eval` | 10 | Denoising steps T at inference |
 | `diffusion_schedule` | `cosine` | Noise schedule: `cosine` or `linear` |
 | `remask_strategy` | `rescale` | Remasking strategy: `rescale`, `cap`, or `conf` |
 | `train_sigma` | 0.0 | Per-token remasking correction during training (0 = standard MDLM) |
@@ -369,7 +326,7 @@ Ablation hyperparameters live in `experiments/rl_finetuning/configs/`, loaded by
 **Transformer architecture**
 
 | Parameter | Default | Description |
-|-----------|---------|-------------|
+|---|---|---|
 | `d_model` | 256 | Hidden dimension |
 | `n_heads` | 4 | Attention heads |
 | `n_layers` | 4 | Transformer blocks |
@@ -381,8 +338,8 @@ Ablation hyperparameters live in `experiments/rl_finetuning/configs/`, loaded by
 **Offline training**
 
 | Parameter | Default | Description |
-|-----------|---------|-------------|
-| `offline_total_timesteps` | 1e8 | **PRIMARY** env-frame budget for live-PPO data collection. Derives `num_updates` as `offline_total_timesteps // (num_envs * num_steps)`, making the run hardware-portable across `num_envs` changes. |
+|---|---|---|
+| `offline_total_timesteps` | 1e8 | **PRIMARY** env-frame budget. Derives `num_updates` as `offline_total_timesteps // (num_envs * num_steps)`. |
 | `offline_num_updates` | `null` | **LEGACY** outer update count; used only when `offline_total_timesteps` is unset. |
 | `num_envs` | 1024 | Parallel environments |
 | `num_steps` | 64 | Environment steps collected per update |
@@ -390,181 +347,97 @@ Ablation hyperparameters live in `experiments/rl_finetuning/configs/`, loaded by
 | `update_epochs` | 4 | SGD epochs per update step |
 | `num_repeats` | 1 | Independent training seeds (vmapped) |
 | `lr` | 3e-4 | Adam learning rate (cosine-decayed to 10% over all gradient steps) |
-| `lr_warmup_frames` | `null` | **PRIMARY** env-frame warm-up budget. Derives `lr_warmup_steps` as `lr_warmup_frames // (num_envs * num_steps)`. |
-| `lr_warmup_steps` | 0 | **LEGACY** linear warm-up steps before cosine decay (used when `lr_warmup_frames` is unset; 0 = disabled). |
+| `lr_warmup_frames` | `null` | **PRIMARY** env-frame warm-up budget. Derives `lr_warmup_steps`. |
+| `lr_warmup_steps` | 0 | **LEGACY** linear warm-up steps (0 = disabled). |
 | `max_grad_norm` | 1.0 | Global gradient clipping norm |
-| `return_weight_cap` | 5.0 | Clip ceiling for per-window return weights (lower clip is fixed at 0.1) |
+| `return_weight_cap` | 5.0 | Clip ceiling for per-window return weights (lower clip fixed at 0.1) |
 | `collect_temperature` | 1.0 | Softmax temperature on PPO logits during live data collection |
-| `val_interval_frames` | `null` | **PRIMARY** env-frames between validation rollouts. Overrides `val_interval` via `val_interval = val_interval_frames // (num_envs * num_steps)`. |
-| `val_interval` | 50 | **LEGACY** validation frequency in update steps (used when `val_interval_frames` is unset). |
-| `val_diffusion_steps` | 50 | Denoising steps used during validation rollouts |
-| `val_replan_every` | 4 | Environment steps executed per diffusion plan during validation |
-| `val_steps` | 128 | Total environment steps per validation rollout |
+| `val_interval_frames` | `null` | **PRIMARY** env-frames between validation rollouts. |
+| `val_interval` | 50 | **LEGACY** validation frequency in update steps. |
+| `val_diffusion_steps` | 50 | Denoising steps during validation rollouts |
+| `val_replan_every` | 4 | Env steps executed per diffusion plan during validation |
+| `val_steps` | 128 | Total env steps per validation rollout |
 
 **Online DAgger training**
 
 | Parameter | Default | Description |
-|-----------|---------|-------------|
-| `online_total_timesteps` | `null` | **PRIMARY** env-frame budget for online DAgger (hardware-portable). Derives `num_updates` as `online_total_timesteps // (num_envs * num_steps)`. |
-| `online_num_updates` | 1000 | **LEGACY** outer DAgger iterations (used when `online_total_timesteps` is unset). |
-| `dagger_beta_init` | 1.0 | Initial expert mixing probability `beta_1` (1.0 = pure expert on the first iteration). |
-| `dagger_beta_final` | `null` | **PRIMARY** target mixing ratio at the end of training. Overrides `dagger_beta_decay` via `decay = (beta_final / beta_init) ** (1 / num_updates)`. |
-| `dagger_beta_decay` | 0.95 | **LEGACY** per-update decay: `beta_i = beta_init * decay^i` (used when `dagger_beta_final` is unset). |
-| `dagger_buffer_cycles` | `null` | **PRIMARY** buffer capacity denominated in update cycles of history (1 cycle = `num_envs * num_steps` frames). Overrides `dagger_buffer_max` via `buffer_max = cycles * (num_envs * num_steps)`. |
-| `dagger_buffer_max` | 100000 | **LEGACY** max samples in the DAgger replay buffer (circular eviction when full). |
-| `dagger_train_passes` | `null` | Passes per update over the aggregated buffer. `null` = 1 pass (matches offline BC per-update gradient work exactly for fair compute comparison). Raise to >1 to trade BC fairness for wider per-update buffer coverage. |
-| `dagger_expert_deterministic` | `true` | If `true`, the PPO expert takes the argmax action (fixed `s → a*` map); if `false`, it samples categorically. Deterministic removes label noise from the aggregated dataset. |
+|---|---|---|
+| `online_total_timesteps` | `null` | **PRIMARY** env-frame budget. Derives `num_updates`. |
+| `online_num_updates` | 1000 | **LEGACY** outer DAgger iterations. |
+| `dagger_beta_init` | 1.0 | Initial expert mixing probability `beta_1` |
+| `dagger_beta_final` | `null` | **PRIMARY** target final mixing ratio; overrides `dagger_beta_decay`. |
+| `dagger_beta_decay` | 0.95 | **LEGACY** per-update decay `beta_i = beta_init * decay^i` |
+| `dagger_buffer_cycles` | `null` | **PRIMARY** buffer capacity in update cycles of history. |
+| `dagger_buffer_max` | 100000 | **LEGACY** max samples in the DAgger replay buffer |
+| `dagger_train_passes` | `null` | Passes per update over the buffer; `null` = 1 (matches offline BC per-update gradient work) |
+| `dagger_expert_deterministic` | `true` | Argmax expert (fixed `s -> a*` map) vs categorical sampling |
 
-**Data collection**
+**Data collection / inference**
 
 | Parameter | Default | Description |
-|-----------|---------|-------------|
+|---|---|---|
 | `collect_num_steps` | 10000000 | Total environment steps to collect |
 | `collect_num_envs` | 128 | Parallel environments during collection |
 | `ppo_model_type` | `ppo_rnn` | PPO architecture: `ppo`, `ppo_rnn`, or `ppo_rnd` |
 | `layer_size` | 512 | PPO actor-critic hidden layer width |
-
-**Inference**
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
 | `eval_steps` | 10000 | Environment steps for evaluation |
 | `eval_num_envs` | 32 | Parallel agents during evaluation (independent of `num_envs`) |
-| `diffusion_steps_eval` | 10 | Denoising steps T used at evaluation time |
 
-**Checkpointing**
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `save_policy` | `true` | Save final checkpoint at end of training and upload it as a W&B artifact |
-
-**Resume**
+**Checkpointing / resume / logging**
 
 | Parameter | Default | Description |
-|-----------|---------|-------------|
-| `resume_checkpoint_path` | `null` | Path to a completed checkpoint to resume from (accepts `wandb:` refs) |
-| `resume_wandb_run_id` | `null` | W&B run ID to resume logging into (auto-read from checkpoint metadata) |
-| `resume_step` | `null` | Update step the checkpoint was saved at (auto-read from checkpoint metadata) |
-
-**Logging**
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
+|---|---|---|
+| `save_policy` | `true` | Save final checkpoint and upload as W&B artifact |
+| `resume_checkpoint_path` | `null` | Per-run: `--resume` (accepts `wandb:` refs) |
+| `resume_wandb_run_id` | `null` | Per-run: `--resume-wandb-run-id` (auto-read from metadata) |
+| `resume_step` | `null` | Per-run: `--resume-step` (auto-read from metadata) |
+| `seed` | `null` | RNG seed (random if null; per-run: `--seed`) |
 | `use_wandb` | `true` | Enable Weights & Biases logging |
 | `wandb_project` | `remdm-craftax` | W&B project name |
-| `wandb_entity` | `"mathis-weil-university-college-london-ucl-"` | W&B entity (team or username) |
-| `wandb_download_dir` | `null` | Download directory for W&B artifacts; null = `./artifacts/` |
-| `seed` | `null` | RNG seed (random if null) |
+| `wandb_entity` | (author's) | W&B entity |
+| `wandb_download_dir` | `null` | Download dir for W&B artifacts; null = `./artifacts/` |
 
----
+## Environment wrappers
 
-## Remasking Strategies
-
-Controlled by `--remask_strategy`. All strategies operate on top of the three-phase loop controlled by `--use_loop`, `--t_on`, and `--t_off`.
-
-| Strategy | Formula | Description |
-|----------|---------|-------------|
-| `rescale` | `sigma = eta * sigma_max` | Scales maximum remasking probability proportionally |
-| `cap` | `sigma = min(eta, sigma_max)` | Caps remasking at a fixed rate |
-| `conf` | `sigma = eta * sigma_max * (1 - confidence)` | High-confidence tokens are remasked less |
-
----
-
-## Environment Wrappers
-
-**From `Craftax_Baselines/wrappers.py`** (submodule):
+From `Craftax_Baselines/wrappers.py` (submodule):
 
 | Wrapper | Purpose |
-|---------|---------|
+|---|---|
 | `LogWrapper` | Tracks episode returns and lengths; adds stats to the info dict |
 | `AutoResetEnvWrapper` | Automatically resets episodes on `done` |
 | `BatchEnvWrapper` | Vmaps `reset` and `step` over `num_envs` environments |
-| `OptimisticResetVecEnvWrapper` | Batched resets with reduced overhead; enable via `--use_optimistic_resets` |
+| `OptimisticResetVecEnvWrapper` | Batched resets with reduced overhead; enable via `use_optimistic_resets` |
 
-Stack (identical for training and inference):
+Stack (identical for training and inference): `env -> LogWrapper -> AutoResetEnvWrapper -> BatchEnvWrapper`.
 
-```
-env -> LogWrapper -> AutoResetEnvWrapper -> BatchEnvWrapper
-```
+## Testing
 
-With `--use_optimistic_resets`, `OptimisticResetVecEnvWrapper` replaces the last two.
-
----
-
-## Project Structure
-
-```
-craftax-ReMDM-planner/
-├── Craftax_Baselines/             # Git submodule — PPO agents and standard wrappers
-│   ├── wrappers.py                # LogWrapper, BatchEnvWrapper, AutoResetEnvWrapper, etc.
-│   ├── ppo_rnn.py                 # PPO-RNN training script
-│   ├── ppo_rnd.py                 # PPO-RND training script
-│   ├── ppo.py                     # PPO model definitions
-│   └── models/
-│       ├── actor_critic.py        # ActorCritic variants
-│       ├── rnd.py                 # RND network
-│       └── icm.py                 # ICM encoder, forward, and inverse networks
-├── configs/                       # defaults.yaml, smoke.yaml, exp_{a,b,c,d}, final_* (see Configuration)
-├── src/
-│   ├── diffusion/
-│   │   ├── forward.py             # Forward masking process q(z_t | x_0)
-│   │   ├── loss.py                # Continuous-time MDLM ELBO loss
-│   │   ├── sampling.py            # Reverse diffusion with ReMDM remasking
-│   │   └── schedules.py           # Linear and cosine noise schedules
-│   ├── models/
-│   │   └── denoiser.py            # DenoisingTransformer (obs encoder + transformer)
-│   └── planners/
-│       ├── collect.py             # --mode collect: PPO rollouts -> .npz
-│       ├── common.py              # Shared utilities
-│       ├── env.py                 # Environment construction
-│       ├── inference.py           # --mode inference: MPC evaluation with inpainting
-│       ├── logging.py             # Centralised W&B logging utilities
-│       ├── model.py               # Diffusion model lifecycle
-│       ├── offline.py             # --mode offline: make_train (live PPO rollouts)
-│       ├── online.py              # --mode online: DAgger fine-tuning
-│       ├── ppo.py                 # PPO agent adapter and checkpoint loading utilities
-│       └── smoke.py               # --mode smoke: shrunken end-to-end run via run_online
-├── experiments/
-│   └── rl_finetuning/             # RL fine-tuning ablation suite (see experiments/README.md)
-│       ├── run_ablations.py       # CLI entry point
-│       ├── ablations/             # Loss, optimizer, registry, and training modules
-│       ├── diagnostics/           # Gradient, representation, and timestep diagnostics
-│       ├── analysis/              # Plots, tables, and report generation
-│       └── configs/               # ablations_default.yaml, ablations_fast.yaml,
-│                                  # ablations_final_{classic,craftax}_{ucl,qmul}.yaml
-├── tests/                         # Smoke suite — uv run pytest
-│   ├── conftest.py                # Shared fixtures, CPU/seed guards, entry-point runner
-│   ├── test_smoke_src.py          # src/ pipeline
-│   └── test_smoke_experiments.py  # experiments/ ablation pipeline
-├── scripts/
-│   ├── count_params.py            # Exact parameter counts per config (+--verify_checkpoint)
-│   ├── eval_ppo_expert.py         # First-episode evaluation of a PPO expert
-│   ├── hf_upload.py               # Publish checkpoints to the HF Hub
-│   └── hf_upload_demo.py          # Publish the demo notebook
-├── checkpoints/                   # Gitignored — offline/, online/, ppo_agents/ (see HF Hub)
-├── demo_craftax.ipynb             # Walkthrough notebook
-├── main.py                        # CLI entry point
-├── pyproject.toml                 # uv project — direct deps, dev group, pytest config
-└── uv.lock                        # Reproducible lockfile (commit this)
+```bash
+uv run pytest
 ```
 
----
+141 smoke tests, ~55 s, CPU-only. Tiny synthetic data and a shrunken model throughout — no real checkpoints, datasets or network calls, and nothing written outside `tmp_path`. The suite asserts that things **run**, not that results are correct.
 
-## Implementation Notes
+| File | Covers |
+|---|---|
+| `tests/test_smoke_src.py` | `src/`: module imports, model built from the real config, forward pass, one gradient step, checkpoint round-trip, samplers, config resolvers, and every CLI entry point (including `--mode smoke` end to end) |
+| `tests/test_smoke_experiments.py` | `experiments/rl_finetuning/`: all 25 ablations' losses and optimizers, the LoRA path, diagnostics, and the analysis/report stage |
+
+## Implementation notes
 
 | Topic | Note |
 |---|---|
 | JAX purity | `make_train` / `make_train_dagger` are fully JIT-compatible; env construction and checkpoint I/O sit outside `jax.jit`. |
-| Offline data | `--mode offline` rolls out PPO live. `--mode collect` saves an `.npz` for inspection only — re-feeding it to `--mode offline` is unsupported; pass `--ppo_checkpoint_path`. |
+| Offline data | `--mode offline` rolls out PPO live. `--mode collect` saves an `.npz` for inspection only — re-feeding it to `--mode offline` is unsupported; pass `--ppo-checkpoint`. |
 | Episode-boundary masking | A window at `(e, t)` is valid only if `dones[e, t+1:t+H-1]` are all `False`. |
 | Return weighting | Valid windows are weighted by cumulative reward, normalised by the batch mean, clipped to `[0.1, return_weight_cap]`, and applied as per-sample multipliers before loss reduction. |
-| LR schedule | Cosine decay `lr → lr * 0.1` over all gradient steps. `lr_warmup_frames` (PRIMARY) or `lr_warmup_steps` (LEGACY) prepends linear warm-up. |
-| Env-frame invariance | PRIMARY keys (`*_total_timesteps`, `lr_warmup_frames`, `val_interval_frames`, `dagger_beta_final`, `dagger_buffer_cycles`) are converted to update-step form by `resolve_scaled_hyperparams()` using `num_envs * num_steps`, so one config runs on any hardware tier. |
-| DAgger sizing | `dagger_sizing()` in `src/planners/common.py` is the single source of truth for `samples_per_update`, buffer capacity and `n_train_passes`; the runner and the config banner both read it. |
-| Loss weight clipping | The MDLM SUBS weight `-alpha'(t) / (1 - alpha_t)` is clipped to 1000 for stability as `alpha_t → 1`. |
+| LR schedule | Cosine decay `lr -> lr * 0.1` over all gradient steps. `lr_warmup_frames` (PRIMARY) or `lr_warmup_steps` (LEGACY) prepends linear warm-up. |
+| Env-frame invariance | PRIMARY keys are converted to update-step form by `resolve_scaled_hyperparams()` using `num_envs * num_steps`, so one config runs on any hardware tier. |
+| DAgger sizing | `dagger_sizing()` in `src/planners/common.py` is the single source of truth for `samples_per_update`, buffer capacity and `n_train_passes`. |
+| Loss weight clipping | The MDLM SUBS weight `-alpha'(t) / (1 - alpha_t)` is clipped to 1000 for stability as `alpha_t -> 1`. |
 | Validation rollouts | Every `val_interval` updates, using inference sampling parameters with `val_diffusion_steps`, `val_replan_every` and `val_steps`. |
 | W&B namespaces | Centralised in `src/planners/logging.py`: `diffusion/`, `train/`, `env/`, `val/`, `dagger/`. `train/sps` only in modes with live env interaction. |
-| DAgger aggregation | Ross et al. (2011). A circular buffer accumulates `(obs, expert_plan)` across iterations; each update samples the full buffer. Windows use a sliding stride so every visited state contributes a label. The expert receives correct `done` flags so its RNN state resets at episode boundaries. |
+| DAgger aggregation | Ross et al. (2011). A circular buffer accumulates `(obs, expert_plan)` across iterations; windows use a sliding stride so every visited state contributes a label. The expert receives correct `done` flags so its RNN state resets at episode boundaries. |
 | Best-checkpoint tracking | Highest-validation-return parameters are kept alongside the live ones and uploaded as `{env_name}-policy-best`. |
-| Denoising indexing | Reverse scan runs `step_idx = 0 → T-1`, mapping to `t = (T - step_idx) / T` (high to low noise). |
-| PPO agents | Training lives entirely in `Craftax_Baselines/`; planner modes only consume checkpoints. |
+| Denoising indexing | Reverse scan runs `step_idx = 0 -> T-1`, mapping to `t = (T - step_idx) / T` (high to low noise). |
+| PPO experts | Training lives entirely in `Craftax_Baselines/`; planner modes only consume checkpoints. Released PPO checkpoints were saved on GPU and currently fail to restore on a CPU-only machine. |
