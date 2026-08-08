@@ -3,13 +3,13 @@
 
 Instantiates each config through the repo's own build path (build_model +
 init_params) and prints name, architecture fields and the exact parameter
-count. With --verify_checkpoint, additionally restores an Orbax checkpoint
+count. With --verify-checkpoint, additionally restores an Orbax checkpoint
 via load_checkpoint and asserts its parameter count equals the config's
 (the D16 known-number gate).
 
 Usage:
   uv run python scripts/count_params.py
-  uv run python scripts/count_params.py --verify_checkpoint \
+  uv run python scripts/count_params.py --verify-checkpoint \
       checkpoints/offline/Craftax-Classic-Symbolic-v1-OfflineDiffusion-BC-100M/100000000 \
       --config configs/final_classic_ucl.yaml
 """
@@ -80,10 +80,10 @@ def count_config(cfg_path: str) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--configs", nargs="+", default=DEFAULT_CONFIGS)
-    ap.add_argument("--verify_checkpoint", type=str, default=None,
+    ap.add_argument("--verify-checkpoint", type=str, default=None,
                     help="Orbax checkpoint dir to restore and count (D16 gate).")
     ap.add_argument("--config", type=str, default=None,
-                    help="Config matching --verify_checkpoint.")
+                    help="Config matching --verify-checkpoint.")
     a = ap.parse_args()
 
     print(f"{'config':52s} {'arch (d/h/l/ff)':>18s} {'obs':>6s} {'params':>12s}")
@@ -96,7 +96,7 @@ def main() -> None:
 
     if a.verify_checkpoint:
         if not a.config:
-            raise SystemExit("--config is required with --verify_checkpoint")
+            raise SystemExit("--config is required with --verify-checkpoint")
         r = count_config(a.config)
         raw = yaml.safe_load(open(a.config))
         cfg = {k.upper(): v for k, v in raw.items()}

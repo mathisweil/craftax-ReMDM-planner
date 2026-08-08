@@ -8,8 +8,8 @@ and achievements taken over the first life only.
 Usage:
   uv run python scripts/eval_ppo_expert.py \
       --path checkpoints/ppo_agents/Craftax-Classic-Symbolic-v1-PPO_RNN-1000M \
-      --env_name Craftax-Classic-Symbolic-v1 \
-      --num_envs 256 --steps 1024 --seed 0 \
+      --env-name Craftax-Classic-Symbolic-v1 \
+      --num-envs 256 --steps 1024 --seed 0 \
       --output outputs/expert_eval/classic_seed0.json
 """
 from __future__ import annotations
@@ -35,12 +35,12 @@ from src.planners.ppo import load_ppo_agent
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--path", required=True, help="Orbax checkpoint directory.")
-    ap.add_argument("--env_name", required=True)
-    ap.add_argument("--num_envs", type=int, default=256)
+    ap.add_argument("--env-name", required=True)
+    ap.add_argument("--num-envs", type=int, default=256)
     ap.add_argument("--steps", type=int, default=1024)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--model_type", default="ppo_rnn")
-    ap.add_argument("--layer_size", type=int, default=512)
+    ap.add_argument("--model-type", default="ppo_rnn")
+    ap.add_argument("--layer-size", type=int, default=512)
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--output", default=None)
     a = ap.parse_args()
