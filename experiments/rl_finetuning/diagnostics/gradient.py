@@ -8,8 +8,8 @@ directly inside ``jax.lax.scan``.
 
 from __future__ import annotations
 
-from typing import Any
 from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -164,7 +164,7 @@ def compute_surgery_metrics_jax(
         jnp.stack(
             [
                 (jnp.sum(g_r * (g_r - g_a)) > 0).astype(jnp.int32)
-                for g_r, g_a in zip(before_leaves, after_leaves)
+                for g_r, g_a in zip(before_leaves, after_leaves, strict=False)
             ]
         )
     )

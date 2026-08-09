@@ -10,9 +10,9 @@ themselves are pure and free of global state.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
@@ -209,7 +209,7 @@ def _ewc_penalty(
             for f, p, p_ref in zip(
                 jax.tree.leaves(fisher),
                 jax.tree.leaves(params),
-                jax.tree.leaves(ref_params),
+                jax.tree.leaves(ref_params), strict=False,
             )
         ),
         jnp.array(0.0),
@@ -629,7 +629,11 @@ def estimate_fisher_diagonal(
     for acts, obs, valid in batches:
         rng, step_rng = jax.random.split(rng)
         ones = jnp.ones(acts.shape[0])
-        grad = jax.grad(lambda p: bc_loss_fn(p, acts, obs, valid, step_rng, ones))(
+        grad = jax.grad(
+            # Invoked immediately below, inside the same iteration, so late
+            # binding of the loop variables cannot occur.
+            lambda p: bc_loss_fn(p, acts, obs, valid, step_rng, ones)  # noqa: B023
+        )(
             ref_params
         )
         accumulator = jax.tree.map(lambda acc, g: acc + g**2, accumulator, grad)

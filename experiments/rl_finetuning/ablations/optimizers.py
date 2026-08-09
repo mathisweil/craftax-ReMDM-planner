@@ -11,8 +11,8 @@ the base model apply function to include LoRA contributions.
 
 from __future__ import annotations
 
-from typing import Any
 from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
