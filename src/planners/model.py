@@ -104,6 +104,65 @@ def resolve_checkpoint_path(
     return local_path
 
 
+def abstract_init(init_fn: Callable[[], Any]) -> Any:
+    """Return the abstract pytree an init function would produce.
+
+    Uses ``jax.eval_shape`` so no parameter memory is allocated; the result
+    is a pytree of ``jax.ShapeDtypeStruct`` leaves suitable as an Orbax
+    restore target.
+    """
+    return jax.eval_shape(init_fn)
+
+
+def restore_latest(path: str, args: Any) -> tuple[Any, int]:
+    """Restore the latest step of an Orbax checkpoint.
+
+    Returns:
+        ``(restored, step)`` tuple.
+
+    Raises:
+        FileNotFoundError: If the directory contains no saved steps.
+    """
+    path = str(Path(path).resolve())
+    with ocp.CheckpointManager(path) as mgr:
+        step = mgr.latest_step()
+        if step is None:
+            raise FileNotFoundError(f"No checkpoint at {path}")
+        restored = mgr.restore(step, args=args)
+    return restored, step
+
+
+def restore_latest_params(path: str, abstract_params_tree: Any) -> tuple[Any, int]:
+    """Restore only the ``params`` entry from the latest checkpoint step.
+
+    Ignores optimiser state and anything else in the checkpoint. The
+    ``{"params": ...}`` wrapper must mirror the save side; do not change
+    one without the other.
+    """
+    restored, step = restore_latest(
+        path,
+        ocp.args.PyTreeRestore(
+            item={"params": abstract_params_tree},
+            partial_restore=True,
+        ),
+    )
+    return restored["params"], step
+
+
+def abstract_params(
+    model: DenoisingTransformer,
+    rng: jax.Array,
+    obs_dim: int,
+    plan_horizon: int,
+) -> Any:
+    """Abstract (shape/dtype only) version of :func:`init_params`.
+
+    Traces the init with ``jax.eval_shape`` so no parameter memory is
+    allocated. Used to build restore targets for checkpoint loading.
+    """
+    return abstract_init(lambda: init_params(model, rng, obs_dim, plan_horizon))
+
+
 def load_checkpoint(
     model: DenoisingTransformer,
     rng: jax.Array,
@@ -120,32 +179,50 @@ def load_checkpoint(
     Use ``load_checkpoint_for_resume`` instead when continuing an interrupted
     training run.
     """
-    path = str(Path(path).resolve())
+    abstract = abstract_params(model, rng, obs_dim, plan_horizon)
+    params, step = restore_latest_params(path, abstract)
+    print(f"Loaded diffusion parameters from '{path}' (checkpoint step {step})")
+    return params
 
-    params = init_params(
-        model,
-        rng,
-        obs_dim,
-        plan_horizon,
+
+def load_checkpoint_for_resume(
+    model: DenoisingTransformer,
+    rng: jax.Array,
+    obs_dim: int,
+    plan_horizon: int,
+    path: str,
+    lr_schedule: float | Callable[[int], float],
+    max_grad_norm: float,
+) -> TrainState:
+    """Load a full ``TrainState`` (params + optimiser state) for resume.
+
+    The abstract ``TrainState`` restore target is built with
+    ``jax.eval_shape``, so no throwaway parameters or optimiser moments are
+    allocated before restoring. The ``lr_schedule`` and ``max_grad_norm``
+    must produce the same optimiser chain structure as the saved run.
+
+    Returns:
+        Restored ``TrainState``. The caller should call ``.replace(step=...)``
+        to set the correct LR offset for the resumed run.
+    """
+    abstract_state = abstract_init(
+        lambda: create_train_state(
+            model,
+            init_params(model, rng, obs_dim, plan_horizon),
+            lr_schedule,
+            max_grad_norm,
+        )
     )
 
-    with ocp.CheckpointManager(path) as mgr:
-        step = mgr.latest_step()
+    restored_state, step = restore_latest(
+        path, ocp.args.StandardRestore(abstract_state)
+    )
 
-        if step is None:
-            raise FileNotFoundError(f"No checkpoint at {path}")
-
-        restored = mgr.restore(
-            step,
-            args=ocp.args.PyTreeRestore(
-                item={"params": params},
-                partial_restore=True,
-            ),
-        )
-
-    print(f"Loaded diffusion parameters from '{path}' (checkpoint step {step})")
-
-    return restored["params"]
+    print(
+        f"Loaded full TrainState for resume from '{path}' "
+        f"(step {step}, opt_state step {restored_state.step})"
+    )
+    return restored_state
 
 
 def create_train_state(
@@ -272,60 +349,3 @@ def load_checkpoint_metadata(
         return None
     with open(path) as f:
         return json.load(f)
-
-
-def load_checkpoint_for_resume(
-    model: DenoisingTransformer,
-    rng: jax.Array,
-    obs_dim: int,
-    plan_horizon: int,
-    path: str,
-    lr_schedule: float | Callable[[int], float],
-    max_grad_norm: float,
-) -> TrainState:
-    """Load a full ``TrainState`` (params + optimizer state) for resume.
-
-    Unlike :func:`load_checkpoint` which returns only params, this function
-    restores the complete ``TrainState`` including Adam moments so that
-    training can continue seamlessly.
-
-    The ``lr_schedule`` and ``max_grad_norm`` must match the optimizer chain
-    structure used when the checkpoint was saved (same chain composition,
-    possibly different schedule values).
-
-    Args:
-        model:         Flax module (used to build the abstract state).
-        rng:           PRNG key for dummy initialisation.
-        obs_dim:       Observation dimensionality.
-        plan_horizon:  Number of action steps in a plan.
-        path:          Path to the Orbax checkpoint directory.
-        lr_schedule:   Learning rate or schedule matching the current run's
-                       optimizer (must produce the same ``opt_state`` structure).
-        max_grad_norm: Global gradient clipping threshold.
-
-    Returns:
-        Restored ``TrainState`` with params, opt_state, and step from the
-        checkpoint.  The caller should call ``.replace(step=...)`` to set the
-        correct LR offset for the resumed run.
-
-    Raises:
-        FileNotFoundError: If the checkpoint directory contains no saved steps.
-    """
-    path = str(Path(path).resolve())
-    params = init_params(model, rng, obs_dim, plan_horizon)
-    abstract_state = create_train_state(model, params, lr_schedule, max_grad_norm)
-
-    with ocp.CheckpointManager(path) as mgr:
-        step = mgr.latest_step()
-        if step is None:
-            raise FileNotFoundError(f"No checkpoint found at {path}")
-        restored_state = mgr.restore(
-            step,
-            args=ocp.args.StandardRestore(item=abstract_state),
-        )
-
-    print(
-        f"Loaded full TrainState for resume from '{path}' "
-        f"(step {step}, opt_state step {restored_state.step})"
-    )
-    return restored_state

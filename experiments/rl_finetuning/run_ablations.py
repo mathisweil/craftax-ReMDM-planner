@@ -605,7 +605,6 @@ def main(argv: list[str] | None = None) -> None:
         merged["NUM_ENVS"],
         obs_shape,
         layer_size,
-        seed=int(merged.get("SEED") or 0),  # C-001 (F-015/Q6)
     )
     ppo = PPOAgent(ppo_net, ppo_params, model_type, layer_size)
 
