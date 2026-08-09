@@ -230,3 +230,47 @@ def run_smoke(config: dict[str, Any]) -> None:
             shutil.rmtree(tmp_expert, ignore_errors=True)
 
     _print_summary(out["metrics"], config)
+    _smoke_inference_leg(out, config, num_actions, obs_shape)
+
+
+def _smoke_inference_leg(out, config, num_actions, obs_shape) -> None:
+    """Exercise the corrected inference-time sampler on the trained params.
+
+    FIX-2 (ADJUDICATION B-3) rebuilt ``sample_plan_inpainting`` on the
+    conforming ReMDM Algorithm 1 core; without this leg a smoke run would
+    silently bypass the inference code path (it trains and validates via
+    ``run_online`` only). Fails loudly on MASK leakage or a violated
+    prefix lock.
+    """
+    import jax
+    import jax.numpy as jnp
+
+    from src.diffusion.sampling import sample_plan_inpainting
+    from src.diffusion.schedules import SCHEDULE_MAP
+    from src.planners.model import build_model, make_apply_fns
+
+    params = jax.tree.map(lambda x: x[0], out["runner_state"].train_state.params)
+    model = build_model(config, num_actions)
+    apply_eval, _ = make_apply_fns(model)
+    schedule_fn, _ = SCHEDULE_MAP[config.get("DIFFUSION_SCHEDULE", "cosine")]
+
+    plan_horizon = int(config["PLAN_HORIZON"])
+    obs = jnp.zeros((2, obs_shape[0]))
+    history = jnp.zeros((2, plan_horizon), dtype=jnp.int32)
+    hist_len = jnp.array([2, 0], dtype=jnp.int32)
+
+    plan = sample_plan_inpainting(
+        apply_eval, params, jax.random.PRNGKey(int(config["SEED"])), obs,
+        history, hist_len, num_actions, plan_horizon,
+        int(config.get("DIFFUSION_STEPS_EVAL", 10)), schedule_fn,
+        config.get("REMASK_STRATEGY", "rescale"), config.get("ETA", 0.5),
+        config.get("USE_LOOP", True), config.get("T_ON", 0.7),
+        config.get("T_OFF", 0.3),
+        config.get("TEMPERATURE", 0.5), config.get("TOP_P", 0.95),
+    )
+    assert plan.shape == (2, plan_horizon)
+    assert bool(jnp.all((plan >= 0) & (plan < num_actions))), (
+        "inference sampler emitted MASK or out-of-vocabulary tokens"
+    )
+    assert bool(jnp.all(plan[0, :2] == history[0, :2])), "prefix lock violated"
+    print("  inference sampler (prefix-locked ReMDM Alg 1): OK")
