@@ -86,5 +86,5 @@ resume_step: null
 # ── Logging ──────────────────────────────────────────────────────────────────
 seed: 42
 use_wandb: true
-wandb_project: "remdm-craftax"
-wandb_entity: "mathis-weil-university-college-london-ucl-"
+wandb_project: craftax-ReMDM-planner
+wandb_entity: myopic-planner
