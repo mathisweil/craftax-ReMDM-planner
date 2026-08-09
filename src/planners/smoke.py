@@ -29,10 +29,6 @@ from .ppo import build_ppo_network
 _BAR = "=" * 72
 
 
-# ---------------------------------------------------------------------------
-# Synthetic expert
-# ---------------------------------------------------------------------------
-
 
 def _write_random_expert(
     config: dict[str, Any],
@@ -69,10 +65,6 @@ def _write_random_expert(
         mgr.save(0, args=ocp.args.PyTreeSave({"params": params}))
         mgr.wait_until_finished()
 
-
-# ---------------------------------------------------------------------------
-# Summary
-# ---------------------------------------------------------------------------
 
 
 def _first_repeat(metrics: dict[str, Any]) -> dict[str, np.ndarray]:
@@ -180,10 +172,6 @@ def _print_summary(metrics: dict[str, Any], config: dict[str, Any]) -> None:
     if not finite:
         raise ValueError("Smoke test produced non-finite metrics")
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 
 def run_smoke(config: dict[str, Any]) -> None:

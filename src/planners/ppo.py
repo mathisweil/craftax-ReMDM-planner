@@ -38,7 +38,7 @@ def load_ppo_params(
         Restored parameter pytree.
     """
     path = str(Path(path).resolve())
-    rng = jax.random.PRNGKey(seed)  # C-001 (F-015/Q6): seed threaded from config, no hardcoded key
+    rng = jax.random.PRNGKey(seed)
     if model_type == "ppo_rnn":
         init_x = (jnp.zeros((1, num_envs, *obs_shape)), jnp.zeros((1, num_envs)))
         abstract = network.init(rng, jnp.zeros((num_envs, layer_size)), init_x)
@@ -103,7 +103,7 @@ def load_ppo_agent(
     net = build_ppo_network(model_type, num_actions, layer_size, config)
     params = load_ppo_params(
         path, net, model_type, num_envs, (obs_dim,), layer_size,
-        seed=int(config.get("SEED") or 0),  # C-001 (F-015/Q6)
+        seed=int(config.get("SEED") or 0),
     )
     return PPOAgent(net, params, model_type, layer_size)
 

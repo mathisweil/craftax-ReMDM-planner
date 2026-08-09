@@ -18,10 +18,6 @@ from src.diffusion.schedules import SCHEDULE_MAP
 from .model import build_model, load_checkpoint, make_apply_fns
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
 def run_inference(config: dict[str, Any]) -> None:
     env_name = config["ENV_NAME"]
     env = make_craftax_env_from_name(env_name, auto_reset=True)
@@ -113,7 +109,6 @@ def run_inference(config: dict[str, Any]) -> None:
 
     pct = ep_ach.mean(axis=0) * 100.0
 
-    # Report
     print(f"\n{'=' * 50}")
     print(f"EVALUATION COMPLETE ({elapsed:.1f}s)")
     print(f"{'=' * 50}")
@@ -131,7 +126,6 @@ def run_inference(config: dict[str, Any]) -> None:
         print(f"  [{icon}] {name}: {count}/{num_envs}")
     print(f"{'=' * 50}")
 
-    # C-006(a): machine-readable results for the re-evaluation wave (E-003).
     out_path = config.get("INFERENCE_OUTPUT")
     if out_path:
         import json

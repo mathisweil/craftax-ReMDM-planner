@@ -200,10 +200,6 @@ def make_apply_fns(
     return apply_eval, apply_train
 
 
-# ---------------------------------------------------------------------------
-# Checkpoint metadata sidecar
-# ---------------------------------------------------------------------------
-
 
 class _NumpyEncoder(json.JSONEncoder):
     """JSON encoder that handles numpy scalar types."""

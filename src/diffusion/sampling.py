@@ -24,10 +24,6 @@ ModelApplyFn = Callable[
 ]
 
 
-# ---------------------------------------------------------------------------
-# Remasking sigma computation
-# ---------------------------------------------------------------------------
-
 def _sigma_max(alpha_t: jnp.ndarray, alpha_s: jnp.ndarray) -> jnp.ndarray:
     """sigma_max = min(1, (1 - alpha_s) / alpha_t).  [Eq. 7]"""
     return jnp.minimum(1.0, (1.0 - alpha_s) / jnp.maximum(alpha_t, 1e-8))
@@ -58,10 +54,6 @@ _SIGMA_FNS = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Decoding helpers
-# ---------------------------------------------------------------------------
-
 def _nucleus_sample(rng, logits, top_p):
     """Top-p sampling from [B, H, V] logits -> [B, H] int32."""
     probs = jax.nn.softmax(logits, axis=-1)
@@ -89,10 +81,6 @@ def _decode(rng, logits, temperature, top_p):
         return jax.random.categorical(rng, scaled.reshape(-1, V)).reshape(B, H)
     return jnp.argmax(logits, axis=-1)
 
-
-# ---------------------------------------------------------------------------
-# Reverse sampling
-# ---------------------------------------------------------------------------
 
 def sample_plan(
     model_apply: ModelApplyFn,
@@ -161,9 +149,6 @@ def sample_plan(
         z_init = jnp.where(lock_mask, history, z_init)
     psi_init = jnp.full((B, plan_horizon), jnp.inf)
 
-    # ------------------------------------------------------------------
-    # Core denoising step (ReMDM Eq. 6)
-    # ------------------------------------------------------------------
     def _step(carry, _unused, t_val, alpha_t, alpha_s, sigma_on):
         z, rng, psi = carry
         rng, s_rng, u_rng, r_rng = jax.random.split(rng, 4)
@@ -203,9 +188,6 @@ def sample_plan(
 
         return (z_new, rng, psi_new), None
 
-    # ------------------------------------------------------------------
-    # Phase functions
-    # ------------------------------------------------------------------
     def _phase1_step(carry, idx):
         t = 1.0 - idx * (1.0 - t_on) / n1
         s = jnp.maximum(1.0 - (idx + 1) * (1.0 - t_on) / n1, t_on)
@@ -224,9 +206,6 @@ def sample_plan(
         s = jnp.maximum((num_steps - idx - 1) / num_steps, 0.0)
         return _step(carry, idx, t, schedule_fn(t), schedule_fn(s), True)
 
-    # ------------------------------------------------------------------
-    # Run
-    # ------------------------------------------------------------------
     carry = (z_init, rng, psi_init)
 
     if use_loop:
@@ -244,10 +223,6 @@ def sample_plan(
     fallback = jnp.argmax(final_logits, axis=-1)
     return jnp.where(z_final == mask_id, fallback, z_final)
 
-
-# ---------------------------------------------------------------------------
-# Inpainting sampler (MPC / historical prefix)
-# ---------------------------------------------------------------------------
 
 def sample_plan_inpainting(
     apply_fn: ModelApplyFn,

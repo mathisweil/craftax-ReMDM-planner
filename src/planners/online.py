@@ -49,10 +49,6 @@ from .ppo import PPOAgent, load_ppo_agent
 from .logging import init_wandb, make_wandb_callback
 
 
-# ---------------------------------------------------------------------------
-# Scan carry
-# ---------------------------------------------------------------------------
-
 
 class DAggerCarry(NamedTuple):
     """Carry state for the outer DAgger update scan."""
@@ -72,10 +68,6 @@ class DAggerCarry(NamedTuple):
     best_params: Any           # copy of params with highest val return
     best_val_return: jnp.ndarray  # scalar, -inf initially
 
-
-# ---------------------------------------------------------------------------
-# make_train_dagger
-# ---------------------------------------------------------------------------
 
 
 def make_train_dagger(config: dict[str, Any]):
@@ -152,7 +144,7 @@ def make_train_dagger(config: dict[str, Any]):
             config["OFFLINE_CHECKPOINT_PATH"],
         )
 
-    # B3: roll out num_steps env transitions across n_cycles plans, then
+    # roll out num_steps env transitions across n_cycles plans, then
     # extract sliding windows the same way offline.py does — yields
     # W = num_steps - plan_horizon + 1 windows per env per update instead
     # of only one window per cycle (~16x denser for the default config).
@@ -163,7 +155,7 @@ def make_train_dagger(config: dict[str, Any]):
     assert num_steps >= plan_horizon, (
         f"NUM_STEPS ({num_steps}) must be >= PLAN_HORIZON ({plan_horizon})"
     )
-    # B1/B3: sliding windows, buffer capacity and pass count.  Derived in
+    # sliding windows, buffer capacity and pass count.  Derived in
     # common.dagger_sizing so print_config_snapshot reports exactly what
     # runs here; the two used to disagree on n_train_passes.
     sizing = dagger_sizing(config, num_updates)
@@ -183,7 +175,7 @@ def make_train_dagger(config: dict[str, Any]):
         f" or shrink NUM_ENVS / NUM_STEPS"
     )
 
-    # B2: deterministic-by-default expert.  Sampling from ``pi.logits``
+    # deterministic-by-default expert.  Sampling from ``pi.logits``
     # injects label noise — two queries to the same state can return
     # different actions — which breaks DAgger's assumption of a fixed
     # expert mapping s -> a*.  Argmax keeps labels consistent.
@@ -194,7 +186,7 @@ def make_train_dagger(config: dict[str, Any]):
     beta_init = config.get("DAGGER_BETA_INIT", 1.0)
     beta_decay = config.get("DAGGER_BETA_DECAY", 0.95)
 
-    # I8: cosine LR schedule matching offline training.  Stretched to
+    # cosine LR schedule matching offline training.  Stretched to
     # cover all gradient steps across train passes (B1).
     total_grad_steps = (
         num_updates * n_train_passes * update_epochs * num_minibatches
@@ -248,10 +240,6 @@ def make_train_dagger(config: dict[str, Any]):
         else None
     )
 
-    # ------------------------------------------------------------------
-    # Train closure
-    # ------------------------------------------------------------------
-
     def train(rng: jax.Array) -> dict[str, Any]:
         """JIT/vmap-compatible DAgger training loop.
 
@@ -293,9 +281,6 @@ def make_train_dagger(config: dict[str, Any]):
             val_replan_every, n_val_cycles,
         )
 
-        # ----------------------------------------------------------
-        # _update_step  (one DAgger iteration)
-        # ----------------------------------------------------------
         def _update_step(carry: DAggerCarry, _):
             (
                 state,
@@ -341,7 +326,7 @@ def make_train_dagger(config: dict[str, Any]):
                     config.get("TOP_P", 0.95),
                 )  # [E, H]
 
-                # B3: simulate plan_horizon steps, recording the visited
+                # simulate plan_horizon steps, recording the visited
                 # obs at every state alongside the expert action.  The
                 # outer code then extracts sliding windows from the full
                 # per-step trace, mirroring offline.py.
@@ -355,7 +340,7 @@ def make_train_dagger(config: dict[str, Any]):
                     # PPO RNN hidden state resets on episode boundaries.
                     pi, new_hs = ppo.get_pi(o, p_done, hs)
                     if expert_deterministic:
-                        # B2: argmax keeps the expert mapping s -> a
+                        # argmax keeps the expert mapping s -> a
                         # deterministic, removing label noise from D.
                         expert_act = jnp.argmax(
                             pi.logits, axis=-1,
@@ -409,7 +394,7 @@ def make_train_dagger(config: dict[str, Any]):
                     infos,
                 )
 
-            # I7: ppo_hs and prev_done persist across cycles and
+            # ppo_hs and prev_done persist across cycles and
             # updates via the scan carry.
             (env_state, obs, rng, ppo_hs, prev_done), traj = (
                 jax.lax.scan(
@@ -430,14 +415,14 @@ def make_train_dagger(config: dict[str, Any]):
                 all_infos,
             ) = traj
 
-            # B3: concatenate cycles into one [T, E, ...] rollout.  Cycles
+            # concatenate cycles into one [T, E, ...] rollout.  Cycles
             # are contiguous in time so a flat reshape preserves order.
             T = num_steps
             obs_t = traj_obs.reshape(T, num_envs, obs_dim)   # [T, E, D]
             acts_t = traj_expert_acts.reshape(T, num_envs)    # [T, E]
             dones_t = traj_dones.reshape(T, num_envs)         # [T, E]
 
-            # B3 + B5: sliding-window extraction matching offline.py.
+            # sliding-window extraction matching offline.py.
             # Window (t, e) is valid iff actions [t..t+H-1] all came from
             # one episode, i.e. dones[t..t+H-2] are all False.  An episode
             # boundary on the *last* action is allowed — the window's
@@ -463,7 +448,7 @@ def make_train_dagger(config: dict[str, Any]):
             flat_plans = act_w.reshape(-1, plan_horizon)
             flat_valid = valid_w.reshape(-1).astype(jnp.float32)
 
-            # B1: write new samples into circular replay buffer
+            # write new samples into circular replay buffer
             write_indices = (
                 buf_write_idx + jnp.arange(samples_per_update)
             ) % max_buffer_size
@@ -477,7 +462,7 @@ def make_train_dagger(config: dict[str, Any]):
                 buf_fill + samples_per_update, max_buffer_size,
             )
 
-            # B1: multi-pass training over the aggregated buffer.  Each
+            # multi-pass training over the aggregated buffer.  Each
             # pass redraws a fresh sample of size ``samples_per_update``
             # from the filled portion of the buffer; with the default
             # ``n_train_passes`` ≈ ⌊|D|/B⌋ one update covers ~|D|
@@ -635,10 +620,6 @@ def make_train_dagger(config: dict[str, Any]):
 
     return train
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 
 def run_online(config: dict[str, Any]) -> dict[str, Any]:
