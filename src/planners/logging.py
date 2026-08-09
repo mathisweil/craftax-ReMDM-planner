@@ -109,7 +109,7 @@ def build_log_dict(
         Flat ``{str: float}`` dict suitable for ``wandb.log``.
     """
     log: dict[str, float] = {}
-    is_val_step = (step_idx % val_interval == 0)
+    is_val_step = step_idx % val_interval == 0
 
     for k in _DIFFUSION_KEYS:
         if k in metric:
@@ -208,7 +208,11 @@ def make_wandb_callback(
             else None
         )
         log = build_log_dict(
-            metric, int(step_idx), val_interval, is_online=is_online, sps=sps,
+            metric,
+            int(step_idx),
+            val_interval,
+            is_online=is_online,
+            sps=sps,
         )
         wandb.log(log, step=int(step_idx))
 

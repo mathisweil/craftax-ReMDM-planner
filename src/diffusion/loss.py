@@ -78,7 +78,7 @@ def compute_loss(
     logits = model_apply(params, obs, z_t, t, drop_rng)  # [B, H, V]
 
     # Cross-entropy on valid masked positions
-    is_masked = (z_t == mask_id).astype(jnp.float32)        # [B, H]
+    is_masked = (z_t == mask_id).astype(jnp.float32)  # [B, H]
     valid_masked = is_masked * valid[:, None].astype(jnp.float32)  # [B, H]
 
     targets = jax.nn.one_hot(x_0, num_actions)
@@ -86,7 +86,7 @@ def compute_loss(
         targets = (1.0 - label_smoothing) * targets + label_smoothing / num_actions
 
     log_probs = jax.nn.log_softmax(logits, axis=-1)
-    ce = -jnp.sum(targets * log_probs, axis=-1)             # [B, H]
+    ce = -jnp.sum(targets * log_probs, axis=-1)  # [B, H]
 
     # FIX-1 (ADJUDICATION B-1): constant per-token normalisation (1/H),
     # per MDLM eq (10) / Shi eq (4). Dividing by the realised masked
