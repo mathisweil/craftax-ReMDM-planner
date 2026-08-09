@@ -23,10 +23,14 @@ ModelApplyFn = Callable[
     [Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, Optional[Any]], jnp.ndarray
 ]
 
+# Stability guards; values must match the minihack twin exactly.
+_SIGMA_DENOM_EPS = 1e-8  # sigma_max, posterior and temperature denominators
+_NUCLEUS_EPS = 1e-12  # renormalisation and log guards in nucleus sampling
+
 
 def _sigma_max(alpha_t: jnp.ndarray, alpha_s: jnp.ndarray) -> jnp.ndarray:
     """sigma_max = min(1, (1 - alpha_s) / alpha_t).  [Eq. 7]"""
-    return jnp.minimum(1.0, (1.0 - alpha_s) / jnp.maximum(alpha_t, 1e-8))
+    return jnp.minimum(1.0, (1.0 - alpha_s) / jnp.maximum(alpha_t, _SIGMA_DENOM_EPS))
 
 
 def sigma_rescale(alpha_t, alpha_s, eta):
@@ -63,19 +67,19 @@ def _nucleus_sample(rng, logits, top_p):
 
     cutoff = cum - sorted_p
     sorted_p = jnp.where(cutoff >= top_p, 0.0, sorted_p)
-    sorted_p = sorted_p / jnp.maximum(sorted_p.sum(axis=-1, keepdims=True), 1e-12)
+    sorted_p = sorted_p / jnp.maximum(sorted_p.sum(axis=-1, keepdims=True), _NUCLEUS_EPS)
 
     B, H, V = logits.shape
     flat = sorted_p.reshape(B * H, V)
-    tokens = jax.random.categorical(rng, jnp.log(flat + 1e-12)).reshape(B, H)
+    tokens = jax.random.categorical(rng, jnp.log(flat + _NUCLEUS_EPS)).reshape(B, H)
     return jnp.take_along_axis(idx, tokens[..., None], axis=-1).squeeze(-1)
 
 
 def _decode(rng, logits, temperature, top_p):
     """Sample tokens from logits.  Argmax only when temperature <= 0."""
     if top_p is not None:
-        return _nucleus_sample(rng, logits / jnp.maximum(temperature, 1e-8), top_p)
-    if temperature > 1e-8:
+        return _nucleus_sample(rng, logits / jnp.maximum(temperature, _SIGMA_DENOM_EPS), top_p)
+    if temperature > _SIGMA_DENOM_EPS:
         B, H, V = logits.shape
         scaled = logits / temperature
         return jax.random.categorical(rng, scaled.reshape(-1, V)).reshape(B, H)
@@ -167,7 +171,7 @@ def sample_plan(
             sigma = jnp.where(lock_mask, 0.0, sigma)
 
         # Masked -> unmask probability
-        denom = jnp.maximum(1.0 - alpha_t, 1e-8)
+        denom = jnp.maximum(1.0 - alpha_t, _SIGMA_DENOM_EPS)
         p_unmask = jnp.clip((alpha_s - (1.0 - sigma) * alpha_t) / denom, 0.0, 1.0)
 
         do_unmask = is_masked & (jax.random.uniform(u_rng, z.shape) < p_unmask)

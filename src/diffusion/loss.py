@@ -17,8 +17,8 @@ ModelApplyFn = Callable[
     [Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, Optional[Any]], jnp.ndarray
 ]
 
-_MAX_WEIGHT: float = 1000.0
-_EPS: float = 1e-5
+_MAX_WEIGHT: float = 1000.0  # matches minihack twin and loss_weight_clip convention
+_EPS: float = 1e-5  # floor for 1 - alpha_t; minihack _WEIGHT_DENOM_EPS identical
 
 
 def compute_loss(

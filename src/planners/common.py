@@ -313,7 +313,7 @@ def print_config_snapshot(config: dict[str, Any], mode: str) -> None:
         )
         print(f"    {'total_grad_steps':<24} = {total_grad_steps:,}")
 
-    val_int = int(config.get("VAL_INTERVAL", 0))
+    val_int = int(config.get("VAL_INTERVAL", 0))  # display-only; fallback 0 != defaults.yaml (50)
     print("  -- Validation --")
     print(
         f"    val_interval        = {val_int} updates  (~{val_int * fpu / 1e6:.2f}M frames)"
