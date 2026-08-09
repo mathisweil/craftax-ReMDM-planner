@@ -19,7 +19,6 @@ from experiments.rl_finetuning.ablations.training import AblationHistory
 logger = logging.getLogger(__name__)
 
 
-
 def _latex_escape(text: str) -> str:
     """Escape LaTeX special characters in a string.
 
@@ -71,7 +70,9 @@ def _df_to_latex(df: pl.DataFrame, caption: str = "", label: str = "") -> str:
     return "\n".join(lines)
 
 
-def _save_table(df: pl.DataFrame, path_stem: Path, caption: str = "", label: str = "") -> None:
+def _save_table(
+    df: pl.DataFrame, path_stem: Path, caption: str = "", label: str = ""
+) -> None:
     """Save a polars DataFrame as CSV and LaTeX.
 
     Args:
@@ -87,7 +88,6 @@ def _save_table(df: pl.DataFrame, path_stem: Path, caption: str = "", label: str
     logger.info("Saved %s.csv and %s.tex", path_stem, path_stem)
 
 
-
 def write_significance_test(results: dict[str, dict], out_dir: Path) -> None:
     """C-002 (F-035): baseline vs best condition, exact permutation test + bootstrap CI.
 
@@ -98,12 +98,14 @@ def write_significance_test(results: dict[str, dict], out_dir: Path) -> None:
     if not base or not base.get("all_scores"):
         return
     others = {
-        n: r for n, r in results.items()
+        n: r
+        for n, r in results.items()
         if n != "baseline_rl" and len(r.get("all_scores", [])) >= 2
     }
     if not others or len(base["all_scores"]) < 2:
         return
     import itertools
+
     best = max(others, key=lambda n: float(np.mean(others[n]["all_scores"])))
     a = [float(x) for x in base["all_scores"]]
     b = [float(x) for x in others[best]["all_scores"]]
@@ -163,15 +165,19 @@ def make_main_results_table(
 
         spec = REGISTRY.get(name)
         group = spec.group if spec else "?"
-        rows.append({
-            "Method": name,
-            "Group": group,
-            "Final_Score": round(score, 4),
-            "Score_Std": round(float(res.get("score_std", 0.0)), 4),  # C-002 (F-035): popstd over seeds
-            "Delta_vs_Pretrained": round(delta_pretrained, 4),
-            "Delta_vs_Baseline_RL": round(delta_baseline, 4),
-            "Verdict": verdict,
-        })
+        rows.append(
+            {
+                "Method": name,
+                "Group": group,
+                "Final_Score": round(score, 4),
+                "Score_Std": round(
+                    float(res.get("score_std", 0.0)), 4
+                ),  # C-002 (F-035): popstd over seeds
+                "Delta_vs_Pretrained": round(delta_pretrained, 4),
+                "Delta_vs_Baseline_RL": round(delta_baseline, 4),
+                "Verdict": verdict,
+            }
+        )
 
     # Sort by final score descending
     rows.sort(key=lambda r: r["Final_Score"], reverse=True)
@@ -197,20 +203,33 @@ def make_gradient_analysis_table(
 
         mean_align = round(float(np.mean(aligns)), 4) if aligns else float("nan")
         final_align = round(aligns[-1], 4) if aligns else float("nan")
-        trend = "down" if (len(aligns) > 1 and aligns[-1] < aligns[0]) else "up" if (len(aligns) > 1 and aligns[-1] > aligns[0]) else "flat"
+        trend = (
+            "down"
+            if (len(aligns) > 1 and aligns[-1] < aligns[0])
+            else "up"
+            if (len(aligns) > 1 and aligns[-1] > aligns[0])
+            else "flat"
+        )
         mean_drift = round(float(np.mean(drifts)), 6) if drifts else float("nan")
         final_drift = round(drifts[-1], 6) if drifts else float("nan")
 
-        rows.append({
-            "Method": name,
-            "Mean_Grad_Align": mean_align,
-            "Final_Grad_Align": final_align,
-            "Trend": trend,
-            "Mean_KL_Drift": mean_drift,
-            "Final_KL_Drift": final_drift,
-        })
+        rows.append(
+            {
+                "Method": name,
+                "Mean_Grad_Align": mean_align,
+                "Final_Grad_Align": final_align,
+                "Trend": trend,
+                "Mean_KL_Drift": mean_drift,
+                "Final_KL_Drift": final_drift,
+            }
+        )
 
-    rows.sort(key=lambda r: (float("-inf") if np.isnan(r["Final_Grad_Align"]) else r["Final_Grad_Align"]), reverse=True)
+    rows.sort(
+        key=lambda r: (
+            float("-inf") if np.isnan(r["Final_Grad_Align"]) else r["Final_Grad_Align"]
+        ),
+        reverse=True,
+    )
     return pl.DataFrame(rows)
 
 
@@ -229,23 +248,29 @@ def make_t_distribution_table(
     for name, res in results.items():
         history: AblationHistory = res["history"]
         if not history.norm_high_t:
-            rows.append({
-                "Method": name,
-                "HighLow_Ratio": float("nan"),
-                "LowHigh_Cos_Sim": float("nan"),
-                "Dominant_Regime": "N/A",
-            })
+            rows.append(
+                {
+                    "Method": name,
+                    "HighLow_Ratio": float("nan"),
+                    "LowHigh_Cos_Sim": float("nan"),
+                    "Dominant_Regime": "N/A",
+                }
+            )
             continue
 
-        ratio = float(np.mean(history.norm_high_t)) / (float(np.mean(history.norm_low_t)) + 1e-10)
+        ratio = float(np.mean(history.norm_high_t)) / (
+            float(np.mean(history.norm_low_t)) + 1e-10
+        )
         cos = float(np.mean(history.lowhigh_cos))
         dominant = "high-t" if ratio > 1.5 else "low-t" if ratio < 0.67 else "balanced"
-        rows.append({
-            "Method": name,
-            "HighLow_Ratio": round(ratio, 3),
-            "LowHigh_Cos_Sim": round(cos, 4),
-            "Dominant_Regime": dominant,
-        })
+        rows.append(
+            {
+                "Method": name,
+                "HighLow_Ratio": round(ratio, 3),
+                "LowHigh_Cos_Sim": round(cos, 4),
+                "Dominant_Regime": dominant,
+            }
+        )
 
     return pl.DataFrame(rows)
 
@@ -283,17 +308,21 @@ def make_forgetting_analysis_table(
                 if sc < collapse_level:
                     first_collapse_iter = str(it)
                     # Check if recovered later
-                    later_scores = evals[i + 1:]
-                    recovered = "Y" if any(s >= collapse_level for s in later_scores) else "N"
+                    later_scores = evals[i + 1 :]
+                    recovered = (
+                        "Y" if any(s >= collapse_level for s in later_scores) else "N"
+                    )
                     break
 
-        rows.append({
-            "Method": name,
-            "First_Collapse_Iter": first_collapse_iter,
-            "Min_Score": min_score,
-            "Recovery_Score": recovery_score,
-            "Recovered": recovered,
-        })
+        rows.append(
+            {
+                "Method": name,
+                "First_Collapse_Iter": first_collapse_iter,
+                "Min_Score": min_score,
+                "Recovery_Score": recovery_score,
+                "Recovered": recovered,
+            }
+        )
 
     return pl.DataFrame(rows)
 
@@ -321,14 +350,16 @@ def make_group_summary_table(
         if not scores:
             continue
         arr = np.array(scores)
-        rows.append({
-            "Group": group,
-            "N": len(scores),
-            "Mean": round(float(arr.mean()), 4),
-            "Best": round(float(arr.max()), 4),
-            "Worst": round(float(arr.min()), 4),
-            "StdDev": round(float(arr.std()), 4),
-        })
+        rows.append(
+            {
+                "Group": group,
+                "N": len(scores),
+                "Mean": round(float(arr.mean()), 4),
+                "Best": round(float(arr.max()), 4),
+                "Worst": round(float(arr.min()), 4),
+                "StdDev": round(float(arr.std()), 4),
+            }
+        )
     return pl.DataFrame(rows)
 
 
@@ -346,18 +377,36 @@ def make_repr_drift_table(
     rows = []
     for name, res in results.items():
         history: AblationHistory = res["history"]
-        kl_mean = round(history.repr_drift_kl[-1], 6) if history.repr_drift_kl else float("nan")
-        kl_low = round(history.repr_drift_kl_low_t[-1], 6) if history.repr_drift_kl_low_t else float("nan")
-        kl_mid = round(history.repr_drift_kl_mid_t[-1], 6) if history.repr_drift_kl_mid_t else float("nan")
-        kl_high = round(history.repr_drift_kl_high_t[-1], 6) if history.repr_drift_kl_high_t else float("nan")
-        rows.append({
-            "Method": name,
-            "KL_mean": kl_mean,
-            "KL_low_t": kl_low,
-            "KL_mid_t": kl_mid,
-            "KL_high_t": kl_high,
-        })
-    rows.sort(key=lambda r: (float("inf") if np.isnan(r["KL_mean"]) else r["KL_mean"]))
+        kl_mean = (
+            round(history.repr_drift_kl[-1], 6)
+            if history.repr_drift_kl
+            else float("nan")
+        )
+        kl_low = (
+            round(history.repr_drift_kl_low_t[-1], 6)
+            if history.repr_drift_kl_low_t
+            else float("nan")
+        )
+        kl_mid = (
+            round(history.repr_drift_kl_mid_t[-1], 6)
+            if history.repr_drift_kl_mid_t
+            else float("nan")
+        )
+        kl_high = (
+            round(history.repr_drift_kl_high_t[-1], 6)
+            if history.repr_drift_kl_high_t
+            else float("nan")
+        )
+        rows.append(
+            {
+                "Method": name,
+                "KL_mean": kl_mean,
+                "KL_low_t": kl_low,
+                "KL_mid_t": kl_mid,
+                "KL_high_t": kl_high,
+            }
+        )
+    rows.sort(key=lambda r: float("inf") if np.isnan(r["KL_mean"]) else r["KL_mean"])
     return pl.DataFrame(rows)
 
 
@@ -435,16 +484,18 @@ def make_hypothesis_verdict_table(
             result = "NEUTRAL"
             conclusion = "Inconclusive — no significant change"
 
-        rows.append({
-            "Ablation": name,
-            "Group": spec.group,
-            "Hypothesis": spec.hypothesis[:80] + ("..." if len(spec.hypothesis) > 80 else ""),
-            "Result": result,
-            "Conclusion": conclusion,
-        })
+        rows.append(
+            {
+                "Ablation": name,
+                "Group": spec.group,
+                "Hypothesis": spec.hypothesis[:80]
+                + ("..." if len(spec.hypothesis) > 80 else ""),
+                "Result": result,
+                "Conclusion": conclusion,
+            }
+        )
 
     return pl.DataFrame(rows)
-
 
 
 def make_achievement_table(
@@ -491,7 +542,6 @@ def make_achievement_table(
     return pl.DataFrame(rows)
 
 
-
 def generate_summary_tables(
     results: dict[str, dict],
     pretrained_score: float,
@@ -521,46 +571,63 @@ def generate_summary_tables(
 
     tables["main_results"] = make_main_results_table(results, pretrained_score)
     _save_table(
-        tables["main_results"], tables_dir / "main_results",
-        caption="Main ablation results.", label="tab:main_results"
+        tables["main_results"],
+        tables_dir / "main_results",
+        caption="Main ablation results.",
+        label="tab:main_results",
     )
     write_significance_test(results, tables_dir)  # C-002 (F-035)
 
     tables["gradient_analysis"] = make_gradient_analysis_table(results)
     _save_table(
-        tables["gradient_analysis"], tables_dir / "gradient_analysis",
-        caption="Gradient alignment and representation drift analysis.", label="tab:gradient"
+        tables["gradient_analysis"],
+        tables_dir / "gradient_analysis",
+        caption="Gradient alignment and representation drift analysis.",
+        label="tab:gradient",
     )
 
     tables["t_distribution"] = make_t_distribution_table(results)
     _save_table(
-        tables["t_distribution"], tables_dir / "t_distribution",
-        caption="Timestep distribution analysis.", label="tab:t_dist"
+        tables["t_distribution"],
+        tables_dir / "t_distribution",
+        caption="Timestep distribution analysis.",
+        label="tab:t_dist",
     )
 
-    tables["forgetting_analysis"] = make_forgetting_analysis_table(results, pretrained_score)
+    tables["forgetting_analysis"] = make_forgetting_analysis_table(
+        results, pretrained_score
+    )
     _save_table(
-        tables["forgetting_analysis"], tables_dir / "forgetting_analysis",
-        caption="Catastrophic forgetting timeline.", label="tab:forgetting"
+        tables["forgetting_analysis"],
+        tables_dir / "forgetting_analysis",
+        caption="Catastrophic forgetting timeline.",
+        label="tab:forgetting",
     )
 
     tables["group_summary"] = make_group_summary_table(results)
     _save_table(
-        tables["group_summary"], tables_dir / "group_summary",
-        caption="Group summary statistics.", label="tab:group_summary"
+        tables["group_summary"],
+        tables_dir / "group_summary",
+        caption="Group summary statistics.",
+        label="tab:group_summary",
     )
 
     tables["repr_drift"] = make_repr_drift_table(results)
     _save_table(
-        tables["repr_drift"], tables_dir / "repr_drift",
+        tables["repr_drift"],
+        tables_dir / "repr_drift",
         caption="Representation drift (KL divergence) at final iteration.",
-        label="tab:repr_drift"
+        label="tab:repr_drift",
     )
 
-    tables["hypothesis_verdict"] = make_hypothesis_verdict_table(results, pretrained_score)
+    tables["hypothesis_verdict"] = make_hypothesis_verdict_table(
+        results, pretrained_score
+    )
     _save_table(
-        tables["hypothesis_verdict"], tables_dir / "hypothesis_verdict",
-        caption="Hypothesis verdict per ablation.", label="tab:hypothesis"
+        tables["hypothesis_verdict"],
+        tables_dir / "hypothesis_verdict",
+        caption="Hypothesis verdict per ablation.",
+        label="tab:hypothesis",
     )
 
     if pretrained_ach_rates is not None:
@@ -568,7 +635,8 @@ def generate_summary_tables(
         if ach_df.height > 0:
             tables["achievement_summary"] = ach_df
             _save_table(
-                ach_df, tables_dir / "achievement_summary",
+                ach_df,
+                tables_dir / "achievement_summary",
                 caption="Per-achievement final unlock rates and delta vs pretrained.",
                 label="tab:achievements",
             )
@@ -577,7 +645,8 @@ def generate_summary_tables(
         if per_env_df.height > 0:
             tables["per_env"] = per_env_df
             _save_table(
-                per_env_df, tables_dir / "per_env",
+                per_env_df,
+                tables_dir / "per_env",
                 caption="Per-environment (per-achievement) win rates at final eval.",
                 label="tab:per_env",
             )

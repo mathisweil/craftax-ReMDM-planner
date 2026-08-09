@@ -21,7 +21,9 @@ from src.diffusion.forward import forward_process
 from src.diffusion.schedules import ScheduleFn
 
 # Loss signature: (params, acts, obs, valid, rng, advantages) -> scalar
-LossFn = Callable[[Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array, jnp.ndarray], jnp.ndarray]
+LossFn = Callable[
+    [Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.Array, jnp.ndarray], jnp.ndarray
+]
 
 # Extended loss signature with step_idx for t-curriculum (JIT-compatible)
 # (params, acts, obs, valid, rng, advantages, step_idx) -> scalar
@@ -53,7 +55,6 @@ class LossContext:
     schedule_deriv_fn: ScheduleFn
     num_actions: int
     config: dict
-
 
 
 def _core_loss(
@@ -205,14 +206,13 @@ def _ewc_penalty(
         (
             jnp.sum(f * (p - p_ref) ** 2)
             for f, p, p_ref in zip(
-            jax.tree.leaves(fisher),
-            jax.tree.leaves(params),
-            jax.tree.leaves(ref_params),
-        )
+                jax.tree.leaves(fisher),
+                jax.tree.leaves(params),
+                jax.tree.leaves(ref_params),
+            )
         ),
-        jnp.array(0.0)
+        jnp.array(0.0),
     )
-
 
 
 def make_loss_baseline(ctx: LossContext) -> LossFn:
@@ -224,6 +224,7 @@ def make_loss_baseline(ctx: LossContext) -> LossFn:
     Returns:
         ``LossFn`` implementing the baseline RL fine-tuning objective.
     """
+
     def loss_fn(params, acts, obs, valid, rng, advantages):
         return _core_loss(ctx, params, rng, acts, obs, valid, advantages)
 
@@ -300,7 +301,7 @@ def make_loss_trust_region_kl(ctx: LossContext) -> LossFn:
         kl = _kl_penalty(ctx, params, kl_rng, acts, obs, valid)
         # Large quadratic penalty when KL exceeds threshold (barrier method)
         violation = jnp.maximum(kl - threshold, 0.0)
-        return rl + 1e4 * violation ** 2
+        return rl + 1e4 * violation**2
 
     return loss_fn
 
@@ -315,7 +316,6 @@ def make_loss_mixed_replay(ctx: LossContext) -> LossFn:
         ``LossFn`` identical to baseline (data mixing done externally).
     """
     return make_loss_baseline(ctx)
-
 
 
 def make_loss_bc_wins(ctx: LossContext) -> LossFn:
@@ -333,6 +333,7 @@ def make_loss_bc_wins(ctx: LossContext) -> LossFn:
     Returns:
         ``LossFn`` with advantages zeroed out.
     """
+
     def loss_fn(params, acts, obs, valid, rng, advantages):
         return _core_loss(ctx, params, rng, acts, obs, valid, advantages=None)
 
@@ -354,7 +355,9 @@ def make_loss_low_t(ctx: LossContext) -> LossFn:
     t_max = ctx.config.get("T_MAX_LOW", 0.2)
 
     def loss_fn(params, acts, obs, valid, rng, advantages):
-        return _core_loss(ctx, params, rng, acts, obs, valid, advantages, t_min=_EPS, t_max=t_max)
+        return _core_loss(
+            ctx, params, rng, acts, obs, valid, advantages, t_min=_EPS, t_max=t_max
+        )
 
     return loss_fn
 
@@ -388,7 +391,9 @@ def make_loss_t_curriculum(ctx: LossContext, current_iter: list[int]) -> LossFn:
         # Clamp to valid range
         t_min = float(jnp.clip(t_min, _EPS, 0.95))
         t_max = float(jnp.clip(t_max, t_min + 0.05, 1.0))
-        return _core_loss(ctx, params, rng, acts, obs, valid, advantages, t_min=t_min, t_max=t_max)
+        return _core_loss(
+            ctx, params, rng, acts, obs, valid, advantages, t_min=t_min, t_max=t_max
+        )
 
     return loss_fn
 
@@ -439,8 +444,15 @@ def make_loss_t_curriculum_jit(ctx: LossContext) -> LossFnWithStep:
         t_min = jnp.clip(t_min, _EPS, 0.95)
         t_max = jnp.clip(t_max, t_min + 0.05, 1.0)
         return _core_loss(
-            ctx, params, rng, acts, obs, valid, advantages,
-            t_min=t_min, t_max=t_max,
+            ctx,
+            params,
+            rng,
+            acts,
+            obs,
+            valid,
+            advantages,
+            t_min=t_min,
+            t_max=t_max,
         )
 
     return loss_fn
@@ -522,6 +534,7 @@ def make_loss_normalized_adv(ctx: LossContext) -> LossFn:
     Returns:
         ``LossFn`` with std-normalised advantages.
     """
+
     def loss_fn(params, acts, obs, valid, rng, advantages):
         mean = jnp.mean(advantages)
         std = jnp.std(advantages)
@@ -529,7 +542,6 @@ def make_loss_normalized_adv(ctx: LossContext) -> LossFn:
         return _core_loss(ctx, params, rng, acts, obs, valid, norm_adv)
 
     return loss_fn
-
 
 
 def make_loss_frozen_backbone(ctx: LossContext) -> LossFn:
@@ -558,7 +570,6 @@ def make_loss_param_isolation(ctx: LossContext) -> LossFn:
     return make_loss_baseline(ctx)
 
 
-
 def make_loss_reward_quality(ctx: LossContext) -> LossFn:
     """Baseline loss; reward filtering and normalisation are handled externally.
 
@@ -571,7 +582,6 @@ def make_loss_reward_quality(ctx: LossContext) -> LossFn:
         ``LossFn`` identical to baseline.
     """
     return make_loss_baseline(ctx)
-
 
 
 def estimate_fisher_diagonal(
@@ -618,8 +628,10 @@ def estimate_fisher_diagonal(
     for acts, obs, valid in batches:
         rng, step_rng = jax.random.split(rng)
         ones = jnp.ones(acts.shape[0])
-        grad = jax.grad(lambda p: bc_loss_fn(p, acts, obs, valid, step_rng, ones))(ref_params)
-        accumulator = jax.tree.map(lambda acc, g: acc + g ** 2, accumulator, grad)
+        grad = jax.grad(lambda p: bc_loss_fn(p, acts, obs, valid, step_rng, ones))(
+            ref_params
+        )
+        accumulator = jax.tree.map(lambda acc, g: acc + g**2, accumulator, grad)
 
     n = max(len(batches), 1)
     return jax.tree.map(lambda acc: acc / n, accumulator)

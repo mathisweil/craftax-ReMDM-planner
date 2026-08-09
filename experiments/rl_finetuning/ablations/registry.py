@@ -71,7 +71,9 @@ class AblationSpec:
     description: str
     hypothesis: str
     loss_factory: LossFactory
-    optimizer_factory: OptimizerFactory = field(default_factory=lambda: make_optimizer_standard)
+    optimizer_factory: OptimizerFactory = field(
+        default_factory=lambda: make_optimizer_standard
+    )
     frozen_path_fragments: list[str] = field(default_factory=list)
     wins_only: bool = False
     gradient_surgery: bool = False
@@ -82,7 +84,6 @@ class AblationSpec:
     action_diversity_filter: bool = False
     reward_model_weighting: bool = False
     extra_loss_kwargs: dict = field(default_factory=dict)
-
 
 
 def _std_opt(config: dict, params: Any) -> Any:
@@ -143,6 +144,7 @@ def _ffn_only_opt(config: dict, params: Any) -> Any:
 
 def _layer_ablation_top_n_opt(n: int) -> OptimizerFactory:
     """Factory: freeze all transformer blocks except the top n + head."""
+
     def _opt(config: dict, params: Any) -> Any:
         n_layers = config.get("N_LAYERS", 4)
         # Top n blocks have the highest indices
@@ -157,6 +159,7 @@ def _layer_ablation_top_n_opt(n: int) -> OptimizerFactory:
         # Note: the final output Dense (head) is NOT frozen; it has a
         # higher index than Dense_0/Dense_1 and is therefore not matched.
         return make_optimizer_frozen_paths(config, params, frozen)
+
     return _opt
 
 
@@ -174,7 +177,7 @@ REGISTRY: dict[str, AblationSpec] = {
         group="A",
         description="Return-weighted ELBO + soft KL penalty vs. pretrained",
         hypothesis="If this helps: catastrophic forgetting is the primary cause; "
-                   "soft regularisation suffices",
+        "soft regularisation suffices",
         loss_factory=make_loss_kl_penalty,
         optimizer_factory=_std_opt,
     ),
