@@ -425,19 +425,19 @@ uv run pytest
 
 ## Implementation notes
 
-| Topic | Note |
-|---|---|
-| JAX purity | `make_train` / `make_train_dagger` are fully JIT-compatible; env construction and checkpoint I/O sit outside `jax.jit`. |
-| Offline data | `--mode offline` rolls out PPO live. `--mode collect` saves an `.npz` for inspection only — re-feeding it to `--mode offline` is unsupported; pass `--ppo-checkpoint`. |
-| Episode-boundary masking | A window at `(e, t)` is valid only if `dones[e, t+1:t+H-1]` are all `False`. |
-| Return weighting | Valid windows are weighted by cumulative reward, normalised by the batch mean, clipped to `[0.1, return_weight_cap]`, and applied as per-sample multipliers before loss reduction. |
-| LR schedule | Cosine decay `lr -> lr * 0.1` over all gradient steps. `lr_warmup_frames` (PRIMARY) or `lr_warmup_steps` (LEGACY) prepends linear warm-up. |
-| Env-frame invariance | PRIMARY keys are converted to update-step form by `resolve_scaled_hyperparams()` using `num_envs * num_steps`, so one config runs on any hardware tier. |
-| DAgger sizing | `dagger_sizing()` in `src/planners/common.py` is the single source of truth for `samples_per_update`, buffer capacity and `n_train_passes`. |
-| Loss weight clipping | The MDLM SUBS weight `-alpha'(t) / (1 - alpha_t)` is clipped to 1000 for stability as `alpha_t -> 1`. |
-| Validation rollouts | Every `val_interval` updates, using inference sampling parameters with `val_diffusion_steps`, `val_replan_every` and `val_steps`. |
-| W&B namespaces | Centralised in `src/planners/logging.py`: `diffusion/`, `train/`, `env/`, `val/`, `dagger/`. `train/sps` only in modes with live env interaction. |
+| Topic | Note                                                                                                                                                                                                                                                       |
+|---|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| JAX purity | `make_train_offline_diffusion` / `make_train_online_dagger` are fully JIT-compatible; env construction and checkpoint I/O sit outside `jax.jit`.                                                                                                           |
+| Offline data | `--mode offline` rolls out PPO live. `--mode collect` saves an `.npz` for inspection only — re-feeding it to `--mode offline` is unsupported; pass `--ppo-checkpoint`.                                                                                     |
+| Episode-boundary masking | A window at `(e, t)` is valid only if `dones[e, t+1:t+H-1]` are all `False`.                                                                                                                                                                               |
+| Return weighting | Valid windows are weighted by cumulative reward, normalised by the batch mean, clipped to `[0.1, return_weight_cap]`, and applied as per-sample multipliers before loss reduction.                                                                         |
+| LR schedule | Cosine decay `lr -> lr * 0.1` over all gradient steps. `lr_warmup_frames` (PRIMARY) or `lr_warmup_steps` (LEGACY) prepends linear warm-up.                                                                                                                 |
+| Env-frame invariance | PRIMARY keys are converted to update-step form by `resolve_scaled_hyperparams()` using `num_envs * num_steps`, so one config runs on any hardware tier.                                                                                                    |
+| DAgger sizing | `dagger_sizing()` in `src/planners/common.py` is the single source of truth for `samples_per_update`, buffer capacity and `n_train_passes`.                                                                                                                |
+| Loss weight clipping | The MDLM SUBS weight `-alpha'(t) / (1 - alpha_t)` is clipped to 1000 for stability as `alpha_t -> 1`.                                                                                                                                                      |
+| Validation rollouts | Every `val_interval` updates, using inference sampling parameters with `val_diffusion_steps`, `val_replan_every` and `val_steps`.                                                                                                                          |
+| W&B namespaces | Centralised in `src/planners/logging.py`: `diffusion/`, `train/`, `env/`, `val/`, `dagger/`. `train/sps` only in modes with live env interaction.                                                                                                          |
 | DAgger aggregation | Ross et al. (2011). A circular buffer accumulates `(obs, expert_plan)` across iterations; windows use a sliding stride so every visited state contributes a label. The expert receives correct `done` flags so its RNN state resets at episode boundaries. |
-| Best-checkpoint tracking | Highest-validation-return parameters are kept alongside the live ones and uploaded as `{env_name}-policy-best`. |
-| Denoising indexing | Reverse scan runs `step_idx = 0 -> T-1`, mapping to `t = (T - step_idx) / T` (high to low noise). |
-| PPO experts | Training lives entirely in `Craftax_Baselines/`; planner modes only consume checkpoints. Released PPO checkpoints were saved on GPU and currently fail to restore on a CPU-only machine. |
+| Best-checkpoint tracking | Highest-validation-return parameters are kept alongside the live ones and uploaded as `{env_name}-policy-best`.                                                                                                                                            |
+| Denoising indexing | Reverse scan runs `step_idx = 0 -> T-1`, mapping to `t = (T - step_idx) / T` (high to low noise).                                                                                                                                                          |
+| PPO experts | Training lives entirely in `Craftax_Baselines/`; planner modes only consume checkpoints. Released PPO checkpoints were saved on GPU and currently fail to restore on a CPU-only machine.                                                                   |

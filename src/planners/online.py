@@ -68,7 +68,7 @@ class DAggerCarry(NamedTuple):
     best_val_return: jnp.ndarray  # scalar, -inf initially
 
 
-def make_train_dagger(config: dict[str, Any]):
+def make_train_online_dagger(config: dict[str, Any]):
     """Build the DAgger train closure.
 
     All environment construction, model instantiation, and static
@@ -699,7 +699,7 @@ def run_online(config: dict[str, Any]) -> dict[str, Any]:
     rng = jax.random.PRNGKey(config["SEED"])
     rngs = jax.random.split(rng, config.get("NUM_REPEATS", 1))
 
-    train_fn = jax.jit(jax.vmap(make_train_dagger(config)))
+    train_fn = jax.jit(jax.vmap(make_train_online_dagger(config)))
 
     t0 = time.time()
     out = train_fn(rngs)
