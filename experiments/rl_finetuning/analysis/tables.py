@@ -31,8 +31,7 @@ def _latex_escape(text: str) -> str:
     for ch in ("&", "%", "$", "#", "_", "{", "}"):
         text = text.replace(ch, f"\\{ch}")
     text = text.replace("~", "\\textasciitilde{}")
-    text = text.replace("^", "\\textasciicircum{}")
-    return text
+    return text.replace("^", "\\textasciicircum{}")
 
 
 def _df_to_latex(df: pl.DataFrame, caption: str = "", label: str = "") -> str:
