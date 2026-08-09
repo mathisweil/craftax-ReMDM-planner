@@ -48,10 +48,6 @@ logger = logging.getLogger(__name__)
 _EPS: float = 1e-5
 
 
-# ---------------------------------------------------------------------------
-# History (unchanged public interface for analysis/)
-# ---------------------------------------------------------------------------
-
 
 @dataclass
 class AblationHistory:
@@ -134,10 +130,6 @@ class AblationHistory:
         valid_keys = {f.name for f in dataclasses.fields(cls)}
         return cls(**{k: v for k, v in d.items() if k in valid_keys})
 
-
-# ---------------------------------------------------------------------------
-# NamedTuples for scan carry and per-step metrics
-# ---------------------------------------------------------------------------
 
 
 class ReplayBuffer(NamedTuple):
@@ -237,10 +229,6 @@ class StepMetrics(NamedTuple):
     did_log: jax.Array
 
 
-# ---------------------------------------------------------------------------
-# Reward model (functional, for scan carry)
-# ---------------------------------------------------------------------------
-
 
 def _build_reward_model(
     obs_dim: int,
@@ -317,10 +305,6 @@ def _reward_model_train_step(
     return rm_state, loss_val
 
 
-# ---------------------------------------------------------------------------
-# Pure JAX advantage computation
-# ---------------------------------------------------------------------------
-
 
 def _compute_advantages(
     flat_returns: jax.Array,
@@ -389,10 +373,6 @@ def _effective_batch_size(advantages: jax.Array) -> jax.Array:
     sum_w2 = jnp.sum(advantages ** 2)
     return sum_w ** 2 / jnp.maximum(sum_w2, 1e-10)
 
-
-# ---------------------------------------------------------------------------
-# Rollout helpers (unchanged, already JIT-compiled)
-# ---------------------------------------------------------------------------
 
 
 def build_rollout_fn(
@@ -565,10 +545,6 @@ def build_eval_fn(
     return eval_policy
 
 
-# ---------------------------------------------------------------------------
-# Ring buffer operations (pure JAX)
-# ---------------------------------------------------------------------------
-
 
 def _init_replay_buffer(
     buf_size: int,
@@ -649,10 +625,6 @@ def _sample_from_buffer(
     indices = jax.random.randint(rng, (n_samples,), 0, valid_count)
     return buf.acts[indices], buf.obs[indices], buf.valid[indices], buf.returns[indices]
 
-
-# ---------------------------------------------------------------------------
-# make_run_ablation factory
-# ---------------------------------------------------------------------------
 
 
 def make_run_ablation(
@@ -826,9 +798,6 @@ def make_run_ablation(
     use_gradient_surgery = spec.gradient_surgery
     reward_filter_pct = config.get("REWARD_FILTER_PERCENTILE", 75)
 
-    # -------------------------------------------------------------------
-    # Build the run(rng) closure
-    # -------------------------------------------------------------------
     def run(rng: jax.Array) -> tuple[AblationCarry, StepMetrics]:
         """Execute the full ablation training loop.
 
@@ -888,9 +857,6 @@ def make_run_ablation(
             reward_model_state=rm_state,
         )
 
-        # ---------------------------------------------------------------
-        # _update_step: one iteration of the training loop
-        # ---------------------------------------------------------------
         def _update_step(
             carry: AblationCarry,
             _: None,
@@ -1158,10 +1124,6 @@ def make_run_ablation(
     return run
 
 
-# ---------------------------------------------------------------------------
-# metrics_to_history: convert scan output to AblationHistory
-# ---------------------------------------------------------------------------
-
 
 def metrics_to_history(
     all_metrics: StepMetrics,
@@ -1274,10 +1236,6 @@ def metrics_to_history(
 
     return history
 
-
-# ---------------------------------------------------------------------------
-# run_ablation: high-level entry point (Python-level orchestration)
-# ---------------------------------------------------------------------------
 
 
 def run_ablation(

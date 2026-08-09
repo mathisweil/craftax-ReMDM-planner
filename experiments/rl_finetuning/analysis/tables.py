@@ -19,10 +19,6 @@ from experiments.rl_finetuning.ablations.training import AblationHistory
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# LaTeX export helper (polars has no built-in to_latex)
-# ---------------------------------------------------------------------------
-
 
 def _latex_escape(text: str) -> str:
     """Escape LaTeX special characters in a string.
@@ -90,10 +86,6 @@ def _save_table(df: pl.DataFrame, path_stem: Path, caption: str = "", label: str
     Path(str(path_stem) + ".tex").write_text(tex)
     logger.info("Saved %s.csv and %s.tex", path_stem, path_stem)
 
-
-# ---------------------------------------------------------------------------
-# 3.7 Summary tables
-# ---------------------------------------------------------------------------
 
 
 def write_significance_test(results: dict[str, dict], out_dir: Path) -> None:
@@ -454,10 +446,6 @@ def make_hypothesis_verdict_table(
     return pl.DataFrame(rows)
 
 
-# ---------------------------------------------------------------------------
-# 3.8 Per-achievement summary table
-# ---------------------------------------------------------------------------
-
 
 def make_achievement_table(
     results: dict[str, dict],
@@ -502,10 +490,6 @@ def make_achievement_table(
 
     return pl.DataFrame(rows)
 
-
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
 
 
 def generate_summary_tables(

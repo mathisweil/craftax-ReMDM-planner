@@ -30,10 +30,6 @@ logger = logging.getLogger(__name__)
 _DPI = 150
 
 
-# ---------------------------------------------------------------------------
-# Evidence scoring
-# ---------------------------------------------------------------------------
-
 
 _HYPOTHESIS_GROUPS = {
     "Catastrophic Forgetting": {
@@ -127,10 +123,6 @@ def _score_hypothesis(
     }
 
 
-# ---------------------------------------------------------------------------
-# Decision tree figure
-# ---------------------------------------------------------------------------
-
 
 def _plot_decision_tree(
     scored_hypotheses: list[dict],
@@ -184,10 +176,6 @@ def _plot_decision_tree(
     plt.close(fig)
     logger.info("Saved decision tree to %s", path)
 
-
-# ---------------------------------------------------------------------------
-# Main report generation
-# ---------------------------------------------------------------------------
 
 
 def generate_diagnosis_report(

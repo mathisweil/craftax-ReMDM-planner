@@ -19,10 +19,6 @@ import numpy as np
 import optax
 
 
-# ---------------------------------------------------------------------------
-# Standard Adam
-# ---------------------------------------------------------------------------
-
 
 def make_optimizer_standard(config: dict, params: Any = None) -> optax.GradientTransformation:
     """AdamW with global gradient clipping — baseline optimizer.
@@ -44,10 +40,6 @@ def make_optimizer_standard(config: dict, params: Any = None) -> optax.GradientT
         ),
     )
 
-
-# ---------------------------------------------------------------------------
-# Group A: LLRD
-# ---------------------------------------------------------------------------
 
 
 def _get_llrd_label(path: tuple, head_fragments: tuple[str, ...] = ()) -> str:
@@ -159,10 +151,6 @@ def make_optimizer_llrd(config: dict, params: Any) -> optax.GradientTransformati
     )
 
 
-# ---------------------------------------------------------------------------
-# Group A: Frozen backbone / parameter isolation
-# ---------------------------------------------------------------------------
-
 
 def make_optimizer_frozen_paths(
     config: dict, params: Any, frozen_path_fragments: list[str]
@@ -207,10 +195,6 @@ def make_optimizer_frozen_paths(
         ),
     )
 
-
-# ---------------------------------------------------------------------------
-# Group A: LoRA
-# ---------------------------------------------------------------------------
 
 
 def _num_input_axes(path_str: str, ndim: int) -> int:
@@ -370,10 +354,6 @@ def make_optimizer_lora_only(
         ),
     )
 
-
-# ---------------------------------------------------------------------------
-# Gradient surgery (PCGrad) — applied to gradients, not a full optimizer
-# ---------------------------------------------------------------------------
 
 
 def gradient_surgery(g_rl: Any, g_bc: Any) -> Any:

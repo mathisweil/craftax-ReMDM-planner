@@ -18,10 +18,6 @@ from src.diffusion.forward import forward_process
 from src.diffusion.schedules import ScheduleFn
 
 
-# ---------------------------------------------------------------------------
-# KL drift (pure JAX)
-# ---------------------------------------------------------------------------
-
 
 def make_repr_drift_fn(
     apply_fn: Callable,
@@ -114,10 +110,6 @@ def make_repr_drift_fn(
 
     return repr_drift
 
-
-# ---------------------------------------------------------------------------
-# CKA (Centred Kernel Alignment) — pure JAX
-# ---------------------------------------------------------------------------
 
 
 @jax.jit

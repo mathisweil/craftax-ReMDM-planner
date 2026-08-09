@@ -14,10 +14,6 @@ import jax
 import jax.numpy as jnp
 
 
-# ---------------------------------------------------------------------------
-# Pure JAX gradient alignment (JIT-compatible)
-# ---------------------------------------------------------------------------
-
 
 def make_grad_alignment_fn(
     apply_fn: Callable,
@@ -105,10 +101,6 @@ def make_grad_alignment_fn(
     return grad_alignment
 
 
-# ---------------------------------------------------------------------------
-# Per-layer gradient norms (pure JAX, returns fixed-size arrays)
-# ---------------------------------------------------------------------------
-
 
 def compute_per_layer_grad_norms_jax(grads: Any) -> jax.Array:
     """Compute L2 gradient norm per parameter leaf as a JAX array.
@@ -128,10 +120,6 @@ def compute_per_layer_grad_norms_jax(grads: Any) -> jax.Array:
     norms = jnp.stack([jnp.linalg.norm(leaf) for leaf in leaves])
     return norms  # [num_leaves]
 
-
-# ---------------------------------------------------------------------------
-# Gradient surgery metrics (pure JAX)
-# ---------------------------------------------------------------------------
 
 
 def compute_surgery_metrics_jax(

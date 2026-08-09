@@ -19,10 +19,6 @@ from src.diffusion.schedules import ScheduleFn
 N_BINS: int = 10  # number of t bins for analysis
 
 
-# ---------------------------------------------------------------------------
-# t-bin gradient norm analysis (pure JAX, vmapped over bins)
-# ---------------------------------------------------------------------------
-
 
 def make_t_analysis_fn(
     apply_fn: Callable,
