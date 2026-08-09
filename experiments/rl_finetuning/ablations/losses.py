@@ -16,8 +16,8 @@ from typing import Any, Callable
 import jax
 import jax.numpy as jnp
 
-from src.diffusion.loss import compute_loss
 from src.diffusion.forward import forward_process
+from src.diffusion.loss import compute_loss
 from src.diffusion.schedules import ScheduleFn
 
 # Loss signature: (params, acts, obs, valid, rng, advantages) -> scalar

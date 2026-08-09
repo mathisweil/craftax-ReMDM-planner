@@ -584,10 +584,10 @@ def main(argv: list[str] | None = None) -> None:
 
     logger.info("Selected ablations (%d): %s", len(selected_names), selected_names)
 
+    from src.diffusion.schedules import SCHEDULE_MAP
     from src.planners.env import make_env
     from src.planners.model import build_model, load_checkpoint, make_apply_fns
     from src.planners.ppo import PPOAgent, build_ppo_network, load_ppo_params
-    from src.diffusion.schedules import SCHEDULE_MAP
 
     env, env_params = make_env(merged, merged["NUM_ENVS"])
     num_actions = env.action_space(env_params).n
