@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
-from typing import Any, Union
 from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 import jax
 import jax.numpy as jnp
