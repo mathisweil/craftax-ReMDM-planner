@@ -132,8 +132,7 @@ def compute_per_layer_grad_norms_jax(grads: Any) -> jax.Array:
         ``[num_leaves]`` JAX array of per-leaf L2 norms.
     """
     leaves = jax.tree.leaves(grads)
-    norms = jnp.stack([jnp.linalg.norm(leaf) for leaf in leaves])
-    return norms  # [num_leaves]
+    return jnp.stack([jnp.linalg.norm(leaf) for leaf in leaves])
 
 
 def compute_surgery_metrics_jax(

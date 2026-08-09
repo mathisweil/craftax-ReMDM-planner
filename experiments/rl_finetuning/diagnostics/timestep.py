@@ -100,8 +100,7 @@ def make_t_analysis_fn(
             return loss_val
 
         g = jax.grad(loss_in_range)(params)
-        flat = jnp.concatenate([leaf.ravel() for leaf in jax.tree.leaves(g)])
-        return flat  # [D_total]
+        return jnp.concatenate([leaf.ravel() for leaf in jax.tree.leaves(g)])
 
     @jax.jit
     def t_analysis(
