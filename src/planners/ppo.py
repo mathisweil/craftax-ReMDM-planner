@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-import orbax.checkpoint as ocp
 
 from Craftax_Baselines.ppo import ActorCritic
 from Craftax_Baselines.ppo_rnd import ActorCriticRND
 from Craftax_Baselines.ppo_rnn import ActorCriticRNN
+
+from .model import abstract_init, restore_latest_params
 
 
 def load_ppo_params(
@@ -22,41 +22,25 @@ def load_ppo_params(
     num_envs: int,
     obs_shape: tuple,
     layer_size: int = 512,
-    seed: int = 0,
 ) -> Any:
     """Restore PPO parameters from an Orbax checkpoint.
 
-    Args:
-        path:        Path to the Orbax checkpoint directory.
-        network:     Instantiated Flax network (used only for structure).
-        model_type:  One of ``"ppo_rnn"``, ``"ppo_rnd"``, or ``"ppo"``.
-        num_envs:    Number of parallel environments (affects RNN init shape).
-        obs_shape:   Observation shape tuple.
-        layer_size:  Hidden layer size (for RNN hidden state init).
-
-    Returns:
-        Restored parameter pytree.
+    Builds an abstract restore target with ``jax.eval_shape`` (no throwaway
+    parameter allocation), then restores only the ``params`` entry from the
+    latest saved step.
     """
-    path = str(Path(path).resolve())
-    rng = jax.random.PRNGKey(seed)
+    rng = jax.random.PRNGKey(0)  # Values are never materialised; seed is irrelevant.
     if model_type == "ppo_rnn":
         init_x = (jnp.zeros((1, num_envs, *obs_shape)), jnp.zeros((1, num_envs)))
-        abstract = network.init(rng, jnp.zeros((num_envs, layer_size)), init_x)
-    else:
-        abstract = network.init(rng, jnp.zeros((1, *obs_shape)))
-
-    with ocp.CheckpointManager(path) as mgr:
-        step = mgr.latest_step()
-        if step is None:
-            raise FileNotFoundError(f"No checkpoint at {path}")
-        restored = mgr.restore(
-            step,
-            args=ocp.args.PyTreeRestore(
-                item={"params": abstract}, partial_restore=True
-            ),
+        abstract = abstract_init(
+            lambda: network.init(rng, jnp.zeros((num_envs, layer_size)), init_x)
         )
+    else:
+        abstract = abstract_init(lambda: network.init(rng, jnp.zeros((1, *obs_shape))))
+
+    params, step = restore_latest_params(path, abstract)
     print(f"Loaded {model_type.upper()} checkpoint from '{path}' (step {step})")
-    return restored["params"]
+    return params
 
 
 def build_ppo_network(
@@ -112,7 +96,6 @@ def load_ppo_agent(
         num_envs,
         (obs_dim,),
         layer_size,
-        seed=int(config.get("SEED") or 0),
     )
     return PPOAgent(net, params, model_type, layer_size)
 

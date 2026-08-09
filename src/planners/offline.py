@@ -83,7 +83,6 @@ def make_train_offline_diffusion(config: dict[str, Any]):
         num_envs,
         obs_shape,
         config["LAYER_SIZE"],
-        seed=int(config.get("SEED") or 0),
     )
     ppo = PPOAgent(ppo_net, ppo_params, model_type, config["LAYER_SIZE"])
 
