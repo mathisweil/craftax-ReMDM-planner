@@ -32,7 +32,7 @@ The planner starts from a fully-masked action sequence and iteratively unmasks t
 Prerequisites: Python 3.12+, [uv](https://docs.astral.sh/uv/). For GPU nodes, a **CUDA 13** driver and toolkit (`libcuda.so`, `libcudnn`) must be installed at OS level (on HPC clusters typically `module load cuda/13.x`); they are not in `pyproject.toml`.
 
 ```bash
-git clone --recurse-submodules https://github.com/MathisW78/craftax-ReMDM-planner.git
+git clone --recurse-submodules https://github.com/mathisweil/craftax-ReMDM-planner.git
 cd craftax-ReMDM-planner
 # Or, if already cloned without submodules:
 git submodule update --init --recursive
@@ -234,7 +234,7 @@ With W&B on and `save_policy: true` (both defaults), training saves Orbax checkp
 
 **Pass the checkpoint directory, not the step subdirectory** — `CheckpointManager` resolves the latest step itself.
 
-`checkpoints/` is gitignored; released weights live on the Hub at [`MathisW78/remdm-craftax-checkpoints`](https://huggingface.co/MathisW78/remdm-craftax-checkpoints), mirroring the layout below.
+`checkpoints/` is gitignored; released weights live on the Hub at [`mathisweil/remdm-craftax-checkpoints`](https://huggingface.co/MathisW78/remdm-craftax-checkpoints), mirroring the layout below.
 
 | Checkpoint directory | Environment | Role | Trained for |
 |---|---|---|---|
@@ -247,7 +247,7 @@ With W&B on and `save_policy: true` (both defaults), training saves Orbax checkp
 
 ```bash
 # All six (~470 MB); narrow the --include glob for a single checkpoint.
-uv run hf download MathisW78/remdm-craftax-checkpoints --include "checkpoints/**" --local-dir .
+uv run hf download mathisweil/remdm-craftax-checkpoints --include "checkpoints/**" --local-dir .
 ```
 
 **Match the config to the checkpoint.** The model is built from the config, not the checkpoint, so a released checkpoint under `defaults.yaml` (`d_model` 256, `n_layers` 4) fails with a shape mismatch. All released diffusion checkpoints are `d_model` 384, `n_heads` 8, `n_layers` 6, `d_ff` 768 — use the matching `final_*` config, which also sets the right `env_name`:
@@ -266,7 +266,7 @@ python main.py --mode online \
 Re-upload after retraining with `scripts/hf_upload.py` (rediscovers checkpoints, strips wandb environment metadata, regenerates the model card):
 
 ```bash
-HF_TOKEN=hf_xxx uv run python scripts/hf_upload.py --repo-id MathisW78/remdm-craftax-checkpoints
+HF_TOKEN=hf_xxx uv run python scripts/hf_upload.py --repo-id mathisweil/remdm-craftax-checkpoints
 ```
 
 ## Results, citation, licence
