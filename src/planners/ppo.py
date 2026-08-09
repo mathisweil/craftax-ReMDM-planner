@@ -11,8 +11,8 @@ import numpy as np
 import orbax.checkpoint as ocp
 
 from Craftax_Baselines.ppo import ActorCritic
-from Craftax_Baselines.ppo_rnn import ActorCriticRNN
 from Craftax_Baselines.ppo_rnd import ActorCriticRND
+from Craftax_Baselines.ppo_rnn import ActorCriticRNN
 
 
 def load_ppo_params(

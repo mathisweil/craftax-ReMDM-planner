@@ -36,17 +36,17 @@ from .common import (
     resolve_scaled_hyperparams,
 )
 from .env import make_env
+from .logging import init_wandb, make_wandb_callback
 from .model import (
     build_model,
+    create_train_state,
     init_params,
     load_checkpoint,
     load_checkpoint_for_resume,
-    create_train_state,
     make_apply_fns,
     save_checkpoint_metadata,
 )
 from .ppo import PPOAgent, load_ppo_agent
-from .logging import init_wandb, make_wandb_callback
 
 
 class DAggerCarry(NamedTuple):

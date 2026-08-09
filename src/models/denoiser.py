@@ -6,9 +6,9 @@ transformer.  Two prefix tokens (obs, time) precede the action sequence.
 
 from __future__ import annotations
 
-import numpy as np
-import jax.numpy as jnp
 import flax.linen as nn
+import jax.numpy as jnp
+import numpy as np
 from flax.linen.initializers import constant, orthogonal
 
 _INIT = orthogonal(np.sqrt(2))

@@ -12,6 +12,7 @@ Loop mode (Section 4.2, Algorithm 3):
 """
 
 from __future__ import annotations
+
 from typing import Any, Callable, Optional
 
 import jax
