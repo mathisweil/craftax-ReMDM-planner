@@ -33,6 +33,9 @@ def make_env(config: dict, num_envs: int):
     Returns:
         Tuple of ``(env, env_params)``.
     """
+    # (A) benchmark-forced: episodes auto-reset inside the vectorised env;
+    # the boundary observation is the post-reset obs. The minihack repo
+    # manages episodes explicitly instead (METHOD_PARITY 2.5).
     env = make_craftax_env_from_name(config["ENV_NAME"], not config["USE_OPTIMISTIC_RESETS"])
     env_params = env.default_params
     env = LogWrapper(env)

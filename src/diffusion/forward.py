@@ -1,4 +1,8 @@
-"""Forward process: q(z_t | x_0) by independent per-token masking."""
+"""Forward process: q(z_t | x_0) by independent per-token masking.
+
+Shared pseudocode line 4 (METHOD_PARITY 2.1); the minihack twin is
+src/diffusion/forward.py:q_sample (adds PAD preservation, benchmark-forced).
+"""
 
 from __future__ import annotations
 
