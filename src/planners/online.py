@@ -49,25 +49,23 @@ from .ppo import PPOAgent, load_ppo_agent
 from .logging import init_wandb, make_wandb_callback
 
 
-
 class DAggerCarry(NamedTuple):
     """Carry state for the outer DAgger update scan."""
 
     train_state: Any
     env_state: Any
-    obs: jnp.ndarray          # [E, obs_dim]
+    obs: jnp.ndarray  # [E, obs_dim]
     rng: jax.Array
     step_idx: int
-    ppo_hs: Any               # [E, layer_size] or None (non-RNN)
-    prev_done: jnp.ndarray    # [E] bool
-    buf_obs: jnp.ndarray      # [max_buf, obs_dim]
-    buf_plans: jnp.ndarray    # [max_buf, plan_horizon] int32
-    buf_valid: jnp.ndarray    # [max_buf] float32
+    ppo_hs: Any  # [E, layer_size] or None (non-RNN)
+    prev_done: jnp.ndarray  # [E] bool
+    buf_obs: jnp.ndarray  # [max_buf, obs_dim]
+    buf_plans: jnp.ndarray  # [max_buf, plan_horizon] int32
+    buf_valid: jnp.ndarray  # [max_buf] float32
     buf_write_idx: int
     buf_fill: int
-    best_params: Any           # copy of params with highest val return
+    best_params: Any  # copy of params with highest val return
     best_val_return: jnp.ndarray  # scalar, -inf initially
-
 
 
 def make_train_dagger(config: dict[str, Any]):
@@ -149,8 +147,7 @@ def make_train_dagger(config: dict[str, Any]):
     # W = num_steps - plan_horizon + 1 windows per env per update instead
     # of only one window per cycle (~16x denser for the default config).
     assert num_steps % plan_horizon == 0, (
-        f"NUM_STEPS ({num_steps}) must be divisible by"
-        f" PLAN_HORIZON ({plan_horizon})"
+        f"NUM_STEPS ({num_steps}) must be divisible by PLAN_HORIZON ({plan_horizon})"
     )
     assert num_steps >= plan_horizon, (
         f"NUM_STEPS ({num_steps}) must be >= PLAN_HORIZON ({plan_horizon})"
@@ -188,9 +185,7 @@ def make_train_dagger(config: dict[str, Any]):
 
     # cosine LR schedule matching offline training.  Stretched to
     # cover all gradient steps across train passes (B1).
-    total_grad_steps = (
-        num_updates * n_train_passes * update_epochs * num_minibatches
-    )
+    total_grad_steps = num_updates * n_train_passes * update_epochs * num_minibatches
     warmup_steps = config.get("LR_WARMUP_STEPS", 0)
     lr_schedule = (
         optax.warmup_cosine_decay_schedule(
@@ -221,9 +216,7 @@ def make_train_dagger(config: dict[str, Any]):
             lr_schedule,
             config["MAX_GRAD_NORM"],
         )
-        target_opt_step = (
-            resume_step * n_train_passes * update_epochs * num_minibatches
-        )
+        target_opt_step = resume_step * n_train_passes * update_epochs * num_minibatches
         resume_state = resume_state.replace(step=target_opt_step)
 
     scan_length = num_updates - resume_step
@@ -257,12 +250,18 @@ def make_train_dagger(config: dict[str, Any]):
         elif pretrained_params is not None:
             params = pretrained_params
             state = create_train_state(
-                model, params, lr_schedule, config["MAX_GRAD_NORM"],
+                model,
+                params,
+                lr_schedule,
+                config["MAX_GRAD_NORM"],
             )
         else:
             params = init_params(model, init_rng, obs_dim, plan_horizon)
             state = create_train_state(
-                model, params, lr_schedule, config["MAX_GRAD_NORM"],
+                model,
+                params,
+                lr_schedule,
+                config["MAX_GRAD_NORM"],
             )
 
         obs, env_state = env.reset(env_rng, env_params)
@@ -270,15 +269,22 @@ def make_train_dagger(config: dict[str, Any]):
         # Pre-allocate DAgger replay buffer
         buf_obs = jnp.zeros((max_buffer_size, obs_dim))
         buf_plans = jnp.zeros(
-            (max_buffer_size, plan_horizon), dtype=jnp.int32,
+            (max_buffer_size, plan_horizon),
+            dtype=jnp.int32,
         )
         buf_valid = jnp.zeros(max_buffer_size)
 
         # Shared validation closure (see common.py)
         _validate = make_validate(
-            env, env_params, apply_eval, num_actions,
-            plan_horizon, schedule_fn, config,
-            val_replan_every, n_val_cycles,
+            env,
+            env_params,
+            apply_eval,
+            num_actions,
+            plan_horizon,
+            schedule_fn,
+            config,
+            val_replan_every,
+            n_val_cycles,
         )
 
         def _update_step(carry: DAggerCarry, _):
@@ -333,7 +339,8 @@ def make_train_dagger(config: dict[str, Any]):
                 def _sim_step(c, step_i):
                     st, o, r, hs, p_done = c
                     r, s_rng, mix_rng, ppo_rng = jax.random.split(
-                        r, 4,
+                        r,
+                        4,
                     )
 
                     # Expert action with the correct done flag so the
@@ -343,11 +350,13 @@ def make_train_dagger(config: dict[str, Any]):
                         # argmax keeps the expert mapping s -> a
                         # deterministic, removing label noise from D.
                         expert_act = jnp.argmax(
-                            pi.logits, axis=-1,
+                            pi.logits,
+                            axis=-1,
                         ).squeeze(0)
                     else:
                         expert_act = jax.random.categorical(
-                            ppo_rng, pi.logits,
+                            ppo_rng,
+                            pi.logits,
                         ).squeeze(0)
 
                     # Learner action from the plan
@@ -355,14 +364,21 @@ def make_train_dagger(config: dict[str, Any]):
 
                     # Mixed execution: prob beta -> expert, else learner
                     use_expert = jax.random.bernoulli(
-                        mix_rng, beta, shape=(num_envs,),
+                        mix_rng,
+                        beta,
+                        shape=(num_envs,),
                     )
                     exec_act = jnp.where(
-                        use_expert, expert_act, learner_act,
+                        use_expert,
+                        expert_act,
+                        learner_act,
                     )
 
                     o_next, st, rew, done, info = env.step(
-                        s_rng, st, exec_act, env_params,
+                        s_rng,
+                        st,
+                        exec_act,
+                        env_params,
                     )
                     # Yield the visited obs ``o`` (not ``o_next``) so the
                     # paired (obs_t, expert_act_t) is consistent.
@@ -374,8 +390,15 @@ def make_train_dagger(config: dict[str, Any]):
                         info,
                     )
 
-                final_c, (
-                    obs_seq, expert_acts, rews, dones, infos,
+                (
+                    final_c,
+                    (
+                        obs_seq,
+                        expert_acts,
+                        rews,
+                        dones,
+                        infos,
+                    ),
                 ) = jax.lax.scan(
                     _sim_step,
                     (es, cur_obs, sim_rng, hs, p_done),
@@ -396,13 +419,11 @@ def make_train_dagger(config: dict[str, Any]):
 
             # ppo_hs and prev_done persist across cycles and
             # updates via the scan carry.
-            (env_state, obs, rng, ppo_hs, prev_done), traj = (
-                jax.lax.scan(
-                    _plan_and_execute,
-                    (env_state, obs, rng, ppo_hs, prev_done),
-                    None,
-                    n_cycles,
-                )
+            (env_state, obs, rng, ppo_hs, prev_done), traj = jax.lax.scan(
+                _plan_and_execute,
+                (env_state, obs, rng, ppo_hs, prev_done),
+                None,
+                n_cycles,
             )
             # traj_obs:         [C, H, E, obs_dim]
             # traj_expert_acts: [C, H, E]
@@ -418,9 +439,9 @@ def make_train_dagger(config: dict[str, Any]):
             # concatenate cycles into one [T, E, ...] rollout.  Cycles
             # are contiguous in time so a flat reshape preserves order.
             T = num_steps
-            obs_t = traj_obs.reshape(T, num_envs, obs_dim)   # [T, E, D]
-            acts_t = traj_expert_acts.reshape(T, num_envs)    # [T, E]
-            dones_t = traj_dones.reshape(T, num_envs)         # [T, E]
+            obs_t = traj_obs.reshape(T, num_envs, obs_dim)  # [T, E, D]
+            acts_t = traj_expert_acts.reshape(T, num_envs)  # [T, E]
+            dones_t = traj_dones.reshape(T, num_envs)  # [T, E]
 
             # sliding-window extraction matching offline.py.
             # Window (t, e) is valid iff actions [t..t+H-1] all came from
@@ -428,14 +449,18 @@ def make_train_dagger(config: dict[str, Any]):
             # boundary on the *last* action is allowed — the window's
             # action sequence is still a coherent trajectory.
             def _window(t_idx):
-                obs_w = obs_t[t_idx]                          # [E, D]
+                obs_w = obs_t[t_idx]  # [E, D]
                 acts_w = jax.lax.dynamic_slice(
-                    acts_t, (t_idx, 0), (plan_horizon, num_envs),
-                )                                              # [H, E]
+                    acts_t,
+                    (t_idx, 0),
+                    (plan_horizon, num_envs),
+                )  # [H, E]
                 dones_w = jax.lax.dynamic_slice(
-                    dones_t, (t_idx, 0), (plan_horizon - 1, num_envs),
-                )                                              # [H-1, E]
-                valid = ~jnp.any(dones_w, axis=0)             # [E]
+                    dones_t,
+                    (t_idx, 0),
+                    (plan_horizon - 1, num_envs),
+                )  # [H-1, E]
+                valid = ~jnp.any(dones_w, axis=0)  # [E]
                 return obs_w, jnp.swapaxes(acts_w, 0, 1), valid
 
             obs_w, act_w, valid_w = jax.vmap(_window)(
@@ -455,11 +480,10 @@ def make_train_dagger(config: dict[str, Any]):
             buf_obs = buf_obs.at[write_indices].set(flat_obs)
             buf_plans = buf_plans.at[write_indices].set(flat_plans)
             buf_valid = buf_valid.at[write_indices].set(flat_valid)
-            buf_write_idx = (
-                buf_write_idx + samples_per_update
-            ) % max_buffer_size
+            buf_write_idx = (buf_write_idx + samples_per_update) % max_buffer_size
             buf_fill = jnp.minimum(
-                buf_fill + samples_per_update, max_buffer_size,
+                buf_fill + samples_per_update,
+                max_buffer_size,
             )
 
             # multi-pass training over the aggregated buffer.  Each
@@ -473,7 +497,10 @@ def make_train_dagger(config: dict[str, Any]):
                 state, rng = pass_state
                 rng, sample_rng = jax.random.split(rng)
                 buf_indices = jax.random.randint(
-                    sample_rng, (samples_per_update,), 0, buf_fill,
+                    sample_rng,
+                    (samples_per_update,),
+                    0,
+                    buf_fill,
                 )
                 dataset = (
                     buf_obs[buf_indices],
@@ -485,14 +512,18 @@ def make_train_dagger(config: dict[str, Any]):
                     state, ds, rng = epoch_state
                     rng, perm_rng = jax.random.split(rng)
                     perm = jax.random.permutation(
-                        perm_rng, samples_per_update,
+                        perm_rng,
+                        samples_per_update,
                     )
                     shuffled = jax.tree.map(
-                        lambda x: jnp.take(x, perm, axis=0), ds,
+                        lambda x: jnp.take(x, perm, axis=0),
+                        ds,
                     )
                     batches = jax.tree.map(
                         lambda x: x.reshape(
-                            num_minibatches, -1, *x.shape[1:],
+                            num_minibatches,
+                            -1,
+                            *x.shape[1:],
                         ),
                         shuffled,
                     )
@@ -513,25 +544,32 @@ def make_train_dagger(config: dict[str, Any]):
                         return (st, rng), metrics
 
                     (state, rng), metrics = jax.lax.scan(
-                        _mb, (state, rng), batches,
+                        _mb,
+                        (state, rng),
+                        batches,
                     )
                     return (state, ds, rng), metrics
 
                 (state, _, rng), loss_info = jax.lax.scan(
-                    _epoch, (state, dataset, rng), None, update_epochs,
+                    _epoch,
+                    (state, dataset, rng),
+                    None,
+                    update_epochs,
                 )
                 return (state, rng), loss_info
 
             (state, rng), loss_info = jax.lax.scan(
-                _pass, (state, rng), None, n_train_passes,
+                _pass,
+                (state, rng),
+                None,
+                n_train_passes,
             )
 
             # --- Metrics ------------------------------------------
             metric = jax.tree.map(jnp.mean, loss_info)
             returned = all_infos["returned_episode"]
             env_metrics = jax.tree.map(
-                lambda x: (x * returned).sum()
-                / (returned.sum() + 1e-8),
+                lambda x: (x * returned).sum() / (returned.sum() + 1e-8),
                 all_infos,
             )
             metric.update(env_metrics)
@@ -566,7 +604,9 @@ def make_train_dagger(config: dict[str, Any]):
                 state.params,
             )
             best_val_return = jnp.where(
-                improved, val_ret, best_val_return,
+                improved,
+                val_ret,
+                best_val_return,
             )
             metric["best_val_return"] = best_val_return
 
@@ -610,7 +650,10 @@ def make_train_dagger(config: dict[str, Any]):
             best_val_return=jnp.array(-jnp.inf),
         )
         runner_final, metrics = jax.lax.scan(
-            _update_step, runner_init, None, scan_length,
+            _update_step,
+            runner_init,
+            None,
+            scan_length,
         )
         return {
             "runner_state": runner_final,
@@ -619,7 +662,6 @@ def make_train_dagger(config: dict[str, Any]):
         }
 
     return train
-
 
 
 def run_online(config: dict[str, Any]) -> dict[str, Any]:
@@ -662,7 +704,9 @@ def run_online(config: dict[str, Any]) -> dict[str, Any]:
     t0 = time.time()
     out = train_fn(rngs)
     elapsed = time.time() - t0
-    print(f"Time: {elapsed:.1f}s  SPS: {config['ONLINE_TOTAL_TIMESTEPS'] / elapsed:.0f}")
+    print(
+        f"Time: {elapsed:.1f}s  SPS: {config['ONLINE_TOTAL_TIMESTEPS'] / elapsed:.0f}"
+    )
 
     if config.get("USE_WANDB") and config.get("SAVE_POLICY"):
         # Final checkpoint (last iteration params)
@@ -684,7 +728,9 @@ def run_online(config: dict[str, Any]) -> dict[str, Any]:
             path,
             mode="online",
             update_step=num_updates,
-            total_gradient_steps=num_updates * config["UPDATE_EPOCHS"] * config["NUM_MINIBATCHES"],
+            total_gradient_steps=num_updates
+            * config["UPDATE_EPOCHS"]
+            * config["NUM_MINIBATCHES"],
             wandb_run_id=wandb.run.id if wandb.run else None,
             config=config,
         )
@@ -701,7 +747,8 @@ def run_online(config: dict[str, Any]) -> dict[str, Any]:
         # Wrap in a dummy TrainState so the Orbax structure matches
         # the final checkpoint — load_checkpoint expects TrainState.
         best_params = jax.tree.map(
-            lambda x: x[0], out["best_params"],
+            lambda x: x[0],
+            out["best_params"],
         )
         tx = optax.chain(
             optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),

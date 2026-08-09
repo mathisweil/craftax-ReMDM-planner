@@ -51,13 +51,17 @@ def load_ppo_params(
             raise FileNotFoundError(f"No checkpoint at {path}")
         restored = mgr.restore(
             step,
-            args=ocp.args.PyTreeRestore(item={"params": abstract}, partial_restore=True),
+            args=ocp.args.PyTreeRestore(
+                item={"params": abstract}, partial_restore=True
+            ),
         )
     print(f"Loaded {model_type.upper()} checkpoint from '{path}' (step {step})")
     return restored["params"]
 
 
-def build_ppo_network(model_type: str, num_actions: int, layer_size: int, config: dict) -> Any:
+def build_ppo_network(
+    model_type: str, num_actions: int, layer_size: int, config: dict
+) -> Any:
     """Instantiate the correct PPO architecture.
 
     Args:
@@ -102,7 +106,12 @@ def load_ppo_agent(
     """
     net = build_ppo_network(model_type, num_actions, layer_size, config)
     params = load_ppo_params(
-        path, net, model_type, num_envs, (obs_dim,), layer_size,
+        path,
+        net,
+        model_type,
+        num_envs,
+        (obs_dim,),
+        layer_size,
         seed=int(config.get("SEED") or 0),
     )
     return PPOAgent(net, params, model_type, layer_size)
@@ -118,7 +127,9 @@ class PPOAgent:
         layer_size: Hidden layer width (used for RNN hidden-state shape).
     """
 
-    def __init__(self, network: Any, params: Any, model_type: str, layer_size: int = 512) -> None:
+    def __init__(
+        self, network: Any, params: Any, model_type: str, layer_size: int = 512
+    ) -> None:
         self.network = network
         self.params = params
         self.model_type = model_type.lower()

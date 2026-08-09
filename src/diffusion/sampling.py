@@ -123,13 +123,13 @@ def sample_plan(
 
     lock = history is not None
     if lock:
-        pos = jnp.broadcast_to(
-            jnp.arange(plan_horizon)[None, :], (B, plan_horizon)
-        )
+        pos = jnp.broadcast_to(jnp.arange(plan_horizon)[None, :], (B, plan_horizon))
         lock_mask = pos < hist_len[:, None]
 
     if remask_strategy not in _SIGMA_FNS:
-        raise ValueError(f"Unknown strategy {remask_strategy!r}. Options: {list(_SIGMA_FNS)}")
+        raise ValueError(
+            f"Unknown strategy {remask_strategy!r}. Options: {list(_SIGMA_FNS)}"
+        )
     get_sigma = _SIGMA_FNS[remask_strategy]
 
     # Phase allocation for loop mode
@@ -260,10 +260,21 @@ def sample_plan_inpainting(
         ``[B, plan_horizon]`` int32 completed action plan.
     """
     return sample_plan(
-        apply_fn, params, rng, obs, num_actions, plan_horizon,
-        diffusion_steps, schedule_fn,
-        remask_strategy=remask_strategy, eta=eta,
-        use_loop=use_loop, t_on=t_on, t_off=t_off,
-        temperature=temperature, top_p=top_p,
-        history=history, hist_len=hist_len,
+        apply_fn,
+        params,
+        rng,
+        obs,
+        num_actions,
+        plan_horizon,
+        diffusion_steps,
+        schedule_fn,
+        remask_strategy=remask_strategy,
+        eta=eta,
+        use_loop=use_loop,
+        t_on=t_on,
+        t_off=t_off,
+        temperature=temperature,
+        top_p=top_p,
+        history=history,
+        hist_len=hist_len,
     )

@@ -49,7 +49,9 @@ class TransformerBlock(nn.Module):
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         h = nn.LayerNorm()(x)
         h = nn.MultiHeadDotProductAttention(
-            num_heads=self.n_heads, kernel_init=_INIT, deterministic=self.deterministic,
+            num_heads=self.n_heads,
+            kernel_init=_INIT,
+            deterministic=self.deterministic,
         )(h, h)
         h = nn.Dropout(rate=self.dropout_rate, deterministic=self.deterministic)(h)
         x = x + h
@@ -97,14 +99,18 @@ class DenoisingTransformer(nn.Module):
         for _ in range(self.obs_encoder_layers - 1):
             h = nn.Dense(self.obs_encoder_width, kernel_init=_INIT, bias_init=_BIAS)(h)
             h = nn.relu(h)
-        obs_tok = nn.Dense(self.d_model, kernel_init=_INIT, bias_init=_BIAS)(h)[:, None, :]
+        obs_tok = nn.Dense(self.d_model, kernel_init=_INIT, bias_init=_BIAS)(h)[
+            :, None, :
+        ]
 
         # Time embedding
         t = timestep.reshape(B)
         t_emb = SinusoidalPosEmbed(self.d_model)(t)
         t_emb = nn.Dense(self.d_model, kernel_init=_INIT, bias_init=_BIAS)(t_emb)
         t_emb = nn.gelu(t_emb)
-        t_tok = nn.Dense(self.d_model, kernel_init=_INIT, bias_init=_BIAS)(t_emb)[:, None, :]
+        t_tok = nn.Dense(self.d_model, kernel_init=_INIT, bias_init=_BIAS)(t_emb)[
+            :, None, :
+        ]
 
         # Action token embedding
         act_emb = nn.Embed(num_embeddings=vocab, features=self.d_model)(noisy_actions)
@@ -118,8 +124,11 @@ class DenoisingTransformer(nn.Module):
         # Transformer
         for _ in range(self.n_layers):
             seq = TransformerBlock(
-                d_model=self.d_model, n_heads=self.n_heads, d_ff=self.d_ff,
-                dropout_rate=self.dropout_rate, deterministic=deterministic,
+                d_model=self.d_model,
+                n_heads=self.n_heads,
+                d_ff=self.d_ff,
+                dropout_rate=self.dropout_rate,
+                deterministic=deterministic,
             )(seq)
         seq = nn.LayerNorm()(seq)
 

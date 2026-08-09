@@ -132,9 +132,7 @@ def load_checkpoint(
         step = mgr.latest_step()
 
         if step is None:
-            raise FileNotFoundError(
-                f"No checkpoint at {path}"
-            )
+            raise FileNotFoundError(f"No checkpoint at {path}")
 
         restored = mgr.restore(
             step,
@@ -144,10 +142,7 @@ def load_checkpoint(
             ),
         )
 
-    print(
-        f"Loaded diffusion parameters from '{path}' "
-        f"(checkpoint step {step})"
-    )
+    print(f"Loaded diffusion parameters from '{path}' (checkpoint step {step})")
 
     return restored["params"]
 
@@ -187,18 +182,24 @@ def make_apply_fns(
         dropout via ``rngs={"dropout": rng}``.
     """
 
-    def apply_eval(params: Any, obs: jnp.ndarray, z_t: jnp.ndarray, t: jnp.ndarray, _rng=None):
+    def apply_eval(
+        params: Any, obs: jnp.ndarray, z_t: jnp.ndarray, t: jnp.ndarray, _rng=None
+    ):
         return model.apply(params, obs, z_t, t)
 
-    def apply_train(params: Any, obs: jnp.ndarray, z_t: jnp.ndarray, t: jnp.ndarray, rng=None):
+    def apply_train(
+        params: Any, obs: jnp.ndarray, z_t: jnp.ndarray, t: jnp.ndarray, rng=None
+    ):
         return model.apply(
-            params, obs, z_t, t,
+            params,
+            obs,
+            z_t,
+            t,
             deterministic=False,
             rngs={"dropout": rng} if rng is not None else {},
         )
 
     return apply_eval, apply_train
-
 
 
 class _NumpyEncoder(json.JSONEncoder):
@@ -316,9 +317,7 @@ def load_checkpoint_for_resume(
     with ocp.CheckpointManager(path) as mgr:
         step = mgr.latest_step()
         if step is None:
-            raise FileNotFoundError(
-                f"No checkpoint found at {path}"
-            )
+            raise FileNotFoundError(f"No checkpoint found at {path}")
         restored_state = mgr.restore(
             step,
             args=ocp.args.StandardRestore(item=abstract_state),

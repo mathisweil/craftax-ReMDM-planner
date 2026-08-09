@@ -29,7 +29,6 @@ from .ppo import build_ppo_network
 _BAR = "=" * 72
 
 
-
 def _write_random_expert(
     config: dict[str, Any],
     num_actions: int,
@@ -64,7 +63,6 @@ def _write_random_expert(
     with ocp.CheckpointManager(directory) as mgr:
         mgr.save(0, args=ocp.args.PyTreeSave({"params": params}))
         mgr.wait_until_finished()
-
 
 
 def _first_repeat(metrics: dict[str, Any]) -> dict[str, np.ndarray]:
@@ -130,19 +128,26 @@ def _print_summary(metrics: dict[str, Any], config: dict[str, Any]) -> None:
     if "reward_mean" in m:
         print(f"    {'mean step reward':<20} = {float(m['reward_mean'][last]):.4f}")
     if "returned_episode_returns" in m:
-        print(f"    {'episode return':<20} = {float(m['returned_episode_returns'][last]):.3f}")
+        print(
+            f"    {'episode return':<20} = {float(m['returned_episode_returns'][last]):.3f}"
+        )
     if "returned_episode_lengths" in m:
-        print(f"    {'episode length':<20} = {float(m['returned_episode_lengths'][last]):.1f}")
+        print(
+            f"    {'episode length':<20} = {float(m['returned_episode_lengths'][last]):.1f}"
+        )
 
     achievements = {
-        k: float(v[last]) for k, v in m.items()
+        k: float(v[last])
+        for k, v in m.items()
         if "achievement" in k.lower() and not k.startswith("val/")
     }
     if achievements:
         # Craftax reports unlock rates as percentages.
         total = sum(achievements.values()) / 100.0
         unlocked = [k for k, v in achievements.items() if v > 0.0]
-        print(f"    {'achievements':<20} = {total:.3f} over {len(achievements)} tracked")
+        print(
+            f"    {'achievements':<20} = {total:.3f} over {len(achievements)} tracked"
+        )
         print(f"    {'unlocked':<20} = {len(unlocked)}")
 
     val_idx = _last_validated_step(config, len(m["loss"]))
@@ -158,9 +163,7 @@ def _print_summary(metrics: dict[str, Any], config: dict[str, Any]) -> None:
             if key in m:
                 print(f"    {label:<20} = {float(m[key][val_idx]):.3f}")
 
-    finite = all(
-        np.all(np.isfinite(np.asarray(v))) for v in m.values()
-    )
+    finite = all(np.all(np.isfinite(np.asarray(v))) for v in m.values())
     print(f"  -- Health --\n    {'all metrics finite':<20} = {finite}")
     print(
         "\n  Episode-weighted metrics (returns, lengths, achievements) read\n"
@@ -171,7 +174,6 @@ def _print_summary(metrics: dict[str, Any], config: dict[str, Any]) -> None:
 
     if not finite:
         raise ValueError("Smoke test produced non-finite metrics")
-
 
 
 def run_smoke(config: dict[str, Any]) -> None:
@@ -248,13 +250,23 @@ def _smoke_inference_leg(out, config, num_actions, obs_shape) -> None:
     hist_len = jnp.array([2, 0], dtype=jnp.int32)
 
     plan = sample_plan_inpainting(
-        apply_eval, params, jax.random.PRNGKey(int(config["SEED"])), obs,
-        history, hist_len, num_actions, plan_horizon,
-        int(config.get("DIFFUSION_STEPS_EVAL", 10)), schedule_fn,
-        config.get("REMASK_STRATEGY", "rescale"), config.get("ETA", 0.5),
-        config.get("USE_LOOP", True), config.get("T_ON", 0.7),
+        apply_eval,
+        params,
+        jax.random.PRNGKey(int(config["SEED"])),
+        obs,
+        history,
+        hist_len,
+        num_actions,
+        plan_horizon,
+        int(config.get("DIFFUSION_STEPS_EVAL", 10)),
+        schedule_fn,
+        config.get("REMASK_STRATEGY", "rescale"),
+        config.get("ETA", 0.5),
+        config.get("USE_LOOP", True),
+        config.get("T_ON", 0.7),
         config.get("T_OFF", 0.3),
-        config.get("TEMPERATURE", 0.5), config.get("TOP_P", 0.95),
+        config.get("TEMPERATURE", 0.5),
+        config.get("TOP_P", 0.95),
     )
     assert plan.shape == (2, plan_horizon)
     assert bool(jnp.all((plan >= 0) & (plan < num_actions))), (
