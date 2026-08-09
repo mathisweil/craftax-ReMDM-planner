@@ -33,7 +33,11 @@ class SinusoidalPosEmbed(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    """Pre-norm transformer: LN -> MHA -> res -> LN -> FFN -> res."""
+    """Pre-norm transformer: LN -> MHA -> res -> LN -> FFN -> res.
+
+    (A) framework default: flax LayerNorm eps 1e-6 vs torch 1e-5 in the
+    minihack repo (METHOD_PARITY 2.3).
+    """
 
     d_model: int
     n_heads: int

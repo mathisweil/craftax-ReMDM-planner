@@ -14,6 +14,7 @@ from craftax.craftax.constants import Achievement as FullCraftaxAchievements
 from craftax.craftax_classic.constants import Achievement as ClassicAchievements
 
 from src.diffusion.sampling import sample_plan_inpainting
+from src.diffusion.schedules import SCHEDULE_MAP
 from .model import build_model, load_checkpoint, make_apply_fns
 
 
@@ -35,6 +36,12 @@ def run_inference(config: dict[str, Any]) -> None:
     temperature = config.get("TEMPERATURE", 0.5)
     top_p = config.get("TOP_P", 0.95)
     eval_steps = int(float(config.get("EVAL_STEPS", 10000)))
+    schedule_fn, _ = SCHEDULE_MAP[config.get("DIFFUSION_SCHEDULE", "cosine")]
+    remask_strategy = config.get("REMASK_STRATEGY", "rescale")
+    eta = config.get("ETA", 0.5)
+    use_loop = config.get("USE_LOOP", True)
+    t_on = config.get("T_ON", 0.7)
+    t_off = config.get("T_OFF", 0.3)
 
     model = build_model(config, num_actions)
     apply_eval, _ = make_apply_fns(model)
@@ -57,7 +64,8 @@ def run_inference(config: dict[str, Any]) -> None:
         plan = sample_plan_inpainting(
             apply_eval, model_params, plan_rng, obs,
             history, hist_len, num_actions, plan_horizon,
-            diffusion_steps, temperature, top_p,
+            diffusion_steps, schedule_fn, remask_strategy, eta,
+            use_loop, t_on, t_off, temperature, top_p,
         )
 
         action = jnp.take_along_axis(plan, hist_len[:, None], axis=-1).squeeze(-1)

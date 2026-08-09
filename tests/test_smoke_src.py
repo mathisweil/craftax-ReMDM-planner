@@ -290,17 +290,23 @@ def test_sample_plan_rejects_unknown_strategy(apply_fns, params, batch, schedule
         )
 
 
-def test_sample_plan_inpainting_locks_history(apply_fns, params, batch) -> None:
+def test_sample_plan_inpainting_locks_history(
+    apply_fns, params, batch, schedules,
+) -> None:
     from src.diffusion.sampling import sample_plan_inpainting
 
     apply_eval, _ = apply_fns
+    schedule_fn, _ = schedules
     hist_len = jnp.full((BATCH,), 2, dtype=jnp.int32)
     history = jnp.zeros((BATCH, PLAN_HORIZON), dtype=jnp.int32)
 
     plan = sample_plan_inpainting(
         apply_eval, params, jax.random.PRNGKey(SEED), batch["obs"],
         history, hist_len, NUM_ACTIONS, PLAN_HORIZON,
-        diffusion_steps=3, temperature=0.5, top_p=0.95,
+        diffusion_steps=3, schedule_fn=schedule_fn,
+        remask_strategy="rescale", eta=0.5,
+        use_loop=False, t_on=0.7, t_off=0.3,
+        temperature=0.5, top_p=0.95,
     )
 
     assert plan.shape == (BATCH, PLAN_HORIZON)

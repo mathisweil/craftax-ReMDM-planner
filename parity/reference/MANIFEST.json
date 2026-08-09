@@ -1,0 +1,11 @@
+{
+  "checkpoints": {
+    "classic_bc": "2100d333798cbe1bedc31847392dcb75cd9a06b5f663fb6801e9bc194c6965ad",
+    "classic_dagger": "4fb8534dc982c3e9e05471d09caaf40ff5a8443be633f0eb4fd64101048e70cb",
+    "classic_ppo": "b43b72c6f784faeddf9da6bc8113b0f04a13358fe21a3ff8ceb8303cc90612a1",
+    "craftax_bc": "0c40b9937a5e22f0233d9f1666809795febb545f9a7d303dd6efe2c760fc119c",
+    "craftax_dagger": "50002edc64a08a344304b79a11bd4ab7262db58e5a453bbd9b8ffee5bea14882",
+    "craftax_ppo": "f4f539ca2b939c0eb540ea66ed0905e7459616b7da4949ebcdc75a6f7d5736e8"
+  },
+  "git_commit": "4d0dc5df6d177ed251c3444eab6b44e2e05037be"
+}

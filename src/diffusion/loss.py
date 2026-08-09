@@ -1,4 +1,8 @@
-"""MDLM ELBO loss for masked discrete diffusion training."""
+"""MDLM ELBO loss for masked discrete diffusion training.
+
+Shared pseudocode lines 2-6 (METHOD_PARITY 2.1); the minihack twin is
+src/diffusion/loss.py:mdlm_loss.
+"""
 
 from __future__ import annotations
 from typing import Any, Callable, Optional
@@ -84,8 +88,11 @@ def compute_loss(
     log_probs = jax.nn.log_softmax(logits, axis=-1)
     ce = -jnp.sum(targets * log_probs, axis=-1)             # [B, H]
 
-    n_masked = jnp.maximum(valid_masked.sum(axis=-1), 1.0)  # [B]
-    per_sample = weight * (ce * valid_masked).sum(axis=-1) / n_masked
+    # FIX-1 (ADJUDICATION B-1): constant per-token normalisation (1/H),
+    # per MDLM eq (10) / Shi eq (4). Dividing by the realised masked
+    # count distorted the NELBO weight by ~1/(1-alpha_t) per sample.
+    H = x_0.shape[1]
+    per_sample = weight * (ce * valid_masked).sum(axis=-1) / H
 
     if advantages is not None:
         per_sample = per_sample * jax.lax.stop_gradient(advantages)
@@ -108,7 +115,7 @@ def compute_loss(
 
     info = {
         "loss": loss,
-        "unweighted_loss": jnp.mean((ce * valid_masked).sum(axis=-1) / n_masked),
+        "unweighted_loss": jnp.mean((ce * valid_masked).sum(axis=-1) / H),
         "mean_t": jnp.mean(t),
         "frac_masked": jnp.mean(is_masked),
         "accuracy": acc,

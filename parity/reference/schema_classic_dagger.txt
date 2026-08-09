@@ -1,0 +1,345 @@
+latest_step: 100000000
+sidecar: resume_metadata.json
+opt_state.0: None
+opt_state.1.0.count: () int32
+opt_state.1.0.mu.params.Dense_0.bias: (768,) float32
+opt_state.1.0.mu.params.Dense_0.kernel: (1345, 768) float32
+opt_state.1.0.mu.params.Dense_1.bias: (768,) float32
+opt_state.1.0.mu.params.Dense_1.kernel: (768, 768) float32
+opt_state.1.0.mu.params.Dense_2.bias: (384,) float32
+opt_state.1.0.mu.params.Dense_2.kernel: (768, 384) float32
+opt_state.1.0.mu.params.Dense_3.bias: (384,) float32
+opt_state.1.0.mu.params.Dense_3.kernel: (384, 384) float32
+opt_state.1.0.mu.params.Dense_4.bias: (384,) float32
+opt_state.1.0.mu.params.Dense_4.kernel: (384, 384) float32
+opt_state.1.0.mu.params.Dense_5.bias: (17,) float32
+opt_state.1.0.mu.params.Dense_5.kernel: (384, 17) float32
+opt_state.1.0.mu.params.Embed_0.embedding: (18, 384) float32
+opt_state.1.0.mu.params.LayerNorm_0.bias: (768,) float32
+opt_state.1.0.mu.params.LayerNorm_0.scale: (768,) float32
+opt_state.1.0.mu.params.LayerNorm_1.bias: (384,) float32
+opt_state.1.0.mu.params.LayerNorm_1.scale: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_0.Dense_0.bias: (768,) float32
+opt_state.1.0.mu.params.TransformerBlock_0.Dense_0.kernel: (384, 768) float32
+opt_state.1.0.mu.params.TransformerBlock_0.Dense_1.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_0.Dense_1.kernel: (768, 384) float32
+opt_state.1.0.mu.params.TransformerBlock_0.LayerNorm_0.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_0.LayerNorm_0.scale: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_0.LayerNorm_1.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_0.LayerNorm_1.scale: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_0.MultiHeadDotProductAttention_0.key.bias: (8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_0.MultiHeadDotProductAttention_0.key.kernel: (384, 8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_0.MultiHeadDotProductAttention_0.out.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_0.MultiHeadDotProductAttention_0.out.kernel: (8, 48, 384) float32
+opt_state.1.0.mu.params.TransformerBlock_0.MultiHeadDotProductAttention_0.query.bias: (8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_0.MultiHeadDotProductAttention_0.query.kernel: (384, 8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_0.MultiHeadDotProductAttention_0.value.bias: (8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_0.MultiHeadDotProductAttention_0.value.kernel: (384, 8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_1.Dense_0.bias: (768,) float32
+opt_state.1.0.mu.params.TransformerBlock_1.Dense_0.kernel: (384, 768) float32
+opt_state.1.0.mu.params.TransformerBlock_1.Dense_1.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_1.Dense_1.kernel: (768, 384) float32
+opt_state.1.0.mu.params.TransformerBlock_1.LayerNorm_0.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_1.LayerNorm_0.scale: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_1.LayerNorm_1.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_1.LayerNorm_1.scale: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_1.MultiHeadDotProductAttention_0.key.bias: (8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_1.MultiHeadDotProductAttention_0.key.kernel: (384, 8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_1.MultiHeadDotProductAttention_0.out.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_1.MultiHeadDotProductAttention_0.out.kernel: (8, 48, 384) float32
+opt_state.1.0.mu.params.TransformerBlock_1.MultiHeadDotProductAttention_0.query.bias: (8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_1.MultiHeadDotProductAttention_0.query.kernel: (384, 8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_1.MultiHeadDotProductAttention_0.value.bias: (8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_1.MultiHeadDotProductAttention_0.value.kernel: (384, 8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_2.Dense_0.bias: (768,) float32
+opt_state.1.0.mu.params.TransformerBlock_2.Dense_0.kernel: (384, 768) float32
+opt_state.1.0.mu.params.TransformerBlock_2.Dense_1.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_2.Dense_1.kernel: (768, 384) float32
+opt_state.1.0.mu.params.TransformerBlock_2.LayerNorm_0.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_2.LayerNorm_0.scale: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_2.LayerNorm_1.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_2.LayerNorm_1.scale: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_2.MultiHeadDotProductAttention_0.key.bias: (8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_2.MultiHeadDotProductAttention_0.key.kernel: (384, 8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_2.MultiHeadDotProductAttention_0.out.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_2.MultiHeadDotProductAttention_0.out.kernel: (8, 48, 384) float32
+opt_state.1.0.mu.params.TransformerBlock_2.MultiHeadDotProductAttention_0.query.bias: (8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_2.MultiHeadDotProductAttention_0.query.kernel: (384, 8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_2.MultiHeadDotProductAttention_0.value.bias: (8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_2.MultiHeadDotProductAttention_0.value.kernel: (384, 8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_3.Dense_0.bias: (768,) float32
+opt_state.1.0.mu.params.TransformerBlock_3.Dense_0.kernel: (384, 768) float32
+opt_state.1.0.mu.params.TransformerBlock_3.Dense_1.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_3.Dense_1.kernel: (768, 384) float32
+opt_state.1.0.mu.params.TransformerBlock_3.LayerNorm_0.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_3.LayerNorm_0.scale: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_3.LayerNorm_1.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_3.LayerNorm_1.scale: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_3.MultiHeadDotProductAttention_0.key.bias: (8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_3.MultiHeadDotProductAttention_0.key.kernel: (384, 8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_3.MultiHeadDotProductAttention_0.out.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_3.MultiHeadDotProductAttention_0.out.kernel: (8, 48, 384) float32
+opt_state.1.0.mu.params.TransformerBlock_3.MultiHeadDotProductAttention_0.query.bias: (8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_3.MultiHeadDotProductAttention_0.query.kernel: (384, 8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_3.MultiHeadDotProductAttention_0.value.bias: (8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_3.MultiHeadDotProductAttention_0.value.kernel: (384, 8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_4.Dense_0.bias: (768,) float32
+opt_state.1.0.mu.params.TransformerBlock_4.Dense_0.kernel: (384, 768) float32
+opt_state.1.0.mu.params.TransformerBlock_4.Dense_1.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_4.Dense_1.kernel: (768, 384) float32
+opt_state.1.0.mu.params.TransformerBlock_4.LayerNorm_0.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_4.LayerNorm_0.scale: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_4.LayerNorm_1.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_4.LayerNorm_1.scale: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_4.MultiHeadDotProductAttention_0.key.bias: (8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_4.MultiHeadDotProductAttention_0.key.kernel: (384, 8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_4.MultiHeadDotProductAttention_0.out.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_4.MultiHeadDotProductAttention_0.out.kernel: (8, 48, 384) float32
+opt_state.1.0.mu.params.TransformerBlock_4.MultiHeadDotProductAttention_0.query.bias: (8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_4.MultiHeadDotProductAttention_0.query.kernel: (384, 8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_4.MultiHeadDotProductAttention_0.value.bias: (8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_4.MultiHeadDotProductAttention_0.value.kernel: (384, 8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_5.Dense_0.bias: (768,) float32
+opt_state.1.0.mu.params.TransformerBlock_5.Dense_0.kernel: (384, 768) float32
+opt_state.1.0.mu.params.TransformerBlock_5.Dense_1.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_5.Dense_1.kernel: (768, 384) float32
+opt_state.1.0.mu.params.TransformerBlock_5.LayerNorm_0.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_5.LayerNorm_0.scale: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_5.LayerNorm_1.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_5.LayerNorm_1.scale: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_5.MultiHeadDotProductAttention_0.key.bias: (8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_5.MultiHeadDotProductAttention_0.key.kernel: (384, 8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_5.MultiHeadDotProductAttention_0.out.bias: (384,) float32
+opt_state.1.0.mu.params.TransformerBlock_5.MultiHeadDotProductAttention_0.out.kernel: (8, 48, 384) float32
+opt_state.1.0.mu.params.TransformerBlock_5.MultiHeadDotProductAttention_0.query.bias: (8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_5.MultiHeadDotProductAttention_0.query.kernel: (384, 8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_5.MultiHeadDotProductAttention_0.value.bias: (8, 48) float32
+opt_state.1.0.mu.params.TransformerBlock_5.MultiHeadDotProductAttention_0.value.kernel: (384, 8, 48) float32
+opt_state.1.0.nu.params.Dense_0.bias: (768,) float32
+opt_state.1.0.nu.params.Dense_0.kernel: (1345, 768) float32
+opt_state.1.0.nu.params.Dense_1.bias: (768,) float32
+opt_state.1.0.nu.params.Dense_1.kernel: (768, 768) float32
+opt_state.1.0.nu.params.Dense_2.bias: (384,) float32
+opt_state.1.0.nu.params.Dense_2.kernel: (768, 384) float32
+opt_state.1.0.nu.params.Dense_3.bias: (384,) float32
+opt_state.1.0.nu.params.Dense_3.kernel: (384, 384) float32
+opt_state.1.0.nu.params.Dense_4.bias: (384,) float32
+opt_state.1.0.nu.params.Dense_4.kernel: (384, 384) float32
+opt_state.1.0.nu.params.Dense_5.bias: (17,) float32
+opt_state.1.0.nu.params.Dense_5.kernel: (384, 17) float32
+opt_state.1.0.nu.params.Embed_0.embedding: (18, 384) float32
+opt_state.1.0.nu.params.LayerNorm_0.bias: (768,) float32
+opt_state.1.0.nu.params.LayerNorm_0.scale: (768,) float32
+opt_state.1.0.nu.params.LayerNorm_1.bias: (384,) float32
+opt_state.1.0.nu.params.LayerNorm_1.scale: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_0.Dense_0.bias: (768,) float32
+opt_state.1.0.nu.params.TransformerBlock_0.Dense_0.kernel: (384, 768) float32
+opt_state.1.0.nu.params.TransformerBlock_0.Dense_1.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_0.Dense_1.kernel: (768, 384) float32
+opt_state.1.0.nu.params.TransformerBlock_0.LayerNorm_0.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_0.LayerNorm_0.scale: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_0.LayerNorm_1.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_0.LayerNorm_1.scale: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_0.MultiHeadDotProductAttention_0.key.bias: (8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_0.MultiHeadDotProductAttention_0.key.kernel: (384, 8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_0.MultiHeadDotProductAttention_0.out.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_0.MultiHeadDotProductAttention_0.out.kernel: (8, 48, 384) float32
+opt_state.1.0.nu.params.TransformerBlock_0.MultiHeadDotProductAttention_0.query.bias: (8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_0.MultiHeadDotProductAttention_0.query.kernel: (384, 8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_0.MultiHeadDotProductAttention_0.value.bias: (8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_0.MultiHeadDotProductAttention_0.value.kernel: (384, 8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_1.Dense_0.bias: (768,) float32
+opt_state.1.0.nu.params.TransformerBlock_1.Dense_0.kernel: (384, 768) float32
+opt_state.1.0.nu.params.TransformerBlock_1.Dense_1.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_1.Dense_1.kernel: (768, 384) float32
+opt_state.1.0.nu.params.TransformerBlock_1.LayerNorm_0.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_1.LayerNorm_0.scale: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_1.LayerNorm_1.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_1.LayerNorm_1.scale: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_1.MultiHeadDotProductAttention_0.key.bias: (8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_1.MultiHeadDotProductAttention_0.key.kernel: (384, 8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_1.MultiHeadDotProductAttention_0.out.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_1.MultiHeadDotProductAttention_0.out.kernel: (8, 48, 384) float32
+opt_state.1.0.nu.params.TransformerBlock_1.MultiHeadDotProductAttention_0.query.bias: (8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_1.MultiHeadDotProductAttention_0.query.kernel: (384, 8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_1.MultiHeadDotProductAttention_0.value.bias: (8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_1.MultiHeadDotProductAttention_0.value.kernel: (384, 8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_2.Dense_0.bias: (768,) float32
+opt_state.1.0.nu.params.TransformerBlock_2.Dense_0.kernel: (384, 768) float32
+opt_state.1.0.nu.params.TransformerBlock_2.Dense_1.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_2.Dense_1.kernel: (768, 384) float32
+opt_state.1.0.nu.params.TransformerBlock_2.LayerNorm_0.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_2.LayerNorm_0.scale: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_2.LayerNorm_1.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_2.LayerNorm_1.scale: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_2.MultiHeadDotProductAttention_0.key.bias: (8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_2.MultiHeadDotProductAttention_0.key.kernel: (384, 8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_2.MultiHeadDotProductAttention_0.out.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_2.MultiHeadDotProductAttention_0.out.kernel: (8, 48, 384) float32
+opt_state.1.0.nu.params.TransformerBlock_2.MultiHeadDotProductAttention_0.query.bias: (8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_2.MultiHeadDotProductAttention_0.query.kernel: (384, 8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_2.MultiHeadDotProductAttention_0.value.bias: (8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_2.MultiHeadDotProductAttention_0.value.kernel: (384, 8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_3.Dense_0.bias: (768,) float32
+opt_state.1.0.nu.params.TransformerBlock_3.Dense_0.kernel: (384, 768) float32
+opt_state.1.0.nu.params.TransformerBlock_3.Dense_1.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_3.Dense_1.kernel: (768, 384) float32
+opt_state.1.0.nu.params.TransformerBlock_3.LayerNorm_0.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_3.LayerNorm_0.scale: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_3.LayerNorm_1.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_3.LayerNorm_1.scale: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_3.MultiHeadDotProductAttention_0.key.bias: (8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_3.MultiHeadDotProductAttention_0.key.kernel: (384, 8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_3.MultiHeadDotProductAttention_0.out.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_3.MultiHeadDotProductAttention_0.out.kernel: (8, 48, 384) float32
+opt_state.1.0.nu.params.TransformerBlock_3.MultiHeadDotProductAttention_0.query.bias: (8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_3.MultiHeadDotProductAttention_0.query.kernel: (384, 8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_3.MultiHeadDotProductAttention_0.value.bias: (8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_3.MultiHeadDotProductAttention_0.value.kernel: (384, 8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_4.Dense_0.bias: (768,) float32
+opt_state.1.0.nu.params.TransformerBlock_4.Dense_0.kernel: (384, 768) float32
+opt_state.1.0.nu.params.TransformerBlock_4.Dense_1.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_4.Dense_1.kernel: (768, 384) float32
+opt_state.1.0.nu.params.TransformerBlock_4.LayerNorm_0.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_4.LayerNorm_0.scale: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_4.LayerNorm_1.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_4.LayerNorm_1.scale: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_4.MultiHeadDotProductAttention_0.key.bias: (8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_4.MultiHeadDotProductAttention_0.key.kernel: (384, 8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_4.MultiHeadDotProductAttention_0.out.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_4.MultiHeadDotProductAttention_0.out.kernel: (8, 48, 384) float32
+opt_state.1.0.nu.params.TransformerBlock_4.MultiHeadDotProductAttention_0.query.bias: (8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_4.MultiHeadDotProductAttention_0.query.kernel: (384, 8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_4.MultiHeadDotProductAttention_0.value.bias: (8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_4.MultiHeadDotProductAttention_0.value.kernel: (384, 8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_5.Dense_0.bias: (768,) float32
+opt_state.1.0.nu.params.TransformerBlock_5.Dense_0.kernel: (384, 768) float32
+opt_state.1.0.nu.params.TransformerBlock_5.Dense_1.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_5.Dense_1.kernel: (768, 384) float32
+opt_state.1.0.nu.params.TransformerBlock_5.LayerNorm_0.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_5.LayerNorm_0.scale: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_5.LayerNorm_1.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_5.LayerNorm_1.scale: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_5.MultiHeadDotProductAttention_0.key.bias: (8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_5.MultiHeadDotProductAttention_0.key.kernel: (384, 8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_5.MultiHeadDotProductAttention_0.out.bias: (384,) float32
+opt_state.1.0.nu.params.TransformerBlock_5.MultiHeadDotProductAttention_0.out.kernel: (8, 48, 384) float32
+opt_state.1.0.nu.params.TransformerBlock_5.MultiHeadDotProductAttention_0.query.bias: (8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_5.MultiHeadDotProductAttention_0.query.kernel: (384, 8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_5.MultiHeadDotProductAttention_0.value.bias: (8, 48) float32
+opt_state.1.0.nu.params.TransformerBlock_5.MultiHeadDotProductAttention_0.value.kernel: (384, 8, 48) float32
+opt_state.1.1: None
+params.params.Dense_0.bias: (768,) float32
+params.params.Dense_0.kernel: (1345, 768) float32
+params.params.Dense_1.bias: (768,) float32
+params.params.Dense_1.kernel: (768, 768) float32
+params.params.Dense_2.bias: (384,) float32
+params.params.Dense_2.kernel: (768, 384) float32
+params.params.Dense_3.bias: (384,) float32
+params.params.Dense_3.kernel: (384, 384) float32
+params.params.Dense_4.bias: (384,) float32
+params.params.Dense_4.kernel: (384, 384) float32
+params.params.Dense_5.bias: (17,) float32
+params.params.Dense_5.kernel: (384, 17) float32
+params.params.Embed_0.embedding: (18, 384) float32
+params.params.LayerNorm_0.bias: (768,) float32
+params.params.LayerNorm_0.scale: (768,) float32
+params.params.LayerNorm_1.bias: (384,) float32
+params.params.LayerNorm_1.scale: (384,) float32
+params.params.TransformerBlock_0.Dense_0.bias: (768,) float32
+params.params.TransformerBlock_0.Dense_0.kernel: (384, 768) float32
+params.params.TransformerBlock_0.Dense_1.bias: (384,) float32
+params.params.TransformerBlock_0.Dense_1.kernel: (768, 384) float32
+params.params.TransformerBlock_0.LayerNorm_0.bias: (384,) float32
+params.params.TransformerBlock_0.LayerNorm_0.scale: (384,) float32
+params.params.TransformerBlock_0.LayerNorm_1.bias: (384,) float32
+params.params.TransformerBlock_0.LayerNorm_1.scale: (384,) float32
+params.params.TransformerBlock_0.MultiHeadDotProductAttention_0.key.bias: (8, 48) float32
+params.params.TransformerBlock_0.MultiHeadDotProductAttention_0.key.kernel: (384, 8, 48) float32
+params.params.TransformerBlock_0.MultiHeadDotProductAttention_0.out.bias: (384,) float32
+params.params.TransformerBlock_0.MultiHeadDotProductAttention_0.out.kernel: (8, 48, 384) float32
+params.params.TransformerBlock_0.MultiHeadDotProductAttention_0.query.bias: (8, 48) float32
+params.params.TransformerBlock_0.MultiHeadDotProductAttention_0.query.kernel: (384, 8, 48) float32
+params.params.TransformerBlock_0.MultiHeadDotProductAttention_0.value.bias: (8, 48) float32
+params.params.TransformerBlock_0.MultiHeadDotProductAttention_0.value.kernel: (384, 8, 48) float32
+params.params.TransformerBlock_1.Dense_0.bias: (768,) float32
+params.params.TransformerBlock_1.Dense_0.kernel: (384, 768) float32
+params.params.TransformerBlock_1.Dense_1.bias: (384,) float32
+params.params.TransformerBlock_1.Dense_1.kernel: (768, 384) float32
+params.params.TransformerBlock_1.LayerNorm_0.bias: (384,) float32
+params.params.TransformerBlock_1.LayerNorm_0.scale: (384,) float32
+params.params.TransformerBlock_1.LayerNorm_1.bias: (384,) float32
+params.params.TransformerBlock_1.LayerNorm_1.scale: (384,) float32
+params.params.TransformerBlock_1.MultiHeadDotProductAttention_0.key.bias: (8, 48) float32
+params.params.TransformerBlock_1.MultiHeadDotProductAttention_0.key.kernel: (384, 8, 48) float32
+params.params.TransformerBlock_1.MultiHeadDotProductAttention_0.out.bias: (384,) float32
+params.params.TransformerBlock_1.MultiHeadDotProductAttention_0.out.kernel: (8, 48, 384) float32
+params.params.TransformerBlock_1.MultiHeadDotProductAttention_0.query.bias: (8, 48) float32
+params.params.TransformerBlock_1.MultiHeadDotProductAttention_0.query.kernel: (384, 8, 48) float32
+params.params.TransformerBlock_1.MultiHeadDotProductAttention_0.value.bias: (8, 48) float32
+params.params.TransformerBlock_1.MultiHeadDotProductAttention_0.value.kernel: (384, 8, 48) float32
+params.params.TransformerBlock_2.Dense_0.bias: (768,) float32
+params.params.TransformerBlock_2.Dense_0.kernel: (384, 768) float32
+params.params.TransformerBlock_2.Dense_1.bias: (384,) float32
+params.params.TransformerBlock_2.Dense_1.kernel: (768, 384) float32
+params.params.TransformerBlock_2.LayerNorm_0.bias: (384,) float32
+params.params.TransformerBlock_2.LayerNorm_0.scale: (384,) float32
+params.params.TransformerBlock_2.LayerNorm_1.bias: (384,) float32
+params.params.TransformerBlock_2.LayerNorm_1.scale: (384,) float32
+params.params.TransformerBlock_2.MultiHeadDotProductAttention_0.key.bias: (8, 48) float32
+params.params.TransformerBlock_2.MultiHeadDotProductAttention_0.key.kernel: (384, 8, 48) float32
+params.params.TransformerBlock_2.MultiHeadDotProductAttention_0.out.bias: (384,) float32
+params.params.TransformerBlock_2.MultiHeadDotProductAttention_0.out.kernel: (8, 48, 384) float32
+params.params.TransformerBlock_2.MultiHeadDotProductAttention_0.query.bias: (8, 48) float32
+params.params.TransformerBlock_2.MultiHeadDotProductAttention_0.query.kernel: (384, 8, 48) float32
+params.params.TransformerBlock_2.MultiHeadDotProductAttention_0.value.bias: (8, 48) float32
+params.params.TransformerBlock_2.MultiHeadDotProductAttention_0.value.kernel: (384, 8, 48) float32
+params.params.TransformerBlock_3.Dense_0.bias: (768,) float32
+params.params.TransformerBlock_3.Dense_0.kernel: (384, 768) float32
+params.params.TransformerBlock_3.Dense_1.bias: (384,) float32
+params.params.TransformerBlock_3.Dense_1.kernel: (768, 384) float32
+params.params.TransformerBlock_3.LayerNorm_0.bias: (384,) float32
+params.params.TransformerBlock_3.LayerNorm_0.scale: (384,) float32
+params.params.TransformerBlock_3.LayerNorm_1.bias: (384,) float32
+params.params.TransformerBlock_3.LayerNorm_1.scale: (384,) float32
+params.params.TransformerBlock_3.MultiHeadDotProductAttention_0.key.bias: (8, 48) float32
+params.params.TransformerBlock_3.MultiHeadDotProductAttention_0.key.kernel: (384, 8, 48) float32
+params.params.TransformerBlock_3.MultiHeadDotProductAttention_0.out.bias: (384,) float32
+params.params.TransformerBlock_3.MultiHeadDotProductAttention_0.out.kernel: (8, 48, 384) float32
+params.params.TransformerBlock_3.MultiHeadDotProductAttention_0.query.bias: (8, 48) float32
+params.params.TransformerBlock_3.MultiHeadDotProductAttention_0.query.kernel: (384, 8, 48) float32
+params.params.TransformerBlock_3.MultiHeadDotProductAttention_0.value.bias: (8, 48) float32
+params.params.TransformerBlock_3.MultiHeadDotProductAttention_0.value.kernel: (384, 8, 48) float32
+params.params.TransformerBlock_4.Dense_0.bias: (768,) float32
+params.params.TransformerBlock_4.Dense_0.kernel: (384, 768) float32
+params.params.TransformerBlock_4.Dense_1.bias: (384,) float32
+params.params.TransformerBlock_4.Dense_1.kernel: (768, 384) float32
+params.params.TransformerBlock_4.LayerNorm_0.bias: (384,) float32
+params.params.TransformerBlock_4.LayerNorm_0.scale: (384,) float32
+params.params.TransformerBlock_4.LayerNorm_1.bias: (384,) float32
+params.params.TransformerBlock_4.LayerNorm_1.scale: (384,) float32
+params.params.TransformerBlock_4.MultiHeadDotProductAttention_0.key.bias: (8, 48) float32
+params.params.TransformerBlock_4.MultiHeadDotProductAttention_0.key.kernel: (384, 8, 48) float32
+params.params.TransformerBlock_4.MultiHeadDotProductAttention_0.out.bias: (384,) float32
+params.params.TransformerBlock_4.MultiHeadDotProductAttention_0.out.kernel: (8, 48, 384) float32
+params.params.TransformerBlock_4.MultiHeadDotProductAttention_0.query.bias: (8, 48) float32
+params.params.TransformerBlock_4.MultiHeadDotProductAttention_0.query.kernel: (384, 8, 48) float32
+params.params.TransformerBlock_4.MultiHeadDotProductAttention_0.value.bias: (8, 48) float32
+params.params.TransformerBlock_4.MultiHeadDotProductAttention_0.value.kernel: (384, 8, 48) float32
+params.params.TransformerBlock_5.Dense_0.bias: (768,) float32
+params.params.TransformerBlock_5.Dense_0.kernel: (384, 768) float32
+params.params.TransformerBlock_5.Dense_1.bias: (384,) float32
+params.params.TransformerBlock_5.Dense_1.kernel: (768, 384) float32
+params.params.TransformerBlock_5.LayerNorm_0.bias: (384,) float32
+params.params.TransformerBlock_5.LayerNorm_0.scale: (384,) float32
+params.params.TransformerBlock_5.LayerNorm_1.bias: (384,) float32
+params.params.TransformerBlock_5.LayerNorm_1.scale: (384,) float32
+params.params.TransformerBlock_5.MultiHeadDotProductAttention_0.key.bias: (8, 48) float32
+params.params.TransformerBlock_5.MultiHeadDotProductAttention_0.key.kernel: (384, 8, 48) float32
+params.params.TransformerBlock_5.MultiHeadDotProductAttention_0.out.bias: (384,) float32
+params.params.TransformerBlock_5.MultiHeadDotProductAttention_0.out.kernel: (8, 48, 384) float32
+params.params.TransformerBlock_5.MultiHeadDotProductAttention_0.query.bias: (8, 48) float32
+params.params.TransformerBlock_5.MultiHeadDotProductAttention_0.query.kernel: (384, 8, 48) float32
+params.params.TransformerBlock_5.MultiHeadDotProductAttention_0.value.bias: (8, 48) float32
+params.params.TransformerBlock_5.MultiHeadDotProductAttention_0.value.kernel: (384, 8, 48) float32
+step: () int64
