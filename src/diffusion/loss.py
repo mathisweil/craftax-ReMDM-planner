@@ -58,6 +58,11 @@ def compute_loss(
     Returns:
         (loss, info_dict).
     """
+    if x_0.ndim != 2 or obs.ndim != 2 or x_0.shape[0] != obs.shape[0]:
+        raise ValueError(
+            "compute_loss expects x_0 [B, H] and obs [B, D]; got "
+            f"{tuple(x_0.shape)}, {tuple(obs.shape)}"
+        )
     B = x_0.shape[0]
     mask_id = num_actions
     rng, t_rng, mask_rng, drop_rng = jax.random.split(rng, 4)
