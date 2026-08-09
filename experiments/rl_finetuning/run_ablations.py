@@ -77,10 +77,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Config utilities
-# ---------------------------------------------------------------------------
-
 
 def _load_yaml(path: str | None) -> dict:
     """Load a YAML file into a dict, returning empty dict if path is None.
@@ -123,10 +119,6 @@ def _to_upper(config: dict) -> dict:
     """
     return {k.upper(): v for k, v in config.items()}
 
-
-# ---------------------------------------------------------------------------
-# Argument parsing
-# ---------------------------------------------------------------------------
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -256,10 +248,6 @@ def _apply_cli_overrides(config: dict, args: argparse.Namespace) -> dict:
     }
     return {k: v if v is not None else config.get(k) for k, v in {**config, **{k: v for k, v in overrides.items() if v is not None}}.items()}
 
-
-# ---------------------------------------------------------------------------
-# Result serialisation
-# ---------------------------------------------------------------------------
 
 
 def _history_finals(history: "AblationHistory") -> dict:
@@ -412,10 +400,6 @@ def _merge_result_files(
     return merged_results, pretrained_score, merged_ach_rates, merged_config
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 
 def main(argv: list[str] | None = None) -> None:
     """Entry point for the ablation suite.
@@ -433,7 +417,6 @@ def main(argv: list[str] | None = None) -> None:
             print(f"  [{spec.group}] {name:30s} — {spec.description}")
         return
 
-    # ── Output directory ───────────────────────────────────────────────────
     run_id = args.run_id or f"run_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
     output_dir = Path(args.output_dir) if args.output_dir else (
         _PROJECT_ROOT / "experiments" / "rl_finetuning" / "outputs" / run_id
@@ -441,7 +424,6 @@ def main(argv: list[str] | None = None) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Output directory: %s", output_dir)
 
-    # ── Merge mode ─────────────────────────────────────────────────────────
     if args.merge:
         logger.info("Merging %d results files...", len(args.merge))
         results, pretrained_score, pretrained_ach_rates, config = _merge_result_files(args.merge)
@@ -462,7 +444,6 @@ def main(argv: list[str] | None = None) -> None:
         logger.info("Merge complete. Outputs in %s", output_dir)
         return
 
-    # ── Analysis-only mode ─────────────────────────────────────────────────
     if args.analyze_only:
         if not args.results_path:
             parser.error("--analyze-only requires --results-path")
@@ -479,7 +460,6 @@ def main(argv: list[str] | None = None) -> None:
         logger.info("Analysis complete. Outputs in %s", output_dir)
         return
 
-    # ── Training mode: load configs ────────────────────────────────────────
 
     main_cfg = _load_yaml(args.config)
     abl_cfg = _load_yaml(args.ablations_config)
@@ -505,7 +485,6 @@ def main(argv: list[str] | None = None) -> None:
         if val and isinstance(val, str) and val.startswith("wandb:"):
             merged[key] = resolve_checkpoint_path(val, download_dir)
 
-    # ── Select ablations ───────────────────────────────────────────────────
     if args.all:
         selected_names = list(REGISTRY.keys())
     elif args.ablations:
@@ -518,7 +497,6 @@ def main(argv: list[str] | None = None) -> None:
 
     logger.info("Selected ablations (%d): %s", len(selected_names), selected_names)
 
-    # ── Environment and model setup ────────────────────────────────────────
     from src.planners.env import make_env
     from src.planners.model import build_model, load_checkpoint, make_apply_fns
     from src.planners.ppo import PPOAgent, build_ppo_network, load_ppo_params
@@ -572,7 +550,6 @@ def main(argv: list[str] | None = None) -> None:
     }
     logger.info("Pretrained achievements tracked: %d", len(pretrained_ach_rates))
 
-    # ── W&B setup ──────────────────────────────────────────────────────────
     wandb_run = None
     if merged.get("USE_WANDB"):
         try:
@@ -587,7 +564,6 @@ def main(argv: list[str] | None = None) -> None:
         except ImportError:
             logger.warning("wandb not installed; skipping W&B logging.")
 
-    # ── Run ablations ──────────────────────────────────────────────────────
     num_seeds = merged.get("NUM_SEEDS", 1)
     results: dict[str, dict] = {}
 
@@ -649,7 +625,6 @@ def main(argv: list[str] | None = None) -> None:
             "final_params": first_seed_params,  # in-memory only, not serialised
         }
 
-        # ── Incremental save after each ablation ───────────────────────────
         # Written after every ablation so a crash mid-run doesn't lose
         # already-completed results.  The file is valid JSON at all times
         # and is directly loadable by --analyze-only --results-path.
@@ -662,11 +637,9 @@ def main(argv: list[str] | None = None) -> None:
             len(results), len(selected_names), results_path,
         )
 
-    # ── Save checkpoints ───────────────────────────────────────────────────
     # (params not saved here to keep the results JSON small;
     #  enable via save_checkpoints in the ablations config if needed)
 
-    # ── Action distribution analysis ─────────────────────────────────────
     logger.info("Running action distribution analysis...")
     rng, ad_rng = jax.random.split(rng)
     run_action_distribution_analysis(
@@ -674,7 +647,6 @@ def main(argv: list[str] | None = None) -> None:
         env, env_params, merged, ad_rng, output_dir,
     )
 
-    # ── Analysis ───────────────────────────────────────────────────────────
     logger.info("Generating plots and tables...")
     ach_rates_arg = pretrained_ach_rates if pretrained_ach_rates else None
     tables = generate_summary_tables(results, pretrained_score, output_dir, ach_rates_arg)

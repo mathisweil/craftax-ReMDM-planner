@@ -157,10 +157,6 @@ def _save(fig: plt.Figure, path: Path) -> None:
     logger.info("Saved %s", path)
 
 
-# ---------------------------------------------------------------------------
-# 3.1 Per-ablation training curves
-# ---------------------------------------------------------------------------
-
 
 def plot_ablation_curves(
     name: str,
@@ -251,10 +247,6 @@ def plot_ablation_curves(
         fig.tight_layout()
         _save(fig, output_dir / f"curves_{name}.png")
 
-
-# ---------------------------------------------------------------------------
-# 3.2 Aggregate comparison plots
-# ---------------------------------------------------------------------------
 
 
 def plot_final_score_comparison(
@@ -353,10 +345,6 @@ def plot_score_delta(
         _save(fig, output_dir / "score_delta_over_baseline_rl.png")
 
 
-# ---------------------------------------------------------------------------
-# 3.3 Gradient analysis plots
-# ---------------------------------------------------------------------------
-
 
 def plot_gradient_alignment(
     results: dict[str, dict],
@@ -454,10 +442,6 @@ def plot_gradient_conflict_map(
         _save(fig, output_dir / "gradient_conflict_map.png")
 
 
-# ---------------------------------------------------------------------------
-# 3.4 Representation drift
-# ---------------------------------------------------------------------------
-
 
 def plot_representation_drift(
     results: dict[str, dict],
@@ -528,10 +512,6 @@ def plot_cka_similarity(
         _overlay_legend(ax, fig)
         _save(fig, output_dir / "cka_similarity.png")
 
-
-# ---------------------------------------------------------------------------
-# 3.5 Timestep analysis
-# ---------------------------------------------------------------------------
 
 
 def plot_t_analysis(
@@ -608,10 +588,6 @@ def plot_t_bin_grad_norms(
         _save(fig, output_dir / f"t_bin_grad_norms_{name}.png")
 
 
-# ---------------------------------------------------------------------------
-# 3.6 Return / advantage distributions
-# ---------------------------------------------------------------------------
-
 
 def plot_return_distributions(
     results: dict[str, dict],
@@ -649,10 +625,6 @@ def plot_return_distributions(
         fig.tight_layout()
         _save(fig, output_dir / "win_rate_and_effective_batch_size.png")
 
-
-# ---------------------------------------------------------------------------
-# 3.7 Achievement tracking
-# ---------------------------------------------------------------------------
 
 
 def plot_achievement_breakdown(
@@ -791,10 +763,6 @@ def plot_achievement_collapse_heatmap(
         _save(fig, output_dir / f"achievement_collapse_{name}.png")
 
 
-# ---------------------------------------------------------------------------
-# 3.8 Group comparison
-# ---------------------------------------------------------------------------
-
 
 def plot_group_comparison(
     results: dict[str, dict],
@@ -882,10 +850,6 @@ def plot_t_bin_norms_heatmap(
         fig.tight_layout()
         _save(fig, output_dir / "t_bin_norms_heatmap.png")
 
-
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
 
 
 def generate_all_plots(

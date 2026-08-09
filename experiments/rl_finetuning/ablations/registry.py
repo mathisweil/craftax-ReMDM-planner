@@ -84,10 +84,6 @@ class AblationSpec:
     extra_loss_kwargs: dict = field(default_factory=dict)
 
 
-# ---------------------------------------------------------------------------
-# Registry
-# ---------------------------------------------------------------------------
-
 
 def _std_opt(config: dict, params: Any) -> Any:
     return make_optimizer_standard(config, params)
@@ -165,7 +161,6 @@ def _layer_ablation_top_n_opt(n: int) -> OptimizerFactory:
 
 
 REGISTRY: dict[str, AblationSpec] = {
-    # ── Baseline ──────────────────────────────────────────────────────────────
     "baseline_rl": AblationSpec(
         name="baseline_rl",
         group="Baseline",
@@ -174,7 +169,6 @@ REGISTRY: dict[str, AblationSpec] = {
         loss_factory=make_loss_baseline,
         optimizer_factory=_std_opt,
     ),
-    # ── Group A: Regularisation / Constraint Methods ──────────────────────────
     "kl_penalty": AblationSpec(
         name="kl_penalty",
         group="A",
@@ -227,7 +221,6 @@ REGISTRY: dict[str, AblationSpec] = {
         loss_factory=make_loss_trust_region_kl,
         optimizer_factory=_std_opt,
     ),
-    # ── Group B: Training Signal Modifications ────────────────────────────────
     "t_curriculum": AblationSpec(
         name="t_curriculum",
         group="B",
@@ -287,7 +280,6 @@ REGISTRY: dict[str, AblationSpec] = {
         loss_factory=make_loss_low_t,
         optimizer_factory=_std_opt,
     ),
-    # ── Group C: Architecture / Parameter Isolation ───────────────────────────
     "frozen_backbone": AblationSpec(
         name="frozen_backbone",
         group="C",
@@ -344,7 +336,6 @@ REGISTRY: dict[str, AblationSpec] = {
         loss_factory=make_loss_param_isolation,
         optimizer_factory=_layer_ablation_top_n_opt(3),
     ),
-    # ── Group D: Reward / Data Quality ───────────────────────────────────────
     "reward_filtering": AblationSpec(
         name="reward_filtering",
         group="D",

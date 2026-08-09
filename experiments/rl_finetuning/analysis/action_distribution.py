@@ -40,10 +40,6 @@ _DPI = 150
 _EPS = 1e-10
 
 
-# ---------------------------------------------------------------------------
-# Data collection
-# ---------------------------------------------------------------------------
-
 
 def _build_action_collector(
     env: Any,
@@ -127,10 +123,6 @@ def _build_action_collector(
 
     return collect
 
-
-# ---------------------------------------------------------------------------
-# Metric computation
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -273,10 +265,6 @@ def _compute_divergences(
     return js, kl_pq, kl_qp, tv
 
 
-# ---------------------------------------------------------------------------
-# Main collection + analysis entry point
-# ---------------------------------------------------------------------------
-
 
 def collect_action_statistics(
     pretrained_params: Any,
@@ -348,10 +336,6 @@ def interpret_results(comparison: ActionDistComparison) -> str:
         return "mixed_behavioural_change"
     return "mode_collapse"
 
-
-# ---------------------------------------------------------------------------
-# Plotting
-# ---------------------------------------------------------------------------
 
 
 def _save(fig: plt.Figure, path: Path) -> None:
@@ -521,10 +505,6 @@ def plot_js_comparison(
     fig.tight_layout()
     _save(fig, output_dir / "js_divergence_comparison.png")
 
-
-# ---------------------------------------------------------------------------
-# Pipeline integration
-# ---------------------------------------------------------------------------
 
 
 def run_action_distribution_analysis(
