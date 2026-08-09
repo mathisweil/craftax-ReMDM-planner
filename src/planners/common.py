@@ -136,7 +136,6 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
 
     # float() first to accept YAML scientific notation parsed as string
     # (PyYAML 1.1 only auto-coerces "3.0e+8", not "3e8" or "3.0e8").
-    # ── Mode-agnostic ────────────────────────────────────────────────
     warmup_frames = config.get("LR_WARMUP_FRAMES")
     if warmup_frames is not None:
         config["LR_WARMUP_STEPS"] = int(float(warmup_frames)) // fpu
@@ -145,7 +144,6 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
     if val_frames is not None:
         config["VAL_INTERVAL"] = max(1, int(float(val_frames)) // fpu)
 
-    # ── Online-only ──────────────────────────────────────────────────
     if mode != "online":
         return
 

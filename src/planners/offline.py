@@ -33,10 +33,6 @@ from .ppo import PPOAgent, build_ppo_network, load_ppo_params
 from .logging import init_wandb, make_wandb_callback
 
 
-# ---------------------------------------------------------------------------
-# make_train
-# ---------------------------------------------------------------------------
-
 def make_train(config: dict[str, Any]):
     """Build the offline diffusion training closure.
 
@@ -81,7 +77,7 @@ def make_train(config: dict[str, Any]):
     ppo_net = build_ppo_network(model_type, num_actions, config["LAYER_SIZE"], config)
     ppo_params = load_ppo_params(
         config["PPO_CHECKPOINT_PATH"], ppo_net, model_type, num_envs, obs_shape, config["LAYER_SIZE"],
-        seed=int(config.get("SEED") or 0),  # C-001 (F-015/Q6)
+        seed=int(config.get("SEED") or 0),
     )
     ppo = PPOAgent(ppo_net, ppo_params, model_type, config["LAYER_SIZE"])
 
@@ -172,9 +168,6 @@ def make_train(config: dict[str, Any]):
             val_replan_every, n_val_cycles,
         )
 
-        # ------------------------------------------------------------------
-        # Update step
-        # ------------------------------------------------------------------
         def _update_step(runner, _):
             state, env_state, last_obs, last_done, hstate, rng, step_idx = runner
 
@@ -288,10 +281,6 @@ def make_train(config: dict[str, Any]):
 
     return train
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def run_offline_diffusion(config):
     """Configure, compile, and run offline diffusion training.
