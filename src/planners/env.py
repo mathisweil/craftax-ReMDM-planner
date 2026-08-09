@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import jax.numpy as jnp
 from craftax.craftax_env import make_craftax_env_from_name
-from typing import NamedTuple
 
 from Craftax_Baselines.wrappers import (
     AutoResetEnvWrapper,

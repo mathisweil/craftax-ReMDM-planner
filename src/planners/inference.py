@@ -9,12 +9,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import wandb
-from craftax.craftax_env import make_craftax_env_from_name
 from craftax.craftax.constants import Achievement as FullCraftaxAchievements
 from craftax.craftax_classic.constants import Achievement as ClassicAchievements
+from craftax.craftax_env import make_craftax_env_from_name
 
 from src.diffusion.sampling import sample_plan_inpainting
 from src.diffusion.schedules import SCHEDULE_MAP
+
 from .model import build_model, load_checkpoint, make_apply_fns
 
 

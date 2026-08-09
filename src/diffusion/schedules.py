@@ -4,6 +4,7 @@ alpha(t) is the retention probability: alpha(0)=1 (clean), alpha(1)=0 (fully mas
 """
 
 from __future__ import annotations
+
 from typing import Callable
 
 import jax.numpy as jnp

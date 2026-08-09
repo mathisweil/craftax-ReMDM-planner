@@ -13,6 +13,7 @@ import orbax.checkpoint as ocp
 import wandb
 
 from src.diffusion.schedules import SCHEDULE_MAP
+
 from .common import (
     make_grad_step,
     make_validate,
@@ -21,16 +22,16 @@ from .common import (
     resolve_scaled_hyperparams,
 )
 from .env import Transition, make_env
+from .logging import init_wandb, make_wandb_callback
 from .model import (
     build_model,
-    init_params,
     create_train_state,
+    init_params,
     load_checkpoint_for_resume,
     make_apply_fns,
     save_checkpoint_metadata,
 )
 from .ppo import PPOAgent, build_ppo_network, load_ppo_params
-from .logging import init_wandb, make_wandb_callback
 
 
 def make_train(config: dict[str, Any]):
