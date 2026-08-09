@@ -1,0 +1,21 @@
+{
+  "checkpoint": "checkpoints/online/Craftax-Symbolic-v1-OnlineDiffusion-DAgger-100M",
+  "checkpoint_sha256": "50002edc64a08a344304b79a11bd4ab7262db58e5a453bbd9b8ffee5bea14882",
+  "git_commit": "4d0dc5df6d177ed251c3444eab6b44e2e05037be",
+  "logits": {
+    "max": 5.281412601470947,
+    "mean": -1.0426251006980702,
+    "min": -9.480856895446777,
+    "sha256": "099bc38b68b211ffdce4243379b4c8516a98bf91ac4b664fa2278faedfc78e36",
+    "shape": [
+      4,
+      32,
+      43
+    ],
+    "std": 2.135557587152193
+  },
+  "n_param_elements": 14671147,
+  "num_actions": 43,
+  "obs_dim": 8268,
+  "param_checksum": "e3edbb28760514ab7d1debd73179254f3f8d9cac1c0e46ea6dedf83fc5aa0341"
+}

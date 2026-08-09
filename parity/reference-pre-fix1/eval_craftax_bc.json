@@ -1,0 +1,16 @@
+{
+  "eval_num_envs": 4,
+  "eval_steps": 32,
+  "git_commit": "4d0dc5df6d177ed251c3444eab6b44e2e05037be",
+  "metrics": {
+    "best_score": 2.0,
+    "diffusion_steps_eval": 10,
+    "eval_num_envs": 4,
+    "eval_steps": 32,
+    "mean_episode_length": 32.0,
+    "mean_score": 1.25,
+    "temperature": 0.3,
+    "top_p": 0.95
+  },
+  "seed": 1234
+}
