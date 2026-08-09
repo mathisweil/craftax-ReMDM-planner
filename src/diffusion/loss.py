@@ -6,7 +6,8 @@ src/diffusion/loss.py:mdlm_loss.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from typing import Any, Optional
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
@@ -15,7 +16,7 @@ from .forward import forward_process
 from .schedules import ScheduleFn
 
 ModelApplyFn = Callable[
-    [Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, Optional[Any]], jnp.ndarray
+    [Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, Any | None], jnp.ndarray
 ]
 
 _MAX_WEIGHT: float = 1000.0  # matches minihack twin and loss_weight_clip convention
@@ -34,7 +35,7 @@ def compute_loss(
     schedule_deriv_fn: ScheduleFn,
     sigma_t: float = 0.0,
     label_smoothing: float = 0.0,
-    advantages: Optional[jnp.ndarray] = None,
+    advantages: jnp.ndarray | None = None,
     t_min: float | jax.Array = _EPS,
     t_max: float | jax.Array = 1.0,
 ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:

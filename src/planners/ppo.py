@@ -89,7 +89,7 @@ def load_ppo_agent(
     model_type: str,
     config: dict,
     num_envs: int = 1,
-) -> "PPOAgent":
+) -> PPOAgent:
     """Build network, load params, and return a :class:`PPOAgent`.
 
     Args:

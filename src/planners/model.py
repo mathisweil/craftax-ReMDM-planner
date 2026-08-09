@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Callable, Union
+from typing import Any, Union
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
@@ -150,7 +151,7 @@ def load_checkpoint(
 def create_train_state(
     model: DenoisingTransformer,
     params: Any,
-    lr: Union[float, Callable[[int], float]],
+    lr: float | Callable[[int], float],
     max_grad_norm: float,
 ) -> TrainState:
     """Create a :class:`TrainState` with gradient clipping and Adam.
@@ -279,7 +280,7 @@ def load_checkpoint_for_resume(
     obs_dim: int,
     plan_horizon: int,
     path: str,
-    lr_schedule: Union[float, Callable[[int], float]],
+    lr_schedule: float | Callable[[int], float],
     max_grad_norm: float,
 ) -> TrainState:
     """Load a full ``TrainState`` (params + optimizer state) for resume.

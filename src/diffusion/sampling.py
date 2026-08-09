@@ -13,7 +13,8 @@ Loop mode (Section 4.2, Algorithm 3):
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from typing import Any, Optional
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
@@ -21,7 +22,7 @@ import jax.numpy as jnp
 from .schedules import ScheduleFn
 
 ModelApplyFn = Callable[
-    [Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, Optional[Any]], jnp.ndarray
+    [Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, Any | None], jnp.ndarray
 ]
 
 # Stability guards; values must match the minihack twin exactly.
@@ -102,9 +103,9 @@ def sample_plan(
     t_on: float = 0.55,
     t_off: float = 0.05,
     temperature: float = 1.0,
-    top_p: Optional[float] = None,
-    history: Optional[jnp.ndarray] = None,
-    hist_len: Optional[jnp.ndarray] = None,
+    top_p: float | None = None,
+    history: jnp.ndarray | None = None,
+    hist_len: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     """Generate an action plan via reverse diffusion with ReMDM remasking.
 
@@ -246,7 +247,7 @@ def sample_plan_inpainting(
     t_on: float,
     t_off: float,
     temperature: float,
-    top_p: Optional[float],
+    top_p: float | None,
 ) -> jnp.ndarray:
     """ReMDM sampling with a locked historical prefix (inpainting).
 
