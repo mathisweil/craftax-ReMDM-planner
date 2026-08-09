@@ -460,7 +460,7 @@ def _merge_result_files(
                         merged_results[name].setdefault(_k, []).extend(res[_k])
 
     # Recompute mean/std over the union of seeds
-    for name, res in merged_results.items():
+    for res in merged_results.values():
         scores = res["all_scores"]
         res["score"] = float(np.mean(scores))
         res["score_std"] = float(np.std(scores))

@@ -23,10 +23,10 @@ Plots generated:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
@@ -429,7 +429,7 @@ def plot_transition_matrices(
     vmaxs = [1, 1, np.abs(diff).max() or 0.1]
 
     for ax, title, mat, cmap, vmin, vmax in zip(
-        axes, titles, matrices, cmaps, vmins, vmaxs
+        axes, titles, matrices, cmaps, vmins, vmaxs, strict=False
     ):
         im = ax.imshow(mat, cmap=cmap, vmin=vmin, vmax=vmax, interpolation="nearest")
         ax.set_title(title)

@@ -406,7 +406,7 @@ def plot_score_delta(
     """
     deltas = {n: results[n]["score"] - baseline_rl_score for n in results}
     sorted_items = sorted(deltas.items(), key=lambda x: x[1], reverse=True)
-    names, vals = zip(*sorted_items) if sorted_items else ([], [])
+    names, vals = zip(*sorted_items, strict=False) if sorted_items else ([], [])
 
     with plt.rc_context(_STYLE):
         fig, ax = plt.subplots(figsize=(max(8.0, len(names) * 0.7), 5))
@@ -557,7 +557,7 @@ def plot_representation_drift(
             fontweight="bold",
         )
 
-        for ax, (attr, title) in zip(axes.ravel(), panels):
+        for ax, (attr, title) in zip(axes.ravel(), panels, strict=False):
             for name, res in results.items():
                 history: AblationHistory = res["history"]
                 vals = getattr(history, attr, [])
@@ -947,7 +947,7 @@ def plot_group_comparison(
     with plt.rc_context(_STYLE):
         fig, ax = plt.subplots(figsize=(8, 5))
         bp = ax.boxplot(data, labels=ordered_groups, patch_artist=True, widths=0.5)
-        for patch, c in zip(bp["boxes"], colors):
+        for patch, c in zip(bp["boxes"], colors, strict=False):
             patch.set_facecolor(c)
             patch.set_alpha(0.6)
         ax.axhline(

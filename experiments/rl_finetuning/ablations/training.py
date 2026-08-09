@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
-from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp

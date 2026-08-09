@@ -303,7 +303,7 @@ def make_forgetting_analysis_table(
         recovered = "N/A"
 
         if evals:
-            for i, (it, sc) in enumerate(zip(eval_iters, evals)):
+            for i, (it, sc) in enumerate(zip(eval_iters, evals, strict=False)):
                 if sc < collapse_level:
                     first_collapse_iter = str(it)
                     # Check if recovered later
