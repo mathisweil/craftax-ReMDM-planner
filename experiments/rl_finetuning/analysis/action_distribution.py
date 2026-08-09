@@ -40,7 +40,6 @@ _DPI = 150
 _EPS = 1e-10
 
 
-
 def _build_action_collector(
     env: Any,
     env_params: Any,
@@ -85,8 +84,12 @@ def _build_action_collector(
             es_c, obs_c, r = carry
             r, p_rng = jax.random.split(r)
             plan = sample_plan(
-                apply_eval, params, p_rng, obs_c,
-                num_actions, config["PLAN_HORIZON"],
+                apply_eval,
+                params,
+                p_rng,
+                obs_c,
+                num_actions,
+                config["PLAN_HORIZON"],
                 num_steps=config["VAL_DIFFUSION_STEPS"],
                 schedule_fn=schedule_fn,
                 remask_strategy=config["REMASK_STRATEGY"],
@@ -103,12 +106,17 @@ def _build_action_collector(
                 action = plan[:, step_i]
                 r_i, s_rng = jax.random.split(r_i)
                 obs_next, es_next, reward, done, info = env.step(
-                    s_rng, es_i, action, env_params,
+                    s_rng,
+                    es_i,
+                    action,
+                    env_params,
                 )
                 return (es_next, obs_next, r_i), (action, reward, done)
 
             (es_c, obs_c, r), step_data = jax.lax.scan(
-                _step, (es_c, obs_c, r), jnp.arange(config["EVAL_REPLAN"]),
+                _step,
+                (es_c, obs_c, r),
+                jnp.arange(config["EVAL_REPLAN"]),
             )
             return (es_c, obs_c, r), step_data
 
@@ -122,7 +130,6 @@ def _build_action_collector(
         return actions, rewards, dones
 
     return collect
-
 
 
 @dataclass
@@ -206,7 +213,10 @@ def _compute_metrics(
     sorted_probs = np.sort(probs)
     n = len(sorted_probs)
     index = np.arange(1, n + 1)
-    gini = float((2.0 * np.sum(index * sorted_probs) / (n * np.sum(sorted_probs) + _EPS)) - (n + 1) / n)
+    gini = float(
+        (2.0 * np.sum(index * sorted_probs) / (n * np.sum(sorted_probs) + _EPS))
+        - (n + 1) / n
+    )
 
     # Transition matrix (bigrams) — vectorised over all envs
     trans = np.zeros((num_actions, num_actions), dtype=np.float64)
@@ -265,7 +275,6 @@ def _compute_divergences(
     return js, kl_pq, kl_qp, tv
 
 
-
 def collect_action_statistics(
     pretrained_params: Any,
     finetuned_params: Any,
@@ -306,8 +315,12 @@ def collect_action_statistics(
     post_rewards = np.asarray(jax.device_get(post_rewards))
     post_dones = np.asarray(jax.device_get(post_dones))
 
-    pre_metrics = _compute_metrics(pre_actions, pre_rewards, pre_dones, num_actions, win_threshold)
-    post_metrics = _compute_metrics(post_actions, post_rewards, post_dones, num_actions, win_threshold)
+    pre_metrics = _compute_metrics(
+        pre_actions, pre_rewards, pre_dones, num_actions, win_threshold
+    )
+    post_metrics = _compute_metrics(
+        post_actions, post_rewards, post_dones, num_actions, win_threshold
+    )
     js, kl_pq, kl_qp, tv = _compute_divergences(pre_metrics, post_metrics)
 
     return ActionDistComparison(
@@ -335,7 +348,6 @@ def interpret_results(comparison: ActionDistComparison) -> str:
     if js < 0.15:
         return "mixed_behavioural_change"
     return "mode_collapse"
-
 
 
 def _save(fig: plt.Figure, path: Path) -> None:
@@ -367,8 +379,22 @@ def plot_action_frequencies(
     width = 0.35
 
     fig, ax = plt.subplots(figsize=(max(8, n * 0.6), 5))
-    ax.bar(x - width / 2, comparison.pre_metrics.action_probs, width, label="Pretrained", alpha=0.8, color="#1976D2")
-    ax.bar(x + width / 2, comparison.post_metrics.action_probs, width, label="Finetuned", alpha=0.8, color="#F57C00")
+    ax.bar(
+        x - width / 2,
+        comparison.pre_metrics.action_probs,
+        width,
+        label="Pretrained",
+        alpha=0.8,
+        color="#1976D2",
+    )
+    ax.bar(
+        x + width / 2,
+        comparison.post_metrics.action_probs,
+        width,
+        label="Finetuned",
+        alpha=0.8,
+        color="#F57C00",
+    )
     ax.set_xlabel("Action")
     ax.set_ylabel("Probability")
     ax.set_title(f"Action Frequency: {ablation_name}")
@@ -401,14 +427,18 @@ def plot_transition_matrices(
     vmins = [0, 0, -np.abs(diff).max() or -0.1]
     vmaxs = [1, 1, np.abs(diff).max() or 0.1]
 
-    for ax, title, mat, cmap, vmin, vmax in zip(axes, titles, matrices, cmaps, vmins, vmaxs):
+    for ax, title, mat, cmap, vmin, vmax in zip(
+        axes, titles, matrices, cmaps, vmins, vmaxs
+    ):
         im = ax.imshow(mat, cmap=cmap, vmin=vmin, vmax=vmax, interpolation="nearest")
         ax.set_title(title)
         ax.set_xlabel("Next Action")
         ax.set_ylabel("Current Action")
         plt.colorbar(im, ax=ax, fraction=0.046)
 
-    fig.suptitle(f"Action Transition Matrices: {ablation_name}", fontsize=13, fontweight="bold")
+    fig.suptitle(
+        f"Action Transition Matrices: {ablation_name}", fontsize=13, fontweight="bold"
+    )
     fig.tight_layout()
     _save(fig, output_dir / f"transition_matrix_{ablation_name}.png")
 
@@ -429,24 +459,40 @@ def plot_metrics_dashboard(
     post = comparison.post_metrics
 
     fig, axes = plt.subplots(2, 2, figsize=(10, 8))
-    fig.suptitle(f"Action Distribution Metrics: {ablation_name}", fontsize=13, fontweight="bold")
+    fig.suptitle(
+        f"Action Distribution Metrics: {ablation_name}", fontsize=13, fontweight="bold"
+    )
 
     # Entropy comparison
     ax = axes[0, 0]
-    ax.bar(["Pretrained", "Finetuned"], [pre.entropy, post.entropy], color=["#1976D2", "#F57C00"], alpha=0.8)
+    ax.bar(
+        ["Pretrained", "Finetuned"],
+        [pre.entropy, post.entropy],
+        color=["#1976D2", "#F57C00"],
+        alpha=0.8,
+    )
     ax.set_ylabel("Shannon Entropy")
     ax.set_title("Action Entropy")
 
     # Effective actions
     ax = axes[0, 1]
-    ax.bar(["Pretrained", "Finetuned"], [pre.effective_actions, post.effective_actions],
-           color=["#1976D2", "#F57C00"], alpha=0.8)
+    ax.bar(
+        ["Pretrained", "Finetuned"],
+        [pre.effective_actions, post.effective_actions],
+        color=["#1976D2", "#F57C00"],
+        alpha=0.8,
+    )
     ax.set_ylabel("Count (prob > 1%)")
     ax.set_title("Effective Actions")
 
     # Gini coefficient
     ax = axes[1, 0]
-    ax.bar(["Pretrained", "Finetuned"], [pre.gini, post.gini], color=["#1976D2", "#F57C00"], alpha=0.8)
+    ax.bar(
+        ["Pretrained", "Finetuned"],
+        [pre.gini, post.gini],
+        color=["#1976D2", "#F57C00"],
+        alpha=0.8,
+    )
     ax.set_ylabel("Gini Coefficient")
     ax.set_title("Action Concentration (Gini)")
 
@@ -481,7 +527,9 @@ def plot_js_comparison(
     if not comparisons:
         return
 
-    sorted_items = sorted(comparisons.items(), key=lambda x: x[1].js_divergence, reverse=True)
+    sorted_items = sorted(
+        comparisons.items(), key=lambda x: x[1].js_divergence, reverse=True
+    )
     names = [n for n, _ in sorted_items]
     js_vals = [c.js_divergence for _, c in sorted_items]
 
@@ -504,7 +552,6 @@ def plot_js_comparison(
     ax.legend()
     fig.tight_layout()
     _save(fig, output_dir / "js_divergence_comparison.png")
-
 
 
 def run_action_distribution_analysis(
@@ -550,16 +597,24 @@ def run_action_distribution_analysis(
         logger.info("Action distribution analysis: %s", name)
 
         comparison = collect_action_statistics(
-            pretrained_params, finetuned_params, apply_eval,
-            env, env_params, config, abl_rng,
+            pretrained_params,
+            finetuned_params,
+            apply_eval,
+            env,
+            env_params,
+            config,
+            abl_rng,
         )
         comparisons[name] = comparison
 
         verdict = interpret_results(comparison)
         logger.info(
             "  %s: JS=%.4f KL(pre||post)=%.4f TV=%.4f -> %s",
-            name, comparison.js_divergence, comparison.kl_pre_post,
-            comparison.tv_distance, verdict,
+            name,
+            comparison.js_divergence,
+            comparison.kl_pre_post,
+            comparison.tv_distance,
+            verdict,
         )
 
         # Per-ablation plots

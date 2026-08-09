@@ -18,7 +18,6 @@ from src.diffusion.forward import forward_process
 from src.diffusion.schedules import ScheduleFn
 
 
-
 def make_repr_drift_fn(
     apply_fn: Callable,
     schedule_fn: ScheduleFn,
@@ -70,9 +69,7 @@ def make_repr_drift_fn(
         z_t = forward_process(mask_rng, acts, alpha_t, num_actions)
 
         cur_logits = apply_fn(params, obs, z_t, t)
-        ref_logits = apply_fn(
-            jax.lax.stop_gradient(ref_params), obs, z_t, t
-        )
+        ref_logits = apply_fn(jax.lax.stop_gradient(ref_params), obs, z_t, t)
 
         cur_log = jax.nn.log_softmax(cur_logits, axis=-1)
         ref_log = jax.nn.log_softmax(ref_logits, axis=-1)
@@ -109,7 +106,6 @@ def make_repr_drift_fn(
         return kl_mean, kl_low, kl_mid, kl_high
 
     return repr_drift
-
 
 
 @jax.jit
@@ -195,11 +191,11 @@ def make_cka_fn(
         alpha_t = schedule_fn(t)
         z_t = forward_process(mask_rng, acts_b, alpha_t, num_actions)
 
-        cur_logits = model_apply(params, obs_b, z_t, t)    # [B, H, V]
+        cur_logits = model_apply(params, obs_b, z_t, t)  # [B, H, V]
         ref_logits = model_apply(ref_params, obs_b, z_t, t)  # [B, H, V]
 
-        cur_repr = cur_logits.mean(axis=1)   # [B, V]
-        ref_repr = ref_logits.mean(axis=1)   # [B, V]
+        cur_repr = cur_logits.mean(axis=1)  # [B, V]
+        ref_repr = ref_logits.mean(axis=1)  # [B, V]
 
         return _linear_cka(cur_repr, ref_repr)
 

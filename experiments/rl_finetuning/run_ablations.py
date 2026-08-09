@@ -64,7 +64,9 @@ if str(_CRAFTAX_BASELINES) not in sys.path:
 
 from experiments.rl_finetuning.ablations.registry import REGISTRY
 from experiments.rl_finetuning.ablations.training import AblationHistory, run_ablation
-from experiments.rl_finetuning.analysis.action_distribution import run_action_distribution_analysis
+from experiments.rl_finetuning.analysis.action_distribution import (
+    run_action_distribution_analysis,
+)
 from experiments.rl_finetuning.analysis.plots import generate_all_plots
 from experiments.rl_finetuning.analysis.report import generate_diagnosis_report
 from experiments.rl_finetuning.analysis.tables import generate_summary_tables
@@ -75,7 +77,6 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
-
 
 
 def _load_yaml(path: str | None) -> dict:
@@ -120,7 +121,6 @@ def _to_upper(config: dict) -> dict:
     return {k.upper(): v for k, v in config.items()}
 
 
-
 def _build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser.
 
@@ -134,52 +134,103 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # Config files
     p.add_argument(
-        "--config", type=str, default=None,
+        "--config",
+        type=str,
+        default=None,
         help="Path to main pipeline config (configs/defaults.yaml). Optional.",
     )
     p.add_argument(
-        "--ablations-config", type=str,
-        default=str(_PROJECT_ROOT / "experiments/rl_finetuning/configs/ablations_default.yaml"),
+        "--ablations-config",
+        type=str,
+        default=str(
+            _PROJECT_ROOT / "experiments/rl_finetuning/configs/ablations_default.yaml"
+        ),
         help="Path to ablations-specific config YAML.",
     )
 
     # Checkpoints
-    p.add_argument("--checkpoint", type=str, default=None,
-                   help="Path to the pretrained diffusion checkpoint (offline, DAgger or online).")
-    p.add_argument("--ppo-checkpoint", type=str, default=None,
-                   help="Path to PPO checkpoint used for rollout collection.")
+    p.add_argument(
+        "--checkpoint",
+        type=str,
+        default=None,
+        help="Path to the pretrained diffusion checkpoint (offline, DAgger or online).",
+    )
+    p.add_argument(
+        "--ppo-checkpoint",
+        type=str,
+        default=None,
+        help="Path to PPO checkpoint used for rollout collection.",
+    )
 
     # Ablation selection
     p.add_argument("--all", action="store_true", help="Run all registered ablations.")
-    p.add_argument("--ablations", nargs="+", default=None,
-                   metavar="NAME",
-                   help="Names of specific ablations to run. Run --list to see options.")
-    p.add_argument("--list", action="store_true", help="List all registered ablation names and exit.")
+    p.add_argument(
+        "--ablations",
+        nargs="+",
+        default=None,
+        metavar="NAME",
+        help="Names of specific ablations to run. Run --list to see options.",
+    )
+    p.add_argument(
+        "--list",
+        action="store_true",
+        help="List all registered ablation names and exit.",
+    )
 
     # Special modes
-    p.add_argument("--fast", action="store_true",
-                   help="Override max_iter=50, num_envs=16, eval_every=10 for smoke tests.")
-    p.add_argument("--analyze-only", action="store_true",
-                   help="Skip training; load results.json and regenerate plots/tables/report.")
-    p.add_argument("--results-path", type=str, default=None,
-                   help="Path to results.json for --analyze-only mode.")
-    p.add_argument("--merge", nargs="+", metavar="PATH",
-                   help="Merge multiple results.json files from multi-GPU runs, "
-                        "recompute statistics, and regenerate analysis.")
+    p.add_argument(
+        "--fast",
+        action="store_true",
+        help="Override max_iter=50, num_envs=16, eval_every=10 for smoke tests.",
+    )
+    p.add_argument(
+        "--analyze-only",
+        action="store_true",
+        help="Skip training; load results.json and regenerate plots/tables/report.",
+    )
+    p.add_argument(
+        "--results-path",
+        type=str,
+        default=None,
+        help="Path to results.json for --analyze-only mode.",
+    )
+    p.add_argument(
+        "--merge",
+        nargs="+",
+        metavar="PATH",
+        help="Merge multiple results.json files from multi-GPU runs, "
+        "recompute statistics, and regenerate analysis.",
+    )
 
     # Output
-    p.add_argument("--output-dir", type=str, default=None,
-                   help="Root output directory. Defaults to experiments/rl_finetuning/outputs/{run_id}/.")
-    p.add_argument("--run-id", type=str, default=None,
-                   help="Run identifier. Defaults to run_{timestamp}.")
+    p.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Root output directory. Defaults to experiments/rl_finetuning/outputs/{run_id}/.",
+    )
+    p.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help="Run identifier. Defaults to run_{timestamp}.",
+    )
 
     # Multi-seed
-    p.add_argument("--num-seeds", type=int, default=None,
-                   help="Number of random seeds per ablation (overrides config).")
+    p.add_argument(
+        "--num-seeds",
+        type=int,
+        default=None,
+        help="Number of random seeds per ablation (overrides config).",
+    )
 
     # W&B
-    p.add_argument("--use-wandb", action=argparse.BooleanOptionalAction, default=None,
-                   help="Enable W&B logging.")
+    p.add_argument(
+        "--use-wandb",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable W&B logging.",
+    )
     p.add_argument("--wandb-project", type=str, default=None)
     p.add_argument("--wandb-entity", type=str, default=None)
 
@@ -246,8 +297,13 @@ def _apply_cli_overrides(config: dict, args: argparse.Namespace) -> dict:
         "CHECKPOINT_PATH": args.checkpoint,
         "PPO_CHECKPOINT_PATH": args.ppo_checkpoint,
     }
-    return {k: v if v is not None else config.get(k) for k, v in {**config, **{k: v for k, v in overrides.items() if v is not None}}.items()}
-
+    return {
+        k: v if v is not None else config.get(k)
+        for k, v in {
+            **config,
+            **{k: v for k, v in overrides.items() if v is not None},
+        }.items()
+    }
 
 
 def _history_finals(history: "AblationHistory") -> dict:
@@ -289,7 +345,11 @@ def _results_to_json(
     serialisable = {
         "pretrained_score": pretrained_score,
         "pretrained_ach_rates": pretrained_ach_rates or {},
-        "config": {k: v for k, v in config.items() if isinstance(v, (str, int, float, bool, type(None)))},
+        "config": {
+            k: v
+            for k, v in config.items()
+            if isinstance(v, (str, int, float, bool, type(None)))
+        },
         "ablations": {
             name: {
                 "score": res["score"],
@@ -297,7 +357,11 @@ def _results_to_json(
                 "all_scores": res.get("all_scores", [res["score"]]),
                 "history": res["history"].to_dict(),
                 # C-001 (D7) / C-002: seeds, wall clock and per-seed finals when present
-                **{k: res[k] for k in ("base_seed", "seeds", "wall_clock_s", "per_seed_finals") if k in res},
+                **{
+                    k: res[k]
+                    for k in ("base_seed", "seeds", "wall_clock_s", "per_seed_finals")
+                    if k in res
+                },
             }
             for name, res in results.items()
         },
@@ -328,7 +392,12 @@ def _results_from_json(path: str) -> tuple[dict, float, dict[str, float], dict]:
             "all_scores": res_data.get("all_scores", [res_data["score"]]),
             "history": AblationHistory.from_dict(res_data["history"]),
         }
-        for _k in ("base_seed", "seeds", "wall_clock_s", "per_seed_finals"):  # C-001/C-002
+        for _k in (
+            "base_seed",
+            "seeds",
+            "wall_clock_s",
+            "per_seed_finals",
+        ):  # C-001/C-002
             if _k in res_data:
                 results[name][_k] = res_data[_k]
     return results, pretrained_score, pretrained_ach_rates, config
@@ -377,7 +446,11 @@ def _merge_result_files(
                     "score": res["score"],
                     "score_std": res.get("score_std", 0.0),
                     # C-001 (D7) / C-002: carry seed, wall-clock and per-seed final records
-                    **{k: list(res[k]) for k in ("seeds", "wall_clock_s", "per_seed_finals") if k in res},
+                    **{
+                        k: list(res[k])
+                        for k in ("seeds", "wall_clock_s", "per_seed_finals")
+                        if k in res
+                    },
                     **({"base_seed": res["base_seed"]} if "base_seed" in res else {}),
                 }
             else:
@@ -395,10 +468,11 @@ def _merge_result_files(
     pretrained_score = float(np.mean(pretrained_scores))
     logger.info(
         "Merged %d files: %d ablations, pretrained=%.4f",
-        len(paths), len(merged_results), pretrained_score,
+        len(paths),
+        len(merged_results),
+        pretrained_score,
     )
     return merged_results, pretrained_score, merged_ach_rates, merged_config
-
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -418,18 +492,24 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     run_id = args.run_id or f"run_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    output_dir = Path(args.output_dir) if args.output_dir else (
-        _PROJECT_ROOT / "experiments" / "rl_finetuning" / "outputs" / run_id
+    output_dir = (
+        Path(args.output_dir)
+        if args.output_dir
+        else (_PROJECT_ROOT / "experiments" / "rl_finetuning" / "outputs" / run_id)
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Output directory: %s", output_dir)
 
     if args.merge:
         logger.info("Merging %d results files...", len(args.merge))
-        results, pretrained_score, pretrained_ach_rates, config = _merge_result_files(args.merge)
+        results, pretrained_score, pretrained_ach_rates, config = _merge_result_files(
+            args.merge
+        )
         if args.ablations:
             results = {k: v for k, v in results.items() if k in args.ablations}
-            logger.info("Filtered to %d ablations: %s", len(results), list(results.keys()))
+            logger.info(
+                "Filtered to %d ablations: %s", len(results), list(results.keys())
+            )
         # Write merged results
         ach_rates_arg = pretrained_ach_rates if pretrained_ach_rates else None
         merged_path = output_dir / "results.json"
@@ -438,7 +518,9 @@ def main(argv: list[str] | None = None) -> None:
         )
         logger.info("Wrote merged results to %s", merged_path)
         # Regenerate analysis
-        tables = generate_summary_tables(results, pretrained_score, output_dir, ach_rates_arg)
+        tables = generate_summary_tables(
+            results, pretrained_score, output_dir, ach_rates_arg
+        )
         generate_all_plots(results, pretrained_score, output_dir, ach_rates_arg)
         generate_diagnosis_report(results, pretrained_score, tables, output_dir)
         logger.info("Merge complete. Outputs in %s", output_dir)
@@ -448,18 +530,23 @@ def main(argv: list[str] | None = None) -> None:
         if not args.results_path:
             parser.error("--analyze-only requires --results-path")
         logger.info("Loading results from %s", args.results_path)
-        results, pretrained_score, pretrained_ach_rates, config = _results_from_json(args.results_path)
+        results, pretrained_score, pretrained_ach_rates, config = _results_from_json(
+            args.results_path
+        )
         logger.info("Loaded %d ablation results.", len(results))
         if args.ablations:
             results = {k: v for k, v in results.items() if k in args.ablations}
-            logger.info("Filtered to %d ablations: %s", len(results), list(results.keys()))
+            logger.info(
+                "Filtered to %d ablations: %s", len(results), list(results.keys())
+            )
         ach_rates_arg = pretrained_ach_rates if pretrained_ach_rates else None
-        tables = generate_summary_tables(results, pretrained_score, output_dir, ach_rates_arg)
+        tables = generate_summary_tables(
+            results, pretrained_score, output_dir, ach_rates_arg
+        )
         generate_all_plots(results, pretrained_score, output_dir, ach_rates_arg)
         generate_diagnosis_report(results, pretrained_score, tables, output_dir)
         logger.info("Analysis complete. Outputs in %s", output_dir)
         return
-
 
     main_cfg = _load_yaml(args.config)
     abl_cfg = _load_yaml(args.ablations_config)
@@ -512,8 +599,12 @@ def main(argv: list[str] | None = None) -> None:
     layer_size = merged.get("LAYER_SIZE", 512)
     ppo_net = build_ppo_network(model_type, num_actions, layer_size, merged)
     ppo_params = load_ppo_params(
-        merged["PPO_CHECKPOINT_PATH"], ppo_net, model_type,
-        merged["NUM_ENVS"], obs_shape, layer_size,
+        merged["PPO_CHECKPOINT_PATH"],
+        ppo_net,
+        model_type,
+        merged["NUM_ENVS"],
+        obs_shape,
+        layer_size,
         seed=int(merged.get("SEED") or 0),  # C-001 (F-015/Q6)
     )
     ppo = PPOAgent(ppo_net, ppo_params, model_type, layer_size)
@@ -529,18 +620,24 @@ def main(argv: list[str] | None = None) -> None:
     rng = jax.random.PRNGKey(seed)
     rng, ckpt_rng = jax.random.split(rng)
     pretrained_params = load_checkpoint(
-        net, ckpt_rng, obs_dim, merged["PLAN_HORIZON"],
+        net,
+        ckpt_rng,
+        obs_dim,
+        merged["PLAN_HORIZON"],
         merged["CHECKPOINT_PATH"],
     )
 
     # Evaluate pretrained baseline
     logger.info("Evaluating pretrained model (no fine-tuning)...")
     from experiments.rl_finetuning.ablations.training import build_eval_fn
+
     merged_with_actions = {**merged, "NUM_ACTIONS": num_actions}
     eval_fn = build_eval_fn(env, env_params, apply_eval, merged_with_actions)
     rng, eval_rng = jax.random.split(rng)
     pretrained_info = eval_fn(pretrained_params, eval_rng)
-    pretrained_score = float(pretrained_info.get("returned_episode_returns", jnp.array(0.0)))
+    pretrained_score = float(
+        pretrained_info.get("returned_episode_returns", jnp.array(0.0))
+    )
     logger.info("Pretrained baseline score: %.4f", pretrained_score)
     # Extract per-achievement unlock rates from pretrained eval (Craftax reports percentages).
     pretrained_ach_rates: dict[str, float] = {
@@ -554,11 +651,16 @@ def main(argv: list[str] | None = None) -> None:
     if merged.get("USE_WANDB"):
         try:
             import wandb
+
             wandb_run = wandb.init(
                 project=merged.get("WANDB_PROJECT", "remdm-craftax-ablations"),
                 entity=merged.get("WANDB_ENTITY"),
                 name=run_id,
-                config={k: v for k, v in merged.items() if isinstance(v, (str, int, float, bool))},
+                config={
+                    k: v
+                    for k, v in merged.items()
+                    if isinstance(v, (str, int, float, bool))
+                },
                 tags=["ablations"] + selected_names,
             )
         except ImportError:
@@ -576,7 +678,9 @@ def main(argv: list[str] | None = None) -> None:
         first_seed_params: Any = None
 
         for seed_idx in range(num_seeds):
-            abl_seed = seed + seed_idx  # C-001 (D7): literal seed set base+idx (default 0, 1, 2)
+            abl_seed = (
+                seed + seed_idx
+            )  # C-001 (D7): literal seed set base+idx (default 0, 1, 2)
             abl_rng = jax.random.PRNGKey(abl_seed)
             seeds_used.append(abl_seed)
             logger.info("Running %s (seed %d/%d)...", abl_name, seed_idx + 1, num_seeds)
@@ -599,7 +703,9 @@ def main(argv: list[str] | None = None) -> None:
                 wandb_run=wandb_run,
                 output_dir=output_dir,
             )
-            seed_times.append(round(time.monotonic() - _t0, 1))  # C-001: per-seed wall clock
+            seed_times.append(
+                round(time.monotonic() - _t0, 1)
+            )  # C-001: per-seed wall clock
             seed_scores.append(final_score)
             seed_histories.append(history)
             if seed_idx == 0:
@@ -610,17 +716,20 @@ def main(argv: list[str] | None = None) -> None:
         std_score = float(np.std(seed_scores))
         logger.info(
             "%s: score = %.4f ± %.4f (seeds=%d)",
-            abl_name, mean_score, std_score, num_seeds,
+            abl_name,
+            mean_score,
+            std_score,
+            num_seeds,
         )
 
         results[abl_name] = {
-            "history": seed_histories[0],   # primary history for plots
+            "history": seed_histories[0],  # primary history for plots
             "score": mean_score,
             "score_std": std_score,
             "all_scores": seed_scores,
-            "base_seed": seed,              # C-001 (D7)
-            "seeds": seeds_used,            # C-001 (D7)
-            "wall_clock_s": seed_times,     # C-001: per-seed wall clock
+            "base_seed": seed,  # C-001 (D7)
+            "seeds": seeds_used,  # C-001 (D7)
+            "wall_clock_s": seed_times,  # C-001: per-seed wall clock
             "per_seed_finals": [_history_finals(h) for h in seed_histories],  # C-002
             "final_params": first_seed_params,  # in-memory only, not serialised
         }
@@ -634,7 +743,9 @@ def main(argv: list[str] | None = None) -> None:
         )
         logger.info(
             "Saved partial results (%d/%d ablations) to %s",
-            len(results), len(selected_names), results_path,
+            len(results),
+            len(selected_names),
+            results_path,
         )
 
     # (params not saved here to keep the results JSON small;
@@ -643,15 +754,25 @@ def main(argv: list[str] | None = None) -> None:
     logger.info("Running action distribution analysis...")
     rng, ad_rng = jax.random.split(rng)
     run_action_distribution_analysis(
-        results, pretrained_params, apply_eval,
-        env, env_params, merged, ad_rng, output_dir,
+        results,
+        pretrained_params,
+        apply_eval,
+        env,
+        env_params,
+        merged,
+        ad_rng,
+        output_dir,
     )
 
     logger.info("Generating plots and tables...")
     ach_rates_arg = pretrained_ach_rates if pretrained_ach_rates else None
-    tables = generate_summary_tables(results, pretrained_score, output_dir, ach_rates_arg)
+    tables = generate_summary_tables(
+        results, pretrained_score, output_dir, ach_rates_arg
+    )
     generate_all_plots(results, pretrained_score, output_dir, ach_rates_arg)
-    report_path = generate_diagnosis_report(results, pretrained_score, tables, output_dir)
+    report_path = generate_diagnosis_report(
+        results, pretrained_score, tables, output_dir
+    )
 
     if wandb_run is not None:
         wandb_run.finish()

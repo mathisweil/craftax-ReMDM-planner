@@ -30,46 +30,56 @@ logger = logging.getLogger(__name__)
 _DPI = 150
 
 
-
 _HYPOTHESIS_GROUPS = {
     "Catastrophic Forgetting": {
-        "supporting_ablations": ["kl_penalty", "ewc", "llrd", "frozen_backbone", "head_only"],
+        "supporting_ablations": [
+            "kl_penalty",
+            "ewc",
+            "llrd",
+            "frozen_backbone",
+            "head_only",
+        ],
         "description": "The pretrained representations are corrupted by RL gradients.",
         "recommendation": "Implement a strong parameter regularisation regime (EWC + LLRD) "
-                          "or use LoRA to restrict the parameter update space.",
+        "or use LoRA to restrict the parameter update space.",
     },
     "Gradient Conflict": {
         "supporting_ablations": ["gradient_surgery", "kl_penalty", "low_t"],
         "description": "RL and BC gradients point in conflicting directions, "
-                       "cancelling useful updates.",
+        "cancelling useful updates.",
         "recommendation": "Apply PCGrad in the full training pipeline, and investigate "
-                          "whether the t-distribution of RL batches is biased.",
+        "whether the t-distribution of RL batches is biased.",
     },
     "Signal Sparsity": {
-        "supporting_ablations": ["bc_wins", "reward_filtering", "running_stats", "reward_model"],
+        "supporting_ablations": [
+            "bc_wins",
+            "reward_filtering",
+            "running_stats",
+            "reward_model",
+        ],
         "description": "Returns are too sparse or noisy to provide a useful training signal.",
         "recommendation": "Increase num_envs, use a reward shaping strategy, or apply "
-                          "curriculum-based episode selection.",
+        "curriculum-based episode selection.",
     },
     "Distributional Shift": {
         "supporting_ablations": ["mixed_replay", "action_diversity"],
         "description": "Online data distribution is too different from the offline pretraining "
-                       "distribution.",
+        "distribution.",
         "recommendation": "Maintain a large offline replay buffer mixed into every batch, "
-                          "or apply importance sampling corrections.",
+        "or apply importance sampling corrections.",
     },
     "Mode Collapse": {
         "supporting_ablations": ["entropy_bonus", "advantage_clip", "normalized_adv"],
         "description": "The model collapses to a degenerate distribution, losing action diversity.",
         "recommendation": "Add a strong entropy bonus and clip advantages to prevent "
-                          "gradient spikes from high-return samples.",
+        "gradient spikes from high-return samples.",
     },
     "t-Bias": {
         "supporting_ablations": ["low_t", "t_curriculum"],
         "description": "High-t (coarse structure) gradients dominate and carry a misleading "
-                       "signal.",
+        "signal.",
         "recommendation": "Restrict training to low-t regime or use a t-curriculum to "
-                          "introduce noise levels in order.",
+        "introduce noise levels in order.",
     },
 }
 
@@ -123,7 +133,6 @@ def _score_hypothesis(
     }
 
 
-
 def _plot_decision_tree(
     scored_hypotheses: list[dict],
     output_dir: Path,
@@ -154,15 +163,31 @@ def _plot_decision_tree(
         # Hypothesis box
         rect = plt.Rectangle((0.1, y - 0.35), 3.5, 0.7, color=color, alpha=0.7)
         ax.add_patch(rect)
-        ax.text(1.85, y, hyp["hypothesis"], ha="center", va="center", fontsize=9, fontweight="bold")
+        ax.text(
+            1.85,
+            y,
+            hyp["hypothesis"],
+            ha="center",
+            va="center",
+            fontsize=9,
+            fontweight="bold",
+        )
 
         # Evidence score
         ax.text(3.8, y, f"evidence={ev:.0%}", ha="left", va="center", fontsize=8)
 
         # Supporting ablations
         supp = ", ".join(hyp["supporting_names"]) if hyp["supporting_names"] else "none"
-        ax.text(5.5, y, f"supported by: {supp}", ha="left", va="center", fontsize=7, color="dimgrey",
-                wrap=True)
+        ax.text(
+            5.5,
+            y,
+            f"supported by: {supp}",
+            ha="left",
+            va="center",
+            fontsize=7,
+            color="dimgrey",
+            wrap=True,
+        )
 
     # Colour bar legend
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=matplotlib.colors.Normalize(0, 1))
@@ -175,7 +200,6 @@ def _plot_decision_tree(
     fig.savefig(path, dpi=_DPI, bbox_inches="tight")
     plt.close(fig)
     logger.info("Saved decision tree to %s", path)
-
 
 
 def generate_diagnosis_report(
@@ -230,7 +254,9 @@ def generate_diagnosis_report(
             "",
         ]
     else:
-        n_improved = sum(1 for res in results.values() if res["score"] > pretrained_score - 0.1)
+        n_improved = sum(
+            1 for res in results.values() if res["score"] > pretrained_score - 0.1
+        )
         lines += [
             f"**{n_improved}/{len(results)} ablations** achieved scores near or above the pretrained baseline.",
             "",
@@ -278,7 +304,13 @@ def generate_diagnosis_report(
     for name, res in sorted(results.items(), key=lambda x: x[1]["score"], reverse=True):
         score = res["score"]
         delta = score - pretrained_score
-        verdict = "IMPROVEMENT" if delta > 0.05 else "COLLAPSE" if score < pretrained_score - 0.1 else "NEUTRAL"
+        verdict = (
+            "IMPROVEMENT"
+            if delta > 0.05
+            else "COLLAPSE"
+            if score < pretrained_score - 0.1
+            else "NEUTRAL"
+        )
         spec = REGISTRY.get(name)
         hypothesis_text = spec.hypothesis if spec else "N/A"
         lines += [
@@ -321,12 +353,16 @@ def generate_diagnosis_report(
     ]
 
     if scored[0]["evidence_score"] > 0.5:
-        lines.append(f"1. **Deep dive on {scored[0]['hypothesis']}**: run multi-seed experiments "
-                     f"with the best-performing ablations ({', '.join(scored[0]['supporting_names'][:3])}) "
-                     f"and tune their hyperparameters.")
+        lines.append(
+            f"1. **Deep dive on {scored[0]['hypothesis']}**: run multi-seed experiments "
+            f"with the best-performing ablations ({', '.join(scored[0]['supporting_names'][:3])}) "
+            f"and tune their hyperparameters."
+        )
     if len(scored) > 1 and scored[1]["evidence_score"] > 0.3:
-        lines.append(f"2. **Combine top-2 interventions**: {scored[0]['hypothesis']} + "
-                     f"{scored[1]['hypothesis']} — run a combined ablation.")
+        lines.append(
+            f"2. **Combine top-2 interventions**: {scored[0]['hypothesis']} + "
+            f"{scored[1]['hypothesis']} — run a combined ablation."
+        )
     lines += [
         "3. **Increase num_envs and num_seeds**: current results may be high-variance. "
         "Confirm findings with num_seeds=3.",
