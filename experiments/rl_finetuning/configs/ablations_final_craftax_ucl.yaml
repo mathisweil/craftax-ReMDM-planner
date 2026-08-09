@@ -102,8 +102,8 @@ reward_model_train_steps: 50
 
 # ── Output / Logging ──────────────────────────────────────────────────────────
 use_wandb: true
-wandb_project: "remdm-craftax-ablations"
-wandb_entity: "mathis-weil-university-college-london-ucl-"
+wandb_project: craftax-ReMDM-planner-ablations
+wandb_entity: myopic-planner
 save_checkpoints: false
 
 # ── Multi-seed ────────────────────────────────────────────────────────────────

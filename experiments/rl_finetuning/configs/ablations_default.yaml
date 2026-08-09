@@ -133,8 +133,8 @@ reward_model_train_steps: 50  # steps to train reward model per iteration
 
 # ── Output / Logging ──────────────────────────────────────────────────────────
 use_wandb: false
-wandb_project: "remdm-craftax-ablations"
-wandb_entity: "mathis-weil-university-college-london-ucl-"
+wandb_project: craftax-ReMDM-planner-ablations
+wandb_entity: myopic-planner
 save_checkpoints: false       # save final params for each ablation
 
 # ── Multi-seed ────────────────────────────────────────────────────────────────
