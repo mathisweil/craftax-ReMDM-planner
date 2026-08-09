@@ -234,7 +234,7 @@ With W&B on and `save_policy: true` (both defaults), training saves Orbax checkp
 
 **Pass the checkpoint directory, not the step subdirectory** — `CheckpointManager` resolves the latest step itself.
 
-`checkpoints/` is gitignored; released weights live on the Hub at [`mathisweil/remdm-craftax-checkpoints`](https://huggingface.co/MathisW78/remdm-craftax-checkpoints), mirroring the layout below.
+`checkpoints/` is gitignored; released weights live on the Hub at [`mathisweil/remdm-craftax-checkpoints`](https://huggingface.co/mathisweil/remdm-craftax-checkpoints), mirroring the layout below.
 
 | Checkpoint directory | Environment | Role | Trained for |
 |---|---|---|---|
