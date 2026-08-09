@@ -306,7 +306,7 @@ def _apply_cli_overrides(config: dict, args: argparse.Namespace) -> dict:
     }
 
 
-def _history_finals(history: "AblationHistory") -> dict:
+def _history_finals(history: AblationHistory) -> dict:
     """C-002 (F-024/F-035): final logged value per history field for one seed.
 
     Captures numeric finals, dict finals (e.g. per-achievement rates) and

@@ -12,7 +12,8 @@ from __future__ import annotations
 import dataclasses
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable, NamedTuple
+from typing import Any, NamedTuple
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
@@ -117,7 +118,7 @@ class AblationHistory:
         return {k: list(v) for k, v in self.__dict__.items()}
 
     @classmethod
-    def from_dict(cls, d: dict) -> "AblationHistory":
+    def from_dict(cls, d: dict) -> AblationHistory:
         """Reconstruct from a dict (e.g., loaded from JSON).
 
         Args:
