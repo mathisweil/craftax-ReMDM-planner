@@ -115,6 +115,6 @@ resume_step: null                   # auto-read from checkpoint metadata if null
 # ── Logging ──────────────────────────────────────────────────────────────────
 seed: null                          # random if not set
 use_wandb: true
-wandb_project: "remdm-craftax"
-wandb_entity: "mathis-weil-university-college-london-ucl-"
+wandb_project: craftax-ReMDM-planner
+wandb_entity: myopic-planner
 wandb_download_dir: null            # null = wandb default ./artifacts/
