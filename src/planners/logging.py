@@ -128,6 +128,12 @@ def build_log_dict(
         log["env/episode_return"] = float(metric["returned_episode_returns"])
     if "returned_episode_lengths" in metric:
         log["env/episode_length"] = float(metric["returned_episode_lengths"])
+    # Cross-repo x-axis alias: same key as the minihack repo's env-step
+    # counter, so curves can share an env-frame axis (METHOD_PARITY 2.6).
+    # Counts learner rollout frames only; expert labels are free here,
+    # whereas minihack charges oracle steps to its budget (B-11).
+    if "timestep" in metric:
+        log["train/env_steps"] = float(metric["timestep"])
 
     # Per-achievement breakdown + aggregate score (Craftax reports as %, divide by 100).
     achieve_total = 0.0

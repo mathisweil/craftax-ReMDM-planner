@@ -1,4 +1,8 @@
-"""MDLM ELBO loss for masked discrete diffusion training."""
+"""MDLM ELBO loss for masked discrete diffusion training.
+
+Shared pseudocode lines 2-6 (METHOD_PARITY 2.1); the minihack twin is
+src/diffusion/loss.py:mdlm_loss.
+"""
 
 from __future__ import annotations
 from typing import Any, Callable, Optional
