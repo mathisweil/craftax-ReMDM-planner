@@ -62,7 +62,7 @@ lr_warmup_steps: 0
 
 # ── Expert ───────────────────────────────────────────────────────────────────
 # Left unset so run_smoke generates a randomly initialised expert and the mode
-# runs on a clean clone with no downloads. Pass --ppo_checkpoint_path to use a
+# runs on a clean clone with no downloads. Pass --ppo-checkpoint to use a
 # trained expert instead. Note the released PPO checkpoints were saved on GPU
 # and currently fail to restore on a CPU-only machine.
 ppo_checkpoint_path: null

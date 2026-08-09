@@ -42,7 +42,7 @@ batch_size: 512               # gradient batch size
 lr: 3.0e-4
 weight_decay: 1.0e-4          # AdamW weight decay
 max_grad_norm: 1.0
-collect_temp: 1.0             # PPO sampling temperature during collection
+collect_temperature: 1.0             # PPO sampling temperature during collection
 ema_decay: 0.999              # EMA decay for eval model weights
 
 # ── Evaluation ────────────────────────────────────────────────────────────────

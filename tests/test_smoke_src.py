@@ -530,10 +530,9 @@ def test_smoke_config_overlays_defaults() -> None:
 
     assert smoke, "smoke.yaml is empty"
 
-    # A key that is neither in defaults.yaml nor a CLI flag would be read by
-    # nothing and silently ignored.
-    parser = main_module._build_parser("configs/defaults.yaml")
-    cli_keys = {action.dest.upper() for action in parser._actions}
+    # A key that is neither in defaults.yaml nor a CLI-backed config key
+    # would be rejected by build_config's key validation.
+    cli_keys = {k.upper() for k in main_module._CLI_CONFIG_KEYS}
     unknown = set(smoke) - set(defaults) - cli_keys
     assert not unknown, f"smoke.yaml sets keys nothing reads: {unknown}"
 

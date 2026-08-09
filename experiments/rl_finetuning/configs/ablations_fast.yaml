@@ -1,7 +1,7 @@
 # =============================================================================
 # ReMDM RL Fine-Tuning Ablation Suite — Fast Configuration
 # Override keys for quick CI / smoke testing. Inherits all other values
-# from ablations_default.yaml when loaded via --ablations_config.
+# from ablations_default.yaml when loaded via --ablations-config.
 # =============================================================================
 
 # ── Training loop ─────────────────────────────────────────────────────────────

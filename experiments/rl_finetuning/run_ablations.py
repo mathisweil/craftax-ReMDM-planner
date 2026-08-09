@@ -5,31 +5,31 @@ Usage::
     # Run all ablations
     python experiments/rl_finetuning/run_ablations.py \\
         --config configs/defaults.yaml \\
-        --ablations_config experiments/rl_finetuning/configs/ablations_default.yaml \\
-        --checkpoint_path /path/to/pretrained \\
-        --ppo_checkpoint_path /path/to/ppo \\
+        --ablations-config experiments/rl_finetuning/configs/ablations_default.yaml \\
+        --checkpoint /path/to/pretrained \\
+        --ppo-checkpoint /path/to/ppo \\
         --all
 
     # Run specific ablations
     python experiments/rl_finetuning/run_ablations.py \\
         --ablations kl_penalty ewc lora gradient_surgery \\
-        --checkpoint_path /path/to/pretrained \\
-        --ppo_checkpoint_path /path/to/ppo
+        --checkpoint /path/to/pretrained \\
+        --ppo-checkpoint /path/to/ppo
 
     # Fast smoke test
     python experiments/rl_finetuning/run_ablations.py \\
-        --ablations_config experiments/rl_finetuning/configs/ablations_fast.yaml \\
+        --ablations-config experiments/rl_finetuning/configs/ablations_fast.yaml \\
         --ablations baseline_rl kl_penalty --fast
 
     # Analysis only (load existing JSON results)
     python experiments/rl_finetuning/run_ablations.py \\
-        --analyze_only \\
-        --results_path experiments/rl_finetuning/outputs/run_xyz/results.json
+        --analyze-only \\
+        --results-path experiments/rl_finetuning/outputs/run_xyz/results.json
 
     # Merge multi-GPU results
     python experiments/rl_finetuning/run_ablations.py \\
         --merge outputs/gpu0/results.json outputs/gpu1/results.json \\
-        --output_dir outputs/merged/
+        --output-dir outputs/merged/
 """
 
 from __future__ import annotations
@@ -146,15 +146,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to main pipeline config (configs/defaults.yaml). Optional.",
     )
     p.add_argument(
-        "--ablations_config", type=str,
+        "--ablations-config", type=str,
         default=str(_PROJECT_ROOT / "experiments/rl_finetuning/configs/ablations_default.yaml"),
         help="Path to ablations-specific config YAML.",
     )
 
     # Checkpoints
-    p.add_argument("--checkpoint_path", type=str, default=None,
+    p.add_argument("--checkpoint", type=str, default=None,
                    help="Path to the pretrained diffusion checkpoint (offline, DAgger or online).")
-    p.add_argument("--ppo_checkpoint_path", type=str, default=None,
+    p.add_argument("--ppo-checkpoint", type=str, default=None,
                    help="Path to PPO checkpoint used for rollout collection.")
 
     # Ablation selection
@@ -167,35 +167,35 @@ def _build_parser() -> argparse.ArgumentParser:
     # Special modes
     p.add_argument("--fast", action="store_true",
                    help="Override max_iter=50, num_envs=16, eval_every=10 for smoke tests.")
-    p.add_argument("--analyze_only", action="store_true",
+    p.add_argument("--analyze-only", action="store_true",
                    help="Skip training; load results.json and regenerate plots/tables/report.")
-    p.add_argument("--results_path", type=str, default=None,
-                   help="Path to results.json for --analyze_only mode.")
+    p.add_argument("--results-path", type=str, default=None,
+                   help="Path to results.json for --analyze-only mode.")
     p.add_argument("--merge", nargs="+", metavar="PATH",
                    help="Merge multiple results.json files from multi-GPU runs, "
                         "recompute statistics, and regenerate analysis.")
 
     # Output
-    p.add_argument("--output_dir", type=str, default=None,
+    p.add_argument("--output-dir", type=str, default=None,
                    help="Root output directory. Defaults to experiments/rl_finetuning/outputs/{run_id}/.")
-    p.add_argument("--run_id", type=str, default=None,
+    p.add_argument("--run-id", type=str, default=None,
                    help="Run identifier. Defaults to run_{timestamp}.")
 
     # Multi-seed
-    p.add_argument("--num_seeds", type=int, default=None,
+    p.add_argument("--num-seeds", type=int, default=None,
                    help="Number of random seeds per ablation (overrides config).")
 
     # W&B
-    p.add_argument("--use_wandb", action=argparse.BooleanOptionalAction, default=None,
+    p.add_argument("--use-wandb", action=argparse.BooleanOptionalAction, default=None,
                    help="Enable W&B logging.")
-    p.add_argument("--wandb_project", type=str, default=None)
-    p.add_argument("--wandb_entity", type=str, default=None)
+    p.add_argument("--wandb-project", type=str, default=None)
+    p.add_argument("--wandb-entity", type=str, default=None)
 
     # Config overrides (passed directly to merged config)
-    p.add_argument("--max_iter", type=int, default=None)
-    p.add_argument("--num_envs", type=int, default=None)
-    p.add_argument("--batch_size", type=int, default=None)
-    p.add_argument("--eval_every", type=int, default=None)
+    p.add_argument("--max-iter", type=int, default=None)
+    p.add_argument("--num-envs", type=int, default=None)
+    p.add_argument("--batch-size", type=int, default=None)
+    p.add_argument("--eval-every", type=int, default=None)
     p.add_argument("--lr", type=float, default=None)
     p.add_argument("--seed", type=int, default=None)
 
@@ -251,8 +251,8 @@ def _apply_cli_overrides(config: dict, args: argparse.Namespace) -> dict:
         "USE_WANDB": args.use_wandb,
         "WANDB_PROJECT": args.wandb_project,
         "WANDB_ENTITY": args.wandb_entity,
-        "CHECKPOINT_PATH": args.checkpoint_path,
-        "PPO_CHECKPOINT_PATH": args.ppo_checkpoint_path,
+        "CHECKPOINT_PATH": args.checkpoint,
+        "PPO_CHECKPOINT_PATH": args.ppo_checkpoint,
     }
     return {k: v if v is not None else config.get(k) for k, v in {**config, **{k: v for k, v in overrides.items() if v is not None}}.items()}
 
@@ -465,7 +465,7 @@ def main(argv: list[str] | None = None) -> None:
     # ── Analysis-only mode ─────────────────────────────────────────────────
     if args.analyze_only:
         if not args.results_path:
-            parser.error("--analyze_only requires --results_path")
+            parser.error("--analyze-only requires --results-path")
         logger.info("Loading results from %s", args.results_path)
         results, pretrained_score, pretrained_ach_rates, config = _results_from_json(args.results_path)
         logger.info("Loaded %d ablation results.", len(results))
@@ -492,9 +492,9 @@ def main(argv: list[str] | None = None) -> None:
 
     # Validate required paths
     if not merged.get("CHECKPOINT_PATH"):
-        parser.error("--checkpoint_path is required for training mode.")
+        parser.error("--checkpoint is required for training mode.")
     if not merged.get("PPO_CHECKPOINT_PATH"):
-        parser.error("--ppo_checkpoint_path is required for training mode.")
+        parser.error("--ppo-checkpoint is required for training mode.")
 
     # Resolve wandb: artifact paths before any checkpoint loading
     from src.planners.model import resolve_checkpoint_path
@@ -652,7 +652,7 @@ def main(argv: list[str] | None = None) -> None:
         # ── Incremental save after each ablation ───────────────────────────
         # Written after every ablation so a crash mid-run doesn't lose
         # already-completed results.  The file is valid JSON at all times
-        # and is directly loadable by --analyze_only --results_path.
+        # and is directly loadable by --analyze-only --results-path.
         results_path = output_dir / "results.json"
         results_path.write_bytes(
             _results_to_json(results, pretrained_score, merged, pretrained_ach_rates)
@@ -664,7 +664,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # ── Save checkpoints ───────────────────────────────────────────────────
     # (params not saved here to keep the results JSON small;
-    #  enable via --save_checkpoints if needed)
+    #  enable via save_checkpoints in the ablations config if needed)
 
     # ── Action distribution analysis ─────────────────────────────────────
     logger.info("Running action distribution analysis...")

@@ -42,7 +42,7 @@ The `ablations_final_*` presets pin the transformer architecture and sampling hy
 
 ### Usage
 
-The pretrained diffusion checkpoint can come from either offline training (`--mode offline`) or DAgger online training (`--mode online`) — the checkpoint format is identical. Use `--checkpoint_path` to point to it. For DAgger runs, either the final (`{env}-policy`) or best-validation (`{env}-policy-best`) artifact produced by `--mode online` can be consumed directly.
+The pretrained diffusion checkpoint can come from either offline training (`--mode offline`) or DAgger online training (`--mode online`) — the checkpoint format is identical. Use `--checkpoint` to point to it. For DAgger runs, either the final (`{env}-policy`) or best-validation (`{env}-policy-best`) artifact produced by `--mode online` can be consumed directly.
 
 Checkpoint paths accept `wandb:` prefixed artifact references (e.g., `wandb:team/project/artifact:latest`), which are downloaded automatically before training begins.
 
@@ -51,61 +51,61 @@ Checkpoint paths accept `wandb:` prefixed artifact references (e.g., `wandb:team
 python experiments/rl_finetuning/run_ablations.py \
     --ablations baseline_rl kl_penalty \
     --fast \
-    --checkpoint_path $PRETRAINED_CKPT \
-    --ppo_checkpoint_path $PPO_CKPT
+    --checkpoint $PRETRAINED_CKPT \
+    --ppo-checkpoint $PPO_CKPT
 ```
 
 **Full suite (all 25 ablations):**
 ```bash
 python experiments/rl_finetuning/run_ablations.py \
     --config configs/defaults.yaml \
-    --ablations_config experiments/rl_finetuning/configs/ablations_default.yaml \
+    --ablations-config experiments/rl_finetuning/configs/ablations_default.yaml \
     --all \
-    --num_seeds 3 \
-    --checkpoint_path $PRETRAINED_CKPT \
-    --ppo_checkpoint_path $PPO_CKPT \
-    --use_wandb
+    --num-seeds 3 \
+    --checkpoint $PRETRAINED_CKPT \
+    --ppo-checkpoint $PPO_CKPT \
+    --use-wandb
 ```
 
 **Full suite against a pinned `final_*` checkpoint:**
 ```bash
 # Craftax Classic, UCL hardware (seed 42 checkpoint)
 python experiments/rl_finetuning/run_ablations.py \
-    --ablations_config experiments/rl_finetuning/configs/ablations_final_classic_ucl.yaml \
-    --all --num_seeds 3 \
-    --checkpoint_path wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy-best:latest \
-    --ppo_checkpoint_path wandb:my-team/ppo-craftax/ppo-rnn-policy:best \
-    --use_wandb
+    --ablations-config experiments/rl_finetuning/configs/ablations_final_classic_ucl.yaml \
+    --all --num-seeds 3 \
+    --checkpoint wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy-best:latest \
+    --ppo-checkpoint wandb:my-team/ppo-craftax/ppo-rnn-policy:best \
+    --use-wandb
 ```
 
 **Specific ablations:**
 ```bash
 python experiments/rl_finetuning/run_ablations.py \
     --ablations ewc lora gradient_surgery trust_region_kl \
-    --checkpoint_path $PRETRAINED_CKPT \
-    --ppo_checkpoint_path $PPO_CKPT
+    --checkpoint $PRETRAINED_CKPT \
+    --ppo-checkpoint $PPO_CKPT
 ```
 
 **From a W&B artifact:**
 ```bash
 python experiments/rl_finetuning/run_ablations.py \
     --ablations baseline_rl \
-    --checkpoint_path wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy:latest \
-    --ppo_checkpoint_path wandb:my-team/ppo-craftax/ppo-rnn-policy:best
+    --checkpoint wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy:latest \
+    --ppo-checkpoint wandb:my-team/ppo-craftax/ppo-rnn-policy:best
 ```
 
 **Re-plot from saved results (no training):**
 ```bash
 python experiments/rl_finetuning/run_ablations.py \
-    --analyze_only \
-    --results_path experiments/rl_finetuning/outputs/run_20250101_120000/results.json
+    --analyze-only \
+    --results-path experiments/rl_finetuning/outputs/run_20250101_120000/results.json
 ```
 
 **Merge multi-GPU results:**
 ```bash
 python experiments/rl_finetuning/run_ablations.py \
     --merge outputs/gpu0/results.json outputs/gpu1/results.json \
-    --output_dir experiments/rl_finetuning/outputs/merged/
+    --output-dir experiments/rl_finetuning/outputs/merged/
 ```
 
 **List all ablations:**
@@ -197,7 +197,7 @@ experiments/rl_finetuning/outputs/{run_id}/
 ```
 
 `results.json` is written incrementally after each ablation completes — a partial file with
-N of 25 ablations is fully valid and loadable by `--analyze_only --results_path`.
+N of 25 ablations is fully valid and loadable by `--analyze-only --results-path`.
 
 ### Diagnostic metrics collected
 

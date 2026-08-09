@@ -28,6 +28,17 @@ REMASK_STRATEGIES = ["rescale", "cap", "conf"]
 DIFFUSION_SCHEDULES = ["cosine", "linear"]
 PPO_TYPES = ["ppo", "ppo_rnn", "ppo_rnd"]
 
+# Config keys set by run-level CLI flags rather than defaults.yaml. They are
+# also legal in config files (smoke.yaml sets ppo_checkpoint_path: null so the
+# smoke mode runs with a random expert on a clean clone).
+_CLI_CONFIG_KEYS = {
+    "ppo_checkpoint_path",
+    "checkpoint_path",
+    "offline_checkpoint_path",
+    "offline_data_path",
+    "inference_output",
+}
+
 
 # =============================================================================
 # Parser
@@ -36,115 +47,135 @@ PPO_TYPES = ["ppo", "ppo_rnn", "ppo_rnd"]
 def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="ReMDM discrete diffusion planner for Craftax",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    p.add_argument("--config", default=default_cfg_path)
-
+    p.add_argument(
+        "--config", default=default_cfg_path,
+        help="Experiment config, deep-merged onto configs/defaults.yaml",
+    )
     p.add_argument(
         "--mode", required=True,
         choices=["collect", "offline", "online", "inference", "smoke"],
     )
-    p.add_argument("--seed", type=int, default=None)
+    p.add_argument(
+        "--seed", type=int, default=None,
+        help="Run seed (overrides the config value)",
+    )
     p.add_argument("--jit", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument(
+        "--override", action="append", default=[], metavar="KEY=VALUE",
+        help=(
+            "Config override, repeatable. Keys are validated against "
+            "configs/defaults.yaml; unknown keys are an error."
+        ),
+    )
 
-    # Paths
-    p.add_argument("--ppo_checkpoint_path", type=str, default=None)
-    p.add_argument("--offline_data_path", type=str, default=None)
-    p.add_argument("--offline_checkpoint_path", type=str, default=None)
-    p.add_argument("--checkpoint_path", type=str, default=None)
-    p.add_argument("--checkpoint_dir", type=str, default=None)
-    p.add_argument("--inference_output", type=str, default=None,
-                   help="Optional JSON path for machine-readable inference results (C-006).")
+    p.add_argument(
+        "--checkpoint", type=str, default=None,
+        help=(
+            "Planner checkpoint: evaluated by --mode inference, warm-starts "
+            "--mode online/smoke. Accepts wandb: references."
+        ),
+    )
+    p.add_argument(
+        "--ppo-checkpoint", type=str, default=None,
+        help=(
+            "PPO expert checkpoint, required by collect/offline/online. "
+            "Accepts wandb: references."
+        ),
+    )
+    p.add_argument(
+        "--data", type=str, default=None,
+        help="Output .npz path for --mode collect",
+    )
+    p.add_argument(
+        "--output", type=str, default=None,
+        help="Optional JSON path for machine-readable inference results (C-006).",
+    )
 
-    # Environment
-    p.add_argument("--env_name", type=str, default=None)
-    p.add_argument("--use_optimistic_resets", action=argparse.BooleanOptionalAction, default=None)
-    p.add_argument("--optimistic_reset_ratio", type=int, default=None)
-
-    # Architecture
-    p.add_argument("--d_model", type=int, default=None)
-    p.add_argument("--n_heads", type=int, default=None)
-    p.add_argument("--n_layers", type=int, default=None)
-    p.add_argument("--d_ff", type=int, default=None)
-    p.add_argument("--obs_encoder_layers", type=int, default=None)
-    p.add_argument("--obs_encoder_width", type=int, default=None)
-    p.add_argument("--dropout_rate", type=float, default=None)
-
-    # Diffusion
-    p.add_argument("--plan_horizon", type=int, default=None)
-    p.add_argument("--diffusion_schedule", type=str, choices=DIFFUSION_SCHEDULES, default=None)
-    p.add_argument("--diffusion_steps", type=int, default=None)
-    p.add_argument("--diffusion_steps_eval", type=int, default=None)
-    p.add_argument("--train_sigma", type=float, default=None)
-    p.add_argument("--label_smoothing", type=float, default=None)
-    p.add_argument("--remask_strategy", type=str, choices=REMASK_STRATEGIES, default=None)
-    p.add_argument("--eta", type=float, default=None)
-    p.add_argument("--use_loop", action=argparse.BooleanOptionalAction, default=None)
-    p.add_argument("--t_on", type=float, default=None)
-    p.add_argument("--t_off", type=float, default=None)
-    p.add_argument("--temperature", type=float, default=None)
-    p.add_argument("--top_p", type=float, default=None)
-
-    # Optimisation
-    p.add_argument("--lr", type=float, default=None)
-    p.add_argument("--max_grad_norm", type=float, default=None)
-    p.add_argument("--batch_size", type=int, default=None)
-
-    # Offline training
-    p.add_argument("--offline_total_timesteps", type=lambda x: int(float(x)), default=None)
-    p.add_argument("--offline_num_updates", type=int, default=None)
-    p.add_argument("--num_envs", type=int, default=None)
-    p.add_argument("--num_steps", type=int, default=None)
-    p.add_argument("--num_minibatches", type=int, default=None)
-    p.add_argument("--update_epochs", type=int, default=None)
-    p.add_argument("--num_repeats", type=int, default=None)
-    p.add_argument("--collect_temperature", type=float, default=None)
-    p.add_argument("--val_interval", type=int, default=None)
-    p.add_argument("--val_diffusion_steps", type=int, default=None)
-    p.add_argument("--val_replan_every", type=int, default=None)
-    p.add_argument("--val_steps", type=int, default=None)
-    p.add_argument("--return_weight_cap", type=float, default=None)
-    p.add_argument("--lr_warmup_steps", type=int, default=None)
-    p.add_argument("--lr_warmup_frames", type=lambda x: int(float(x)), default=None)
-    p.add_argument("--val_interval_frames", type=lambda x: int(float(x)), default=None)
-
-    # Online DAgger
-    p.add_argument("--online_num_updates", type=lambda x: int(float(x)), default=None)
-    p.add_argument("--online_total_timesteps", type=lambda x: int(float(x)), default=None)
-    p.add_argument("--dagger_beta_init", type=float, default=None)
-    p.add_argument("--dagger_beta_decay", type=float, default=None)
-    p.add_argument("--dagger_beta_final", type=float, default=None)
-    p.add_argument("--dagger_buffer_max", type=int, default=None)
-    p.add_argument("--dagger_buffer_cycles", type=float, default=None)
-
-    # Data collection
-    p.add_argument("--collect_num_steps", type=lambda x: int(float(x)), default=None)
-    p.add_argument("--collect_num_envs", type=int, default=None)
-    p.add_argument("--ppo_model_type", type=str, choices=PPO_TYPES, default=None)
-    p.add_argument("--layer_size", type=int, default=None)
-
-    # Inference
-    p.add_argument("--eval_steps", type=lambda x: int(float(x)), default=None)
-    p.add_argument("--eval_num_envs", type=int, default=None)
-
-    # Checkpointing
-    p.add_argument("--save_policy", action=argparse.BooleanOptionalAction, default=None)
-    p.add_argument("--checkpoint_interval", type=int, default=None)
-    p.add_argument("--max_checkpoints", type=int, default=None)
-
-    # Resume
-    p.add_argument("--resume_checkpoint_path", type=str, default=None)
-    p.add_argument("--resume_wandb_run_id", type=str, default=None)
-    p.add_argument("--resume_step", type=int, default=None)
-
-    # Logging
-    p.add_argument("--use_wandb", action=argparse.BooleanOptionalAction, default=None)
-    p.add_argument("--wandb_project", type=str, default=None)
-    p.add_argument("--wandb_entity", type=str, default=None)
-    p.add_argument("--wandb_download_dir", type=str, default=None)
+    p.add_argument(
+        "--resume", type=str, default=None,
+        help=(
+            "Checkpoint to resume a completed offline/online run from. "
+            "Accepts wandb: references."
+        ),
+    )
+    p.add_argument("--resume-step", type=int, default=None)
+    p.add_argument("--resume-wandb-run-id", type=str, default=None)
 
     return p
+
+
+# =============================================================================
+# Overrides
+# =============================================================================
+
+def _parse_overrides(pairs: list[str]) -> dict[str, str]:
+    overrides: dict[str, str] = {}
+    for item in pairs:
+        if "=" not in item:
+            raise ValueError(f"--override expects KEY=VALUE, got '{item}'")
+        key, value = item.split("=", 1)
+        overrides[key] = value
+    return overrides
+
+
+def _validate_keys(keys, allowed: set[str], source: str) -> None:
+    """Reject unknown config keys instead of silently ignoring them."""
+    unknown = sorted(set(keys) - allowed)
+    if unknown:
+        raise ValueError(
+            f"Unknown config key(s) {unknown} in {source}. "
+            "Valid keys are defined in configs/defaults.yaml."
+        )
+
+
+def _cast_override(key: str, raw: str, current) -> object:
+    """Cast a CLI override string to the type of the current config value."""
+    if isinstance(current, str):
+        return raw
+
+    try:
+        value = yaml.safe_load(raw)
+    except yaml.YAMLError:
+        value = raw
+
+    if current is None or value is None:
+        return value
+
+    # YAML 1.1 reads '1e-4' as a string; accept scientific notation for
+    # numeric keys.
+    if (
+        isinstance(current, (int, float))
+        and not isinstance(current, bool)
+        and isinstance(value, str)
+    ):
+        try:
+            value = float(value)
+        except ValueError:
+            pass
+
+    if isinstance(current, bool):
+        if not isinstance(value, bool):
+            raise ValueError(f"'{key}' expects a boolean, got '{raw}'")
+        return value
+    if isinstance(current, int):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"'{key}' expects an integer, got '{raw}'")
+        if isinstance(value, float):
+            if not value.is_integer():
+                raise ValueError(f"'{key}' expects an integer, got '{raw}'")
+            value = int(value)
+        return value
+    if isinstance(current, float):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"'{key}' expects a number, got '{raw}'")
+        return float(value)
+    if isinstance(current, list):
+        if not isinstance(value, list):
+            raise ValueError(f"'{key}' expects a list, got '{raw}'")
+        return value
+    return value
 
 
 # =============================================================================
@@ -155,29 +186,62 @@ def build_config() -> dict[str, Any]:
     default_cfg = str(pathlib.Path(__file__).parent / "configs" / "defaults.yaml")
     smoke_cfg = str(pathlib.Path(__file__).parent / "configs" / "smoke.yaml")
 
-    # Pre-parse config path and mode
-    pre = argparse.ArgumentParser(add_help=False)
-    pre.add_argument("--config", default=default_cfg)
-    pre.add_argument("--mode", default=None)
-    pre_args, _ = pre.parse_known_args()
+    parser = _build_parser(default_cfg)
+    args = parser.parse_args()
 
-    with open(pre_args.config) as f:
-        yaml_cfg = yaml.safe_load(f) or {}
+    with open(default_cfg) as f:
+        yaml_cfg: dict[str, Any] = yaml.safe_load(f) or {}
+    allowed = set(yaml_cfg) | _CLI_CONFIG_KEYS
 
     # Smoke mode overlays configs/smoke.yaml on the defaults.  Only when the
     # user did not name their own --config, so an explicit config always wins.
-    if pre_args.mode == "smoke" and pre_args.config == default_cfg:
+    if args.mode == "smoke" and args.config == default_cfg:
         with open(smoke_cfg) as f:
-            yaml_cfg.update(yaml.safe_load(f) or {})
+            overlay = yaml.safe_load(f) or {}
+        _validate_keys(overlay, allowed, smoke_cfg)
+        yaml_cfg.update(overlay)
+    elif args.config != default_cfg:
+        with open(args.config) as f:
+            overlay = yaml.safe_load(f) or {}
+        _validate_keys(overlay, allowed, args.config)
+        yaml_cfg.update(overlay)
 
-    parser = _build_parser(default_cfg)
-    args, rest = parser.parse_known_args()
-    if rest:
-        raise ValueError(f"Unknown arguments: {rest}")
+    overrides = _parse_overrides(args.override)
+    _validate_keys(overrides, allowed, "--override")
+    for key, raw in overrides.items():
+        yaml_cfg[key] = _cast_override(key, raw, yaml_cfg.get(key))
 
     config: dict[str, Any] = {k.upper(): v for k, v in yaml_cfg.items()}
-    cli = {k.upper(): v for k, v in vars(args).items() if v is not None and k != "config"}
-    config.update(cli)
+
+    # Run-level flags override config values.
+    config["MODE"] = args.mode
+    config["JIT"] = args.jit
+    if args.seed is not None:
+        config["SEED"] = args.seed
+    if args.ppo_checkpoint is not None:
+        config["PPO_CHECKPOINT_PATH"] = args.ppo_checkpoint
+    if args.data is not None:
+        config["OFFLINE_DATA_PATH"] = args.data
+    if args.output is not None:
+        config["INFERENCE_OUTPUT"] = args.output
+    if args.resume is not None:
+        config["RESUME_CHECKPOINT_PATH"] = args.resume
+    if args.resume_step is not None:
+        config["RESUME_STEP"] = args.resume_step
+    if args.resume_wandb_run_id is not None:
+        config["RESUME_WANDB_RUN_ID"] = args.resume_wandb_run_id
+
+    if args.checkpoint is not None:
+        if args.mode == "inference":
+            config["CHECKPOINT_PATH"] = args.checkpoint
+        elif args.mode in {"online", "smoke"}:
+            config["OFFLINE_CHECKPOINT_PATH"] = args.checkpoint
+        else:
+            raise ValueError(
+                "--checkpoint is only used by --mode inference (weights to "
+                "evaluate) and --mode online/smoke (warm start); got "
+                f"--mode {args.mode}"
+            )
 
     if config.get("SEED") is None:
         config["SEED"] = np.random.randint(2**31)
@@ -229,8 +293,8 @@ def _resolve_resume(config: dict[str, Any]) -> None:
     mode = config["MODE"]
     if mode not in {"offline", "online"}:
         raise ValueError(
-            f"--resume_checkpoint_path is only supported for offline/online "
-            f"modes, got '{mode}'"
+            f"--resume is only supported for offline/online modes, "
+            f"got '{mode}'"
         )
 
     # Attempt to read metadata sidecar for auto-population.
@@ -249,7 +313,7 @@ def _resolve_resume(config: dict[str, Any]) -> None:
     if config.get("RESUME_STEP") is None:
         raise ValueError(
             "Cannot determine resume_step: no metadata sidecar found at "
-            f"'{resume_path}'. Provide --resume_step explicitly."
+            f"'{resume_path}'. Provide --resume-step explicitly."
         )
 
     resume_step = config["RESUME_STEP"]
@@ -262,20 +326,26 @@ def _resolve_resume(config: dict[str, Any]) -> None:
     num_updates = config["NUM_UPDATES"]
 
     if resume_step >= num_updates:
-        bump_flag = (
-            "--offline_total_timesteps (or --offline_num_updates)"
+        bump_key = (
+            "offline_total_timesteps (or offline_num_updates)"
             if mode == "offline"
-            else "--online_total_timesteps (or --online_num_updates)"
+            else "online_total_timesteps (or online_num_updates)"
         )
         raise ValueError(
             f"resume_step ({resume_step}) >= num_updates ({num_updates}). "
-            f"Increase {bump_flag} to extend training."
+            f"Increase --override {bump_key} to extend training."
         )
 
 
 # =============================================================================
 # Validation
 # =============================================================================
+
+def _check_choice(config: dict[str, Any], key: str, choices: list[str]) -> None:
+    value = config.get(key)
+    if value is not None and value not in choices:
+        raise ValueError(f"{key.lower()} must be one of {choices}, got '{value}'")
+
 
 def validate_config(config: dict[str, Any]) -> None:
     """Validate required config keys for the selected mode.
@@ -284,15 +354,19 @@ def validate_config(config: dict[str, Any]) -> None:
         config: Upper-cased config dict.
 
     Raises:
-        ValueError: If a required key is missing.
+        ValueError: If a required key is missing or an enum value is invalid.
     """
     mode = config["MODE"]
 
     if mode in {"collect", "offline", "online"} and not config.get("PPO_CHECKPOINT_PATH"):
-        raise ValueError("--ppo_checkpoint_path required for this mode")
+        raise ValueError("--ppo-checkpoint required for this mode")
 
     if mode == "inference" and not config.get("CHECKPOINT_PATH"):
-        raise ValueError("--checkpoint_path required for inference mode")
+        raise ValueError("--checkpoint required for inference mode")
+
+    _check_choice(config, "REMASK_STRATEGY", REMASK_STRATEGIES)
+    _check_choice(config, "DIFFUSION_SCHEDULE", DIFFUSION_SCHEDULES)
+    _check_choice(config, "PPO_MODEL_TYPE", PPO_TYPES)
 
 
 # =============================================================================
