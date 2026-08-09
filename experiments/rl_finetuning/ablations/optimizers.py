@@ -11,7 +11,8 @@ the base model apply function to include LoRA contributions.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -19,12 +20,9 @@ import numpy as np
 import optax
 
 
-# ---------------------------------------------------------------------------
-# Standard Adam
-# ---------------------------------------------------------------------------
-
-
-def make_optimizer_standard(config: dict, params: Any = None) -> optax.GradientTransformation:
+def make_optimizer_standard(
+    config: dict, params: Any = None
+) -> optax.GradientTransformation:
     """AdamW with global gradient clipping — baseline optimizer.
 
     Args:
@@ -43,11 +41,6 @@ def make_optimizer_standard(config: dict, params: Any = None) -> optax.GradientT
             eps=1e-5,
         ),
     )
-
-
-# ---------------------------------------------------------------------------
-# Group A: LLRD
-# ---------------------------------------------------------------------------
 
 
 def _get_llrd_label(path: tuple, head_fragments: tuple[str, ...] = ()) -> str:
@@ -150,18 +143,15 @@ def make_optimizer_llrd(config: dict, params: Any) -> optax.GradientTransformati
     transforms["obs_enc"] = optax.adamw(obs_lr, weight_decay=weight_decay, eps=1e-5)
     for i in range(n_layers):
         depth_from_top = n_layers - i
-        lr_i = base_lr * (decay ** depth_from_top)
-        transforms[f"block_{i}"] = optax.adamw(lr_i, weight_decay=weight_decay, eps=1e-5)
+        lr_i = base_lr * (decay**depth_from_top)
+        transforms[f"block_{i}"] = optax.adamw(
+            lr_i, weight_decay=weight_decay, eps=1e-5
+        )
 
     return optax.chain(
         optax.clip_by_global_norm(max_grad_norm),
         optax.multi_transform(transforms, label_tree),
     )
-
-
-# ---------------------------------------------------------------------------
-# Group A: Frozen backbone / parameter isolation
-# ---------------------------------------------------------------------------
 
 
 def make_optimizer_frozen_paths(
@@ -206,11 +196,6 @@ def make_optimizer_frozen_paths(
             label_tree,
         ),
     )
-
-
-# ---------------------------------------------------------------------------
-# Group A: LoRA
-# ---------------------------------------------------------------------------
 
 
 def _num_input_axes(path_str: str, ndim: int) -> int:
@@ -371,11 +356,6 @@ def make_optimizer_lora_only(
     )
 
 
-# ---------------------------------------------------------------------------
-# Gradient surgery (PCGrad) — applied to gradients, not a full optimizer
-# ---------------------------------------------------------------------------
-
-
 def gradient_surgery(g_rl: Any, g_bc: Any) -> Any:
     """Project RL gradients onto the plane orthogonal to conflicting BC gradients.
 
@@ -392,6 +372,7 @@ def gradient_surgery(g_rl: Any, g_bc: Any) -> Any:
     Returns:
         Projected RL gradient pytree.
     """
+
     def _project(g_r: jnp.ndarray, g_b: jnp.ndarray) -> jnp.ndarray:
         dot = jnp.sum(g_r * g_b)
         norm_sq = jnp.sum(g_b * g_b) + 1e-10

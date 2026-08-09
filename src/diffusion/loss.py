@@ -5,7 +5,9 @@ src/diffusion/loss.py:mdlm_loss.
 """
 
 from __future__ import annotations
-from typing import Any, Callable, Optional
+
+from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -14,11 +16,11 @@ from .forward import forward_process
 from .schedules import ScheduleFn
 
 ModelApplyFn = Callable[
-    [Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, Optional[Any]], jnp.ndarray
+    [Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, Any | None], jnp.ndarray
 ]
 
-_MAX_WEIGHT: float = 1000.0
-_EPS: float = 1e-5
+_MAX_WEIGHT: float = 1000.0  # matches minihack twin and loss_weight_clip convention
+_EPS: float = 1e-5  # floor for 1 - alpha_t; minihack _WEIGHT_DENOM_EPS identical
 
 
 def compute_loss(
@@ -33,7 +35,7 @@ def compute_loss(
     schedule_deriv_fn: ScheduleFn,
     sigma_t: float = 0.0,
     label_smoothing: float = 0.0,
-    advantages: Optional[jnp.ndarray] = None,
+    advantages: jnp.ndarray | None = None,
     t_min: float | jax.Array = _EPS,
     t_max: float | jax.Array = 1.0,
 ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
@@ -58,6 +60,11 @@ def compute_loss(
     Returns:
         (loss, info_dict).
     """
+    if x_0.ndim != 2 or obs.ndim != 2 or x_0.shape[0] != obs.shape[0]:
+        raise ValueError(
+            "compute_loss expects x_0 [B, H] and obs [B, D]; got "
+            f"{tuple(x_0.shape)}, {tuple(obs.shape)}"
+        )
     B = x_0.shape[0]
     mask_id = num_actions
     rng, t_rng, mask_rng, drop_rng = jax.random.split(rng, 4)
@@ -78,7 +85,7 @@ def compute_loss(
     logits = model_apply(params, obs, z_t, t, drop_rng)  # [B, H, V]
 
     # Cross-entropy on valid masked positions
-    is_masked = (z_t == mask_id).astype(jnp.float32)        # [B, H]
+    is_masked = (z_t == mask_id).astype(jnp.float32)  # [B, H]
     valid_masked = is_masked * valid[:, None].astype(jnp.float32)  # [B, H]
 
     targets = jax.nn.one_hot(x_0, num_actions)
@@ -86,7 +93,7 @@ def compute_loss(
         targets = (1.0 - label_smoothing) * targets + label_smoothing / num_actions
 
     log_probs = jax.nn.log_softmax(logits, axis=-1)
-    ce = -jnp.sum(targets * log_probs, axis=-1)             # [B, H]
+    ce = -jnp.sum(targets * log_probs, axis=-1)  # [B, H]
 
     # FIX-1 (ADJUDICATION B-1): constant per-token normalisation (1/H),
     # per MDLM eq (10) / Shi eq (4). Dividing by the realised masked

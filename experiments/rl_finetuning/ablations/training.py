@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, NamedTuple
+from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -46,11 +47,6 @@ from experiments.rl_finetuning.diagnostics.timestep import make_t_analysis_fn
 logger = logging.getLogger(__name__)
 
 _EPS: float = 1e-5
-
-
-# ---------------------------------------------------------------------------
-# History (unchanged public interface for analysis/)
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -122,7 +118,7 @@ class AblationHistory:
         return {k: list(v) for k, v in self.__dict__.items()}
 
     @classmethod
-    def from_dict(cls, d: dict) -> "AblationHistory":
+    def from_dict(cls, d: dict) -> AblationHistory:
         """Reconstruct from a dict (e.g., loaded from JSON).
 
         Args:
@@ -133,11 +129,6 @@ class AblationHistory:
         """
         valid_keys = {f.name for f in dataclasses.fields(cls)}
         return cls(**{k: v for k, v in d.items() if k in valid_keys})
-
-
-# ---------------------------------------------------------------------------
-# NamedTuples for scan carry and per-step metrics
-# ---------------------------------------------------------------------------
 
 
 class ReplayBuffer(NamedTuple):
@@ -215,7 +206,7 @@ class StepMetrics(NamedTuple):
     # CKA
     cka: jax.Array
     # t-analysis
-    t_bin_norms: jax.Array        # [n_bins]
+    t_bin_norms: jax.Array  # [n_bins]
     low_high_cos: jax.Array
     t_norm_low: jax.Array
     t_norm_high: jax.Array
@@ -223,7 +214,7 @@ class StepMetrics(NamedTuple):
     surgery_frac: jax.Array
     surgery_n_conflict: jax.Array
     # Per-layer norms
-    per_layer_norms: jax.Array    # [num_leaves]
+    per_layer_norms: jax.Array  # [num_leaves]
     # Eval
     eval_score: jax.Array
     # Flags: which diagnostics actually ran this step
@@ -235,11 +226,6 @@ class StepMetrics(NamedTuple):
     did_per_layer: jax.Array
     did_surgery: jax.Array
     did_log: jax.Array
-
-
-# ---------------------------------------------------------------------------
-# Reward model (functional, for scan carry)
-# ---------------------------------------------------------------------------
 
 
 def _build_reward_model(
@@ -288,7 +274,9 @@ def _build_reward_model(
     dummy_params = net.init(rng, jnp.zeros((1, obs_dim)))
     tx = optax.adam(lr)
     rm_state = TrainState.create(
-        apply_fn=net.apply, params=dummy_params, tx=tx,
+        apply_fn=net.apply,
+        params=dummy_params,
+        tx=tx,
     )
     return net, rm_state
 
@@ -308,6 +296,7 @@ def _reward_model_train_step(
     Returns:
         Tuple of (updated_state, scalar_loss).
     """
+
     def loss_fn(params: Any) -> jax.Array:
         preds = rm_state.apply_fn(params, obs)
         return jnp.mean((preds - targets) ** 2)
@@ -315,11 +304,6 @@ def _reward_model_train_step(
     loss_val, grads = jax.value_and_grad(loss_fn)(rm_state.params)
     rm_state = rm_state.apply_gradients(grads=grads)
     return rm_state, loss_val
-
-
-# ---------------------------------------------------------------------------
-# Pure JAX advantage computation
-# ---------------------------------------------------------------------------
 
 
 def _compute_advantages(
@@ -386,13 +370,8 @@ def _effective_batch_size(advantages: jax.Array) -> jax.Array:
         Effective batch size as a JAX scalar.
     """
     sum_w = jnp.sum(advantages)
-    sum_w2 = jnp.sum(advantages ** 2)
-    return sum_w ** 2 / jnp.maximum(sum_w2, 1e-10)
-
-
-# ---------------------------------------------------------------------------
-# Rollout helpers (unchanged, already JIT-compiled)
-# ---------------------------------------------------------------------------
+    sum_w2 = jnp.sum(advantages**2)
+    return sum_w**2 / jnp.maximum(sum_w2, 1e-10)
 
 
 def build_rollout_fn(
@@ -444,37 +423,51 @@ def build_rollout_fn(
         Returns:
             Updated carry + window arrays + env score dict.
         """
+
         def _env_step(carry: tuple, _: None) -> tuple:
             es, ob, dn, hs, r = carry
             r, act_rng, step_rng = jax.random.split(r, 3)
-            action, new_hs = ppo.act(ob, dn, hs, act_rng, temperature=collect_temperature)
-            new_obs, es, reward, new_done, info = env.step(step_rng, es, action, env_params)
+            action, new_hs = ppo.act(
+                ob, dn, hs, act_rng, temperature=collect_temperature
+            )
+            new_obs, es, reward, new_done, info = env.step(
+                step_rng, es, action, env_params
+            )
             t = Transition(done=dn, action=action, reward=reward, obs=ob, info=info)
             return (es, new_obs, new_done, new_hs, r), t
 
         (env_state, obs, done, hstate, rng), traj = jax.lax.scan(
-            _env_step, (env_state, obs, done, hstate, rng), None, num_steps,
+            _env_step,
+            (env_state, obs, done, hstate, rng),
+            None,
+            num_steps,
         )
 
         def _window(t_idx: jax.Array) -> tuple:
-            obs_t = traj.obs[t_idx]                                         # [E, obs_dim]
+            obs_t = traj.obs[t_idx]  # [E, obs_dim]
             acts = jax.lax.dynamic_slice(
-                traj.action, (t_idx, 0), (plan_horizon, num_envs),
-            )                                                                # [H, E]
+                traj.action,
+                (t_idx, 0),
+                (plan_horizon, num_envs),
+            )  # [H, E]
             dones = jax.lax.dynamic_slice(
-                traj.done, (t_idx + 1, 0), (plan_horizon - 1, num_envs),
-            )                                                                # [H-1, E]
-            valid = ~jnp.any(dones, axis=0)                                  # [E]
+                traj.done,
+                (t_idx + 1, 0),
+                (plan_horizon - 1, num_envs),
+            )  # [H-1, E]
+            valid = ~jnp.any(dones, axis=0)  # [E]
             rews = jax.lax.dynamic_slice(
-                traj.reward, (t_idx, 0), (plan_horizon, num_envs),
+                traj.reward,
+                (t_idx, 0),
+                (plan_horizon, num_envs),
             )
             return obs_t, jnp.swapaxes(acts, 0, 1), valid, jnp.sum(rews, axis=0)
 
         obs_w, act_w, valid_w, ret_w = jax.vmap(_window)(jnp.arange(valid_per_rollout))
-        flat_obs = obs_w.reshape(-1, obs_dim)           # [N, obs_dim]
-        flat_acts = act_w.reshape(-1, plan_horizon)     # [N, H]
-        flat_valid = valid_w.reshape(-1)                # [N]
-        flat_returns = ret_w.reshape(-1)                # [N]
+        flat_obs = obs_w.reshape(-1, obs_dim)  # [N, obs_dim]
+        flat_acts = act_w.reshape(-1, plan_horizon)  # [N, H]
+        flat_valid = valid_w.reshape(-1)  # [N]
+        flat_returns = ret_w.reshape(-1)  # [N]
 
         info_returned = traj.info["returned_episode"]
         env_score = jax.tree.map(
@@ -482,8 +475,16 @@ def build_rollout_fn(
             traj.info,
         )
         return (
-            env_state, obs, done, hstate, rng,
-            flat_obs, flat_acts, flat_valid, flat_returns, env_score,
+            env_state,
+            obs,
+            done,
+            hstate,
+            rng,
+            flat_obs,
+            flat_acts,
+            flat_valid,
+            flat_returns,
+            env_score,
         )
 
     return collect_rollout
@@ -531,8 +532,12 @@ def build_eval_fn(
             es, vo, r = carry
             r, p_rng = jax.random.split(r)
             plan = sample_plan(
-                apply_eval, params, p_rng, vo,
-                num_actions, config["PLAN_HORIZON"],
+                apply_eval,
+                params,
+                p_rng,
+                vo,
+                num_actions,
+                config["PLAN_HORIZON"],
                 num_steps=config["VAL_DIFFUSION_STEPS"],
                 schedule_fn=schedule_fn,
                 remask_strategy=config["REMASK_STRATEGY"],
@@ -548,12 +553,17 @@ def build_eval_fn(
                 es_i, vo_i, r_i = c
                 r_i, s_rng = jax.random.split(r_i)
                 vo_next, es_next, _, _, info = env.step(
-                    s_rng, es_i, plan[:, step_i], env_params,
+                    s_rng,
+                    es_i,
+                    plan[:, step_i],
+                    env_params,
                 )
                 return (es_next, vo_next, r_i), info
 
             (es, vo, r), infos = jax.lax.scan(
-                _step, (es, vo, r), jnp.arange(config["EVAL_REPLAN"]),
+                _step,
+                (es, vo, r),
+                jnp.arange(config["EVAL_REPLAN"]),
             )
             return (es, vo, r), infos
 
@@ -563,11 +573,6 @@ def build_eval_fn(
         return jax.tree.map(lambda x: (x * ret).sum() / (ret.sum() + _EPS), infos)
 
     return eval_policy
-
-
-# ---------------------------------------------------------------------------
-# Ring buffer operations (pure JAX)
-# ---------------------------------------------------------------------------
 
 
 def _init_replay_buffer(
@@ -625,8 +630,12 @@ def _push_to_buffer(
     new_write_idx = (buf.write_idx + n_new) % buf_size
     new_count = jnp.minimum(buf.count + n_new, buf_size)
     return ReplayBuffer(
-        acts=acts, obs=obs, valid=valid, returns=returns,
-        write_idx=new_write_idx, count=new_count,
+        acts=acts,
+        obs=obs,
+        valid=valid,
+        returns=returns,
+        write_idx=new_write_idx,
+        count=new_count,
     )
 
 
@@ -648,11 +657,6 @@ def _sample_from_buffer(
     valid_count = jnp.maximum(buf.count, 1)
     indices = jax.random.randint(rng, (n_samples,), 0, valid_count)
     return buf.acts[indices], buf.obs[indices], buf.valid[indices], buf.returns[indices]
-
-
-# ---------------------------------------------------------------------------
-# make_run_ablation factory
-# ---------------------------------------------------------------------------
 
 
 def make_run_ablation(
@@ -736,16 +740,31 @@ def make_run_ablation(
 
     # Build LoRA apply functions if needed
     if is_lora:
+
         def lora_apply_train(params_combined, obs, z_t, t, r=None):
             return apply_fn_with_lora(
-                apply_train, params_combined["base"], params_combined["lora"],
-                lora_alpha, lora_rank, obs, z_t, t, r,
+                apply_train,
+                params_combined["base"],
+                params_combined["lora"],
+                lora_alpha,
+                lora_rank,
+                obs,
+                z_t,
+                t,
+                r,
             )
 
         def lora_apply_eval(params_combined, obs, z_t, t, r=None):
             return apply_fn_with_lora(
-                apply_eval, params_combined["base"], params_combined["lora"],
-                lora_alpha, lora_rank, obs, z_t, t, r,
+                apply_eval,
+                params_combined["base"],
+                params_combined["lora"],
+                lora_alpha,
+                lora_rank,
+                obs,
+                z_t,
+                t,
+                r,
             )
     else:
         lora_apply_train = apply_train
@@ -790,12 +809,19 @@ def make_run_ablation(
     collect_rollout = build_rollout_fn(env, env_params, ppo, config, obs_dim)
     config_with_eval = {**config, "NUM_ACTIONS": num_actions}
     eval_policy = build_eval_fn(
-        env, env_params, active_apply_eval, config_with_eval,
+        env,
+        env_params,
+        active_apply_eval,
+        config_with_eval,
     )
 
     # Diagnostic functions
     grad_align_fn = make_grad_alignment_fn(
-        apply_train, schedule_fn, schedule_deriv_fn, num_actions, sigma_t,
+        apply_train,
+        schedule_fn,
+        schedule_deriv_fn,
+        num_actions,
+        sigma_t,
     )
     repr_drift_fn = make_repr_drift_fn(apply_eval, schedule_fn, num_actions)
     cka_batch_size: int = min(
@@ -810,7 +836,12 @@ def make_run_ablation(
         cka_batch_size=cka_batch_size,
     )
     t_analysis_fn = make_t_analysis_fn(
-        apply_train, schedule_fn, schedule_deriv_fn, num_actions, sigma_t, n_t_bins,
+        apply_train,
+        schedule_fn,
+        schedule_deriv_fn,
+        num_actions,
+        sigma_t,
+        n_t_bins,
     )
 
     # Count param leaves for per-layer norms array size
@@ -826,9 +857,6 @@ def make_run_ablation(
     use_gradient_surgery = spec.gradient_surgery
     reward_filter_pct = config.get("REWARD_FILTER_PERCENTILE", 75)
 
-    # -------------------------------------------------------------------
-    # Build the run(rng) closure
-    # -------------------------------------------------------------------
     def run(rng: jax.Array) -> tuple[AblationCarry, StepMetrics]:
         """Execute the full ablation training loop.
 
@@ -847,12 +875,16 @@ def make_run_ablation(
             init_params_combined = {"base": init_params, "lora": lora_params}
             optimizer = make_optimizer_lora_only(config, init_params, lora_params)
             state = TrainState.create(
-                apply_fn=lora_apply_train, params=init_params_combined, tx=optimizer,
+                apply_fn=lora_apply_train,
+                params=init_params_combined,
+                tx=optimizer,
             )
         else:
             optimizer = spec.optimizer_factory(config, init_params)
             state = TrainState.create(
-                apply_fn=active_apply_train, params=init_params, tx=optimizer,
+                apply_fn=active_apply_train,
+                params=init_params,
+                tx=optimizer,
             )
 
         # Environment init
@@ -865,7 +897,9 @@ def make_run_ablation(
 
         # Reward model
         if use_reward_model:
-            _, rm_state = _build_reward_model(obs_dim, rm_rng, rm_width, rm_depth, rm_lr)
+            _, rm_state = _build_reward_model(
+                obs_dim, rm_rng, rm_width, rm_depth, rm_lr
+            )
         else:
             # Dummy: needs same pytree structure for scan carry
             _, rm_state = _build_reward_model(obs_dim, rm_rng, 4, 1, 1e-4)
@@ -888,9 +922,6 @@ def make_run_ablation(
             reward_model_state=rm_state,
         )
 
-        # ---------------------------------------------------------------
-        # _update_step: one iteration of the training loop
-        # ---------------------------------------------------------------
         def _update_step(
             carry: AblationCarry,
             _: None,
@@ -901,12 +932,28 @@ def make_run_ablation(
             rm_state = carry.reward_model_state
 
             rng, rollout_rng, loss_rng, perm_rng = jax.random.split(rng, 4)
-            rng, align_rng, drift_rng, t_rng, cka_rng, eval_rng = jax.random.split(rng, 6)
+            rng, align_rng, drift_rng, t_rng, cka_rng, eval_rng = jax.random.split(
+                rng, 6
+            )
 
             # -- Collect rollout --
-            (env_state_new, obs_new, done_new, hstate_new, rng,
-             flat_obs, flat_acts, flat_valid, flat_returns, env_score_dict) = collect_rollout(
-                carry.env_state, carry.obs, carry.done, carry.hstate, rollout_rng,
+            (
+                env_state_new,
+                obs_new,
+                done_new,
+                hstate_new,
+                rng,
+                flat_obs,
+                flat_acts,
+                flat_valid,
+                flat_returns,
+                env_score_dict,
+            ) = collect_rollout(
+                carry.env_state,
+                carry.obs,
+                carry.done,
+                carry.hstate,
+                rollout_rng,
             )
 
             # -- Action diversity filter --
@@ -927,17 +974,26 @@ def make_run_ablation(
             # -- Replay buffer update --
             if use_mixed_replay:
                 replay_buf_new = _push_to_buffer(
-                    carry.replay_buf, flat_acts, flat_obs, flat_valid,
-                    flat_returns, n_replay_push,
+                    carry.replay_buf,
+                    flat_acts,
+                    flat_obs,
+                    flat_valid,
+                    flat_returns,
+                    n_replay_push,
                 )
             else:
                 replay_buf_new = carry.replay_buf
 
             # -- Reward model training --
             if use_reward_model:
-                def _rm_step(rm_st: TrainState, _: None) -> tuple[TrainState, jax.Array]:
+
+                def _rm_step(
+                    rm_st: TrainState, _: None
+                ) -> tuple[TrainState, jax.Array]:
                     rm_st, loss = _reward_model_train_step(
-                        rm_st, flat_obs[:batch_size], flat_returns[:batch_size],
+                        rm_st,
+                        flat_obs[:batch_size],
+                        flat_returns[:batch_size],
                     )
                     return rm_st, loss
 
@@ -950,7 +1006,9 @@ def make_run_ablation(
 
             # -- Compute advantages --
             advantages, new_mean, new_std = _compute_advantages(
-                flat_returns_for_adv, floor, cap,
+                flat_returns_for_adv,
+                floor,
+                cap,
                 wins_only=use_wins_only,
                 win_thresh=win_thresh,
                 use_running_stats=use_running_stats,
@@ -967,10 +1025,10 @@ def make_run_ablation(
             flat_valid = flat_valid[perm]
             advantages = advantages[perm]
 
-            obs_b = flat_obs[:batch_size]       # [B, obs_dim]
-            act_b = flat_acts[:batch_size]      # [B, H]
-            val_b = flat_valid[:batch_size]     # [B]
-            adv_b = advantages[:batch_size]     # [B]
+            obs_b = flat_obs[:batch_size]  # [B, obs_dim]
+            act_b = flat_acts[:batch_size]  # [B, H]
+            val_b = flat_valid[:batch_size]  # [B]
+            adv_b = advantages[:batch_size]  # [B]
 
             # -- Mixed replay: blend in offline data --
             if use_mixed_replay:
@@ -978,13 +1036,20 @@ def make_run_ablation(
                 n_online = batch_size - n_offline
                 rng, buf_rng = jax.random.split(rng)
                 buf_acts, buf_obs, buf_valid, buf_returns = _sample_from_buffer(
-                    replay_buf_new, buf_rng, n_offline,
+                    replay_buf_new,
+                    buf_rng,
+                    n_offline,
                 )
                 buf_adv, _, _ = _compute_advantages(
-                    buf_returns, floor, cap,
-                    wins_only=False, win_thresh=win_thresh,
-                    use_running_stats=False, ema_decay=ema_decay,
-                    running_mean=jnp.array(0.0), running_std=jnp.array(1.0),
+                    buf_returns,
+                    floor,
+                    cap,
+                    wins_only=False,
+                    win_thresh=win_thresh,
+                    use_running_stats=False,
+                    ema_decay=ema_decay,
+                    running_mean=jnp.array(0.0),
+                    running_std=jnp.array(1.0),
                 )
                 obs_b = jnp.concatenate([obs_b[:n_online], buf_obs], axis=0)
                 act_b = jnp.concatenate([act_b[:n_online], buf_acts], axis=0)
@@ -993,13 +1058,18 @@ def make_run_ablation(
 
             # -- Gradient step --
             if use_gradient_surgery:
+
                 def rl_loss_fn(p: Any) -> jax.Array:
                     if spec.t_curriculum:
-                        return t_curriculum_loss_fn(p, act_b, obs_b, val_b, loss_rng, adv_b, step_idx)
+                        return t_curriculum_loss_fn(
+                            p, act_b, obs_b, val_b, loss_rng, adv_b, step_idx
+                        )
                     return loss_fn(p, act_b, obs_b, val_b, loss_rng, adv_b)
 
                 def bc_loss_fn_call(p: Any) -> jax.Array:
-                    return bc_loss_fn(p, act_b, obs_b, val_b, loss_rng, jnp.ones(obs_b.shape[0]))
+                    return bc_loss_fn(
+                        p, act_b, obs_b, val_b, loss_rng, jnp.ones(obs_b.shape[0])
+                    )
 
                 loss_val, g_rl = jax.value_and_grad(rl_loss_fn)(state.params)
                 g_bc = jax.grad(bc_loss_fn_call)(state.params)
@@ -1010,9 +1080,12 @@ def make_run_ablation(
                 surgery_frac, surgery_n = compute_surgery_metrics_jax(g_rl_before, g_rl)
                 grads_for_diag = g_rl
             else:
+
                 def _loss_for_step(p: Any) -> jax.Array:
                     if spec.t_curriculum:
-                        return t_curriculum_loss_fn(p, act_b, obs_b, val_b, loss_rng, adv_b, step_idx)
+                        return t_curriculum_loss_fn(
+                            p, act_b, obs_b, val_b, loss_rng, adv_b, step_idx
+                        )
                     return loss_fn(p, act_b, obs_b, val_b, loss_rng, adv_b)
 
                 loss_val, grads = jax.value_and_grad(_loss_for_step)(state.params)
@@ -1034,34 +1107,43 @@ def make_run_ablation(
             env_score_val = env_score_dict["returned_episode_returns"]
 
             # -- Params for diagnostics (strip LoRA if needed) --
-            if is_lora:
-                params_diag = state.params["base"]
-            else:
-                params_diag = state.params
+            params_diag = state.params["base"] if is_lora else state.params
 
             # -- Gradient alignment (conditional) --
             def _do_grad_align() -> tuple[jax.Array, jax.Array, jax.Array]:
                 return grad_align_fn(
-                    params_diag, pretrained_params, act_b, obs_b, val_b, align_rng, adv_b,
+                    params_diag,
+                    pretrained_params,
+                    act_b,
+                    obs_b,
+                    val_b,
+                    align_rng,
+                    adv_b,
                 )
 
             def _skip_grad_align() -> tuple[jax.Array, jax.Array, jax.Array]:
                 return jnp.array(0.0), jnp.array(0.0), jnp.array(0.0)
 
             cos_sim, rl_norm, bc_norm = jax.lax.cond(
-                step_idx % grad_align_every == 0, _do_grad_align, _skip_grad_align,
+                step_idx % grad_align_every == 0,
+                _do_grad_align,
+                _skip_grad_align,
             )
 
             # -- Representation drift (conditional) --
             def _do_repr_drift() -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-                return repr_drift_fn(params_diag, pretrained_params, obs_b, act_b, drift_rng)
+                return repr_drift_fn(
+                    params_diag, pretrained_params, obs_b, act_b, drift_rng
+                )
 
             def _skip_repr_drift() -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
                 z = jnp.array(0.0)
                 return z, z, z, z
 
             kl_mean, kl_low, kl_mid, kl_high = jax.lax.cond(
-                step_idx % repr_drift_every == 0, _do_repr_drift, _skip_repr_drift,
+                step_idx % repr_drift_every == 0,
+                _do_repr_drift,
+                _skip_repr_drift,
             )
 
             # -- CKA (conditional) --
@@ -1069,7 +1151,9 @@ def make_run_ablation(
                 return cka_fn(params_diag, pretrained_params, obs_b, act_b, cka_rng)
 
             cka_val = jax.lax.cond(
-                step_idx % cka_every == 0, _do_cka, lambda: jnp.array(0.0),
+                step_idx % cka_every == 0,
+                _do_cka,
+                lambda: jnp.array(0.0),
             )
 
             # -- t-analysis (conditional) --
@@ -1077,10 +1161,17 @@ def make_run_ablation(
                 return t_analysis_fn(params_diag, act_b, obs_b, val_b, adv_b, t_rng)
 
             def _skip_t_analysis() -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-                return jnp.zeros(n_t_bins), jnp.array(0.0), jnp.array(0.0), jnp.array(0.0)
+                return (
+                    jnp.zeros(n_t_bins),
+                    jnp.array(0.0),
+                    jnp.array(0.0),
+                    jnp.array(0.0),
+                )
 
             t_bins, lh_cos, t_low, t_high = jax.lax.cond(
-                step_idx % t_analysis_every == 0, _do_t_analysis, _skip_t_analysis,
+                step_idx % t_analysis_every == 0,
+                _do_t_analysis,
+                _skip_t_analysis,
             )
 
             # -- Per-layer gradient norms (conditional) --
@@ -1099,7 +1190,9 @@ def make_run_ablation(
                 return eval_info["returned_episode_returns"]
 
             eval_score = jax.lax.cond(
-                step_idx % eval_every == 0, _do_eval, lambda: jnp.array(0.0),
+                step_idx % eval_every == 0,
+                _do_eval,
+                lambda: jnp.array(0.0),
             )
 
             # -- Build metrics --
@@ -1151,16 +1244,14 @@ def make_run_ablation(
             return new_carry, metrics
 
         final_carry, all_metrics = jax.lax.scan(
-            _update_step, carry_init, None, max_iter,
+            _update_step,
+            carry_init,
+            None,
+            max_iter,
         )
         return final_carry, all_metrics
 
     return run
-
-
-# ---------------------------------------------------------------------------
-# metrics_to_history: convert scan output to AblationHistory
-# ---------------------------------------------------------------------------
 
 
 def metrics_to_history(
@@ -1224,16 +1315,26 @@ def metrics_to_history(
         if did_ga[i] > 0.5:
             history.grad_align_iters.append(step)
             history.grad_align.append(float(jax.device_get(all_metrics.cos_sim[i])))
-            history.rl_grad_norm.append(float(jax.device_get(all_metrics.rl_grad_norm[i])))
-            history.bc_grad_norm.append(float(jax.device_get(all_metrics.bc_grad_norm[i])))
+            history.rl_grad_norm.append(
+                float(jax.device_get(all_metrics.rl_grad_norm[i]))
+            )
+            history.bc_grad_norm.append(
+                float(jax.device_get(all_metrics.bc_grad_norm[i]))
+            )
 
         # Representation drift
         if did_rd[i] > 0.5:
             history.repr_drift_iters.append(step)
             history.repr_drift_kl.append(float(jax.device_get(all_metrics.kl_mean[i])))
-            history.repr_drift_kl_low_t.append(float(jax.device_get(all_metrics.kl_low_t[i])))
-            history.repr_drift_kl_mid_t.append(float(jax.device_get(all_metrics.kl_mid_t[i])))
-            history.repr_drift_kl_high_t.append(float(jax.device_get(all_metrics.kl_high_t[i])))
+            history.repr_drift_kl_low_t.append(
+                float(jax.device_get(all_metrics.kl_low_t[i]))
+            )
+            history.repr_drift_kl_mid_t.append(
+                float(jax.device_get(all_metrics.kl_mid_t[i]))
+            )
+            history.repr_drift_kl_high_t.append(
+                float(jax.device_get(all_metrics.kl_high_t[i]))
+            )
 
         # CKA
         if did_cka[i] > 0.5:
@@ -1250,8 +1351,12 @@ def metrics_to_history(
                 bin_dict[label] = float(t_norms[j])
             history.t_bin_norms.append(bin_dict)
             history.norm_low_t.append(float(jax.device_get(all_metrics.t_norm_low[i])))
-            history.norm_high_t.append(float(jax.device_get(all_metrics.t_norm_high[i])))
-            history.lowhigh_cos.append(float(jax.device_get(all_metrics.low_high_cos[i])))
+            history.norm_high_t.append(
+                float(jax.device_get(all_metrics.t_norm_high[i]))
+            )
+            history.lowhigh_cos.append(
+                float(jax.device_get(all_metrics.low_high_cos[i]))
+            )
 
         # Per-layer norms
         if did_pl[i] > 0.5:
@@ -1273,11 +1378,6 @@ def metrics_to_history(
             )
 
     return history
-
-
-# ---------------------------------------------------------------------------
-# run_ablation: high-level entry point (Python-level orchestration)
-# ---------------------------------------------------------------------------
 
 
 def run_ablation(
@@ -1342,25 +1442,44 @@ def run_ablation(
         es_f, obs_f, done_f, hs_f = es_init, obs_init, done_init, hstate_init
         for _ in range(n_fisher_batches):
             fisher_rng, rollout_rng = jax.random.split(fisher_rng)
-            es_f, obs_f, done_f, hs_f, _, flat_obs, flat_acts, flat_valid, _, _ = collect_fn(
-                es_f, obs_f, done_f, hs_f, rollout_rng,
+            es_f, obs_f, done_f, hs_f, _, flat_obs, flat_acts, flat_valid, _, _ = (
+                collect_fn(
+                    es_f,
+                    obs_f,
+                    done_f,
+                    hs_f,
+                    rollout_rng,
+                )
             )
             bs = min(flat_acts.shape[0], config["BATCH_SIZE"])
             batches.append((flat_acts[:bs], flat_obs[:bs], flat_valid[:bs]))
 
         fisher = estimate_fisher_diagonal(
-            apply_train, pretrained_params, schedule_fn, schedule_deriv_fn,
-            num_actions, batches, sigma_t=config.get("TRAIN_SIGMA", 0.0),
+            apply_train,
+            pretrained_params,
+            schedule_fn,
+            schedule_deriv_fn,
+            num_actions,
+            batches,
+            sigma_t=config.get("TRAIN_SIGMA", 0.0),
         )
         logger.info("  Fisher diagonal estimated.")
 
     # Build and JIT-compile the training closure
     run_fn = make_run_ablation(
-        spec=spec, config=config, pretrained_params=pretrained_params,
-        apply_train=apply_train, apply_eval=apply_eval,
-        env=env, env_params=env_params, ppo=ppo,
-        schedule_fn=schedule_fn, schedule_deriv_fn=schedule_deriv_fn,
-        num_actions=num_actions, obs_dim=obs_dim, fisher=fisher,
+        spec=spec,
+        config=config,
+        pretrained_params=pretrained_params,
+        apply_train=apply_train,
+        apply_eval=apply_eval,
+        env=env,
+        env_params=env_params,
+        ppo=ppo,
+        schedule_fn=schedule_fn,
+        schedule_deriv_fn=schedule_deriv_fn,
+        num_actions=num_actions,
+        obs_dim=obs_dim,
+        fisher=fisher,
     )
 
     logger.info("  Compiling training loop...")
@@ -1376,12 +1495,20 @@ def run_ablation(
     # (variable-key dicts can't live inside jax.lax.scan)
     is_lora = spec.name == "lora"
     if is_lora:
+
         def _lora_apply_eval(params_combined, obs, z_t, t, r=None):
             return apply_fn_with_lora(
-                apply_eval, params_combined["base"], params_combined["lora"],
-                config.get("LORA_ALPHA", 16.0), config.get("LORA_RANK", 8),
-                obs, z_t, t, r,
+                apply_eval,
+                params_combined["base"],
+                params_combined["lora"],
+                config.get("LORA_ALPHA", 16.0),
+                config.get("LORA_RANK", 8),
+                obs,
+                z_t,
+                t,
+                r,
             )
+
         active_eval = _lora_apply_eval
     else:
         active_eval = apply_eval
@@ -1418,9 +1545,7 @@ def run_ablation(
 
     # Extract per-achievement unlock rates from final eval
     final_ach = {
-        k: float(v) / 100.0
-        for k, v in final_info.items()
-        if "achievement" in k.lower()
+        k: float(v) / 100.0 for k, v in final_info.items() if "achievement" in k.lower()
     }
     # Overwrite the empty dicts in history with final eval achievements
     if history.per_achievement_rates:
@@ -1432,15 +1557,19 @@ def run_ablation(
     if wandb_run is not None:
         ns = f"ablations/{spec.name}"
         for i, step in enumerate(history.iters):
-            wandb_run.log({
-                f"{ns}/train_loss": history.loss[i],
-                f"{ns}/env_score": history.env_score[i],
-                "iteration": step,
-            })
+            wandb_run.log(
+                {
+                    f"{ns}/train_loss": history.loss[i],
+                    f"{ns}/env_score": history.env_score[i],
+                    "iteration": step,
+                }
+            )
         for i, step in enumerate(history.eval_iters):
-            wandb_run.log({
-                f"{ns}/eval_score": history.eval_score[i],
-                "iteration": step,
-            })
+            wandb_run.log(
+                {
+                    f"{ns}/eval_score": history.eval_score[i],
+                    "iteration": step,
+                }
+            )
 
     return history, final_score, final_params

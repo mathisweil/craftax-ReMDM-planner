@@ -11,8 +11,8 @@ import numpy as np
 import orbax.checkpoint as ocp
 
 from Craftax_Baselines.ppo import ActorCritic
-from Craftax_Baselines.ppo_rnn import ActorCriticRNN
 from Craftax_Baselines.ppo_rnd import ActorCriticRND
+from Craftax_Baselines.ppo_rnn import ActorCriticRNN
 
 
 def load_ppo_params(
@@ -38,7 +38,7 @@ def load_ppo_params(
         Restored parameter pytree.
     """
     path = str(Path(path).resolve())
-    rng = jax.random.PRNGKey(seed)  # C-001 (F-015/Q6): seed threaded from config, no hardcoded key
+    rng = jax.random.PRNGKey(seed)
     if model_type == "ppo_rnn":
         init_x = (jnp.zeros((1, num_envs, *obs_shape)), jnp.zeros((1, num_envs)))
         abstract = network.init(rng, jnp.zeros((num_envs, layer_size)), init_x)
@@ -51,13 +51,17 @@ def load_ppo_params(
             raise FileNotFoundError(f"No checkpoint at {path}")
         restored = mgr.restore(
             step,
-            args=ocp.args.PyTreeRestore(item={"params": abstract}, partial_restore=True),
+            args=ocp.args.PyTreeRestore(
+                item={"params": abstract}, partial_restore=True
+            ),
         )
     print(f"Loaded {model_type.upper()} checkpoint from '{path}' (step {step})")
     return restored["params"]
 
 
-def build_ppo_network(model_type: str, num_actions: int, layer_size: int, config: dict) -> Any:
+def build_ppo_network(
+    model_type: str, num_actions: int, layer_size: int, config: dict
+) -> Any:
     """Instantiate the correct PPO architecture.
 
     Args:
@@ -85,7 +89,7 @@ def load_ppo_agent(
     model_type: str,
     config: dict,
     num_envs: int = 1,
-) -> "PPOAgent":
+) -> PPOAgent:
     """Build network, load params, and return a :class:`PPOAgent`.
 
     Args:
@@ -102,8 +106,13 @@ def load_ppo_agent(
     """
     net = build_ppo_network(model_type, num_actions, layer_size, config)
     params = load_ppo_params(
-        path, net, model_type, num_envs, (obs_dim,), layer_size,
-        seed=int(config.get("SEED") or 0),  # C-001 (F-015/Q6)
+        path,
+        net,
+        model_type,
+        num_envs,
+        (obs_dim,),
+        layer_size,
+        seed=int(config.get("SEED") or 0),
     )
     return PPOAgent(net, params, model_type, layer_size)
 
@@ -118,7 +127,9 @@ class PPOAgent:
         layer_size: Hidden layer width (used for RNN hidden-state shape).
     """
 
-    def __init__(self, network: Any, params: Any, model_type: str, layer_size: int = 512) -> None:
+    def __init__(
+        self, network: Any, params: Any, model_type: str, layer_size: int = 512
+    ) -> None:
         self.network = network
         self.params = params
         self.model_type = model_type.lower()

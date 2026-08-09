@@ -8,8 +8,9 @@ Usage::
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from experiments.rl_finetuning.ablations.losses import (
     LossFn,
@@ -71,7 +72,9 @@ class AblationSpec:
     description: str
     hypothesis: str
     loss_factory: LossFactory
-    optimizer_factory: OptimizerFactory = field(default_factory=lambda: make_optimizer_standard)
+    optimizer_factory: OptimizerFactory = field(
+        default_factory=lambda: make_optimizer_standard
+    )
     frozen_path_fragments: list[str] = field(default_factory=list)
     wins_only: bool = False
     gradient_surgery: bool = False
@@ -82,11 +85,6 @@ class AblationSpec:
     action_diversity_filter: bool = False
     reward_model_weighting: bool = False
     extra_loss_kwargs: dict = field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
-# Registry
-# ---------------------------------------------------------------------------
 
 
 def _std_opt(config: dict, params: Any) -> Any:
@@ -147,6 +145,7 @@ def _ffn_only_opt(config: dict, params: Any) -> Any:
 
 def _layer_ablation_top_n_opt(n: int) -> OptimizerFactory:
     """Factory: freeze all transformer blocks except the top n + head."""
+
     def _opt(config: dict, params: Any) -> Any:
         n_layers = config.get("N_LAYERS", 4)
         # Top n blocks have the highest indices
@@ -161,11 +160,11 @@ def _layer_ablation_top_n_opt(n: int) -> OptimizerFactory:
         # Note: the final output Dense (head) is NOT frozen; it has a
         # higher index than Dense_0/Dense_1 and is therefore not matched.
         return make_optimizer_frozen_paths(config, params, frozen)
+
     return _opt
 
 
 REGISTRY: dict[str, AblationSpec] = {
-    # ── Baseline ──────────────────────────────────────────────────────────────
     "baseline_rl": AblationSpec(
         name="baseline_rl",
         group="Baseline",
@@ -174,13 +173,12 @@ REGISTRY: dict[str, AblationSpec] = {
         loss_factory=make_loss_baseline,
         optimizer_factory=_std_opt,
     ),
-    # ── Group A: Regularisation / Constraint Methods ──────────────────────────
     "kl_penalty": AblationSpec(
         name="kl_penalty",
         group="A",
         description="Return-weighted ELBO + soft KL penalty vs. pretrained",
         hypothesis="If this helps: catastrophic forgetting is the primary cause; "
-                   "soft regularisation suffices",
+        "soft regularisation suffices",
         loss_factory=make_loss_kl_penalty,
         optimizer_factory=_std_opt,
     ),
@@ -227,7 +225,6 @@ REGISTRY: dict[str, AblationSpec] = {
         loss_factory=make_loss_trust_region_kl,
         optimizer_factory=_std_opt,
     ),
-    # ── Group B: Training Signal Modifications ────────────────────────────────
     "t_curriculum": AblationSpec(
         name="t_curriculum",
         group="B",
@@ -287,7 +284,6 @@ REGISTRY: dict[str, AblationSpec] = {
         loss_factory=make_loss_low_t,
         optimizer_factory=_std_opt,
     ),
-    # ── Group C: Architecture / Parameter Isolation ───────────────────────────
     "frozen_backbone": AblationSpec(
         name="frozen_backbone",
         group="C",
@@ -344,7 +340,6 @@ REGISTRY: dict[str, AblationSpec] = {
         loss_factory=make_loss_param_isolation,
         optimizer_factory=_layer_ablation_top_n_opt(3),
     ),
-    # ── Group D: Reward / Data Quality ───────────────────────────────────────
     "reward_filtering": AblationSpec(
         name="reward_filtering",
         group="D",

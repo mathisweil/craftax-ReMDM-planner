@@ -8,7 +8,8 @@ All functions return JAX arrays and are fully JIT-compatible.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -17,11 +18,6 @@ from src.diffusion.loss import compute_loss
 from src.diffusion.schedules import ScheduleFn
 
 N_BINS: int = 10  # number of t bins for analysis
-
-
-# ---------------------------------------------------------------------------
-# t-bin gradient norm analysis (pure JAX, vmapped over bins)
-# ---------------------------------------------------------------------------
 
 
 def make_t_analysis_fn(
@@ -54,7 +50,7 @@ def make_t_analysis_fn(
     bin_edges = jnp.linspace(0.0, 1.0, n_bins + 1)
     # Pre-compute bin boundaries as arrays: [n_bins, 2]
     bin_lo = jnp.maximum(bin_edges[:-1], _EPS)  # [n_bins]
-    bin_hi = bin_edges[1:]                       # [n_bins]
+    bin_hi = bin_edges[1:]  # [n_bins]
 
     def _grad_flat_at_range(
         params: Any,
@@ -81,21 +77,30 @@ def make_t_analysis_fn(
         Returns:
             Flattened gradient vector ``[D_total]``.
         """
+
         def loss_in_range(p: Any) -> jax.Array:
             # Use jnp.where to handle degenerate ranges without Python branching
             safe_lo = jnp.maximum(t_lo, _EPS)
             safe_hi = jnp.maximum(t_hi, safe_lo + _EPS)
             loss_val, _ = compute_loss(
-                apply_fn, p, rng, acts, obs, valid,
-                num_actions, schedule_fn, schedule_deriv_fn,
-                sigma_t=sigma_t, advantages=advantages,
-                t_min=safe_lo, t_max=safe_hi,
+                apply_fn,
+                p,
+                rng,
+                acts,
+                obs,
+                valid,
+                num_actions,
+                schedule_fn,
+                schedule_deriv_fn,
+                sigma_t=sigma_t,
+                advantages=advantages,
+                t_min=safe_lo,
+                t_max=safe_hi,
             )
             return loss_val
 
         g = jax.grad(loss_in_range)(params)
-        flat = jnp.concatenate([leaf.ravel() for leaf in jax.tree.leaves(g)])
-        return flat  # [D_total]
+        return jnp.concatenate([leaf.ravel() for leaf in jax.tree.leaves(g)])
 
     @jax.jit
     def t_analysis(
@@ -129,23 +134,39 @@ def make_t_analysis_fn(
         # (vmap over bin index doesn't work cleanly with grad; use scan instead)
         def _bin_step(carry: None, bin_idx: jax.Array) -> tuple[None, jax.Array]:
             flat = _grad_flat_at_range(
-                params, acts, obs, valid, advantages,
-                all_rngs[bin_idx], bin_lo[bin_idx], bin_hi[bin_idx],
+                params,
+                acts,
+                obs,
+                valid,
+                advantages,
+                all_rngs[bin_idx],
+                bin_lo[bin_idx],
+                bin_hi[bin_idx],
             )
             return None, jnp.linalg.norm(flat)
 
-        _, bin_norms = jax.lax.scan(
-            _bin_step, None, jnp.arange(n_bins)
-        )  # [n_bins]
+        _, bin_norms = jax.lax.scan(_bin_step, None, jnp.arange(n_bins))  # [n_bins]
 
         # Low-t and high-t gradient vectors
         flat_low = _grad_flat_at_range(
-            params, acts, obs, valid, advantages,
-            all_rngs[n_bins], jnp.array(_EPS), jnp.array(0.2),
+            params,
+            acts,
+            obs,
+            valid,
+            advantages,
+            all_rngs[n_bins],
+            jnp.array(_EPS),
+            jnp.array(0.2),
         )
         flat_high = _grad_flat_at_range(
-            params, acts, obs, valid, advantages,
-            all_rngs[n_bins + 1], jnp.array(0.8), jnp.array(1.0),
+            params,
+            acts,
+            obs,
+            valid,
+            advantages,
+            all_rngs[n_bins + 1],
+            jnp.array(0.8),
+            jnp.array(1.0),
         )
         norm_low = jnp.linalg.norm(flat_low)
         norm_high = jnp.linalg.norm(flat_high)

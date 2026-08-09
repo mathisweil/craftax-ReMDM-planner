@@ -12,7 +12,9 @@ Loop mode (Section 4.2, Algorithm 3):
 """
 
 from __future__ import annotations
-from typing import Any, Callable, Optional
+
+from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -20,17 +22,17 @@ import jax.numpy as jnp
 from .schedules import ScheduleFn
 
 ModelApplyFn = Callable[
-    [Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, Optional[Any]], jnp.ndarray
+    [Any, jnp.ndarray, jnp.ndarray, jnp.ndarray, Any | None], jnp.ndarray
 ]
 
+# Stability guards; values must match the minihack twin exactly.
+_SIGMA_DENOM_EPS = 1e-8  # sigma_max, posterior and temperature denominators
+_NUCLEUS_EPS = 1e-12  # renormalisation and log guards in nucleus sampling
 
-# ---------------------------------------------------------------------------
-# Remasking sigma computation
-# ---------------------------------------------------------------------------
 
 def _sigma_max(alpha_t: jnp.ndarray, alpha_s: jnp.ndarray) -> jnp.ndarray:
     """sigma_max = min(1, (1 - alpha_s) / alpha_t).  [Eq. 7]"""
-    return jnp.minimum(1.0, (1.0 - alpha_s) / jnp.maximum(alpha_t, 1e-8))
+    return jnp.minimum(1.0, (1.0 - alpha_s) / jnp.maximum(alpha_t, _SIGMA_DENOM_EPS))
 
 
 def sigma_rescale(alpha_t, alpha_s, eta):
@@ -58,10 +60,6 @@ _SIGMA_FNS = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Decoding helpers
-# ---------------------------------------------------------------------------
-
 def _nucleus_sample(rng, logits, top_p):
     """Top-p sampling from [B, H, V] logits -> [B, H] int32."""
     probs = jax.nn.softmax(logits, axis=-1)
@@ -71,28 +69,24 @@ def _nucleus_sample(rng, logits, top_p):
 
     cutoff = cum - sorted_p
     sorted_p = jnp.where(cutoff >= top_p, 0.0, sorted_p)
-    sorted_p = sorted_p / jnp.maximum(sorted_p.sum(axis=-1, keepdims=True), 1e-12)
+    sorted_p = sorted_p / jnp.maximum(sorted_p.sum(axis=-1, keepdims=True), _NUCLEUS_EPS)
 
     B, H, V = logits.shape
     flat = sorted_p.reshape(B * H, V)
-    tokens = jax.random.categorical(rng, jnp.log(flat + 1e-12)).reshape(B, H)
+    tokens = jax.random.categorical(rng, jnp.log(flat + _NUCLEUS_EPS)).reshape(B, H)
     return jnp.take_along_axis(idx, tokens[..., None], axis=-1).squeeze(-1)
 
 
 def _decode(rng, logits, temperature, top_p):
     """Sample tokens from logits.  Argmax only when temperature <= 0."""
     if top_p is not None:
-        return _nucleus_sample(rng, logits / jnp.maximum(temperature, 1e-8), top_p)
-    if temperature > 1e-8:
+        return _nucleus_sample(rng, logits / jnp.maximum(temperature, _SIGMA_DENOM_EPS), top_p)
+    if temperature > _SIGMA_DENOM_EPS:
         B, H, V = logits.shape
         scaled = logits / temperature
         return jax.random.categorical(rng, scaled.reshape(-1, V)).reshape(B, H)
     return jnp.argmax(logits, axis=-1)
 
-
-# ---------------------------------------------------------------------------
-# Reverse sampling
-# ---------------------------------------------------------------------------
 
 def sample_plan(
     model_apply: ModelApplyFn,
@@ -109,9 +103,9 @@ def sample_plan(
     t_on: float = 0.55,
     t_off: float = 0.05,
     temperature: float = 1.0,
-    top_p: Optional[float] = None,
-    history: Optional[jnp.ndarray] = None,
-    hist_len: Optional[jnp.ndarray] = None,
+    top_p: float | None = None,
+    history: jnp.ndarray | None = None,
+    hist_len: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     """Generate an action plan via reverse diffusion with ReMDM remasking.
 
@@ -135,13 +129,13 @@ def sample_plan(
 
     lock = history is not None
     if lock:
-        pos = jnp.broadcast_to(
-            jnp.arange(plan_horizon)[None, :], (B, plan_horizon)
-        )
+        pos = jnp.broadcast_to(jnp.arange(plan_horizon)[None, :], (B, plan_horizon))
         lock_mask = pos < hist_len[:, None]
 
     if remask_strategy not in _SIGMA_FNS:
-        raise ValueError(f"Unknown strategy {remask_strategy!r}. Options: {list(_SIGMA_FNS)}")
+        raise ValueError(
+            f"Unknown strategy {remask_strategy!r}. Options: {list(_SIGMA_FNS)}"
+        )
     get_sigma = _SIGMA_FNS[remask_strategy]
 
     # Phase allocation for loop mode
@@ -161,9 +155,6 @@ def sample_plan(
         z_init = jnp.where(lock_mask, history, z_init)
     psi_init = jnp.full((B, plan_horizon), jnp.inf)
 
-    # ------------------------------------------------------------------
-    # Core denoising step (ReMDM Eq. 6)
-    # ------------------------------------------------------------------
     def _step(carry, _unused, t_val, alpha_t, alpha_s, sigma_on):
         z, rng, psi = carry
         rng, s_rng, u_rng, r_rng = jax.random.split(rng, 4)
@@ -182,7 +173,7 @@ def sample_plan(
             sigma = jnp.where(lock_mask, 0.0, sigma)
 
         # Masked -> unmask probability
-        denom = jnp.maximum(1.0 - alpha_t, 1e-8)
+        denom = jnp.maximum(1.0 - alpha_t, _SIGMA_DENOM_EPS)
         p_unmask = jnp.clip((alpha_s - (1.0 - sigma) * alpha_t) / denom, 0.0, 1.0)
 
         do_unmask = is_masked & (jax.random.uniform(u_rng, z.shape) < p_unmask)
@@ -203,9 +194,6 @@ def sample_plan(
 
         return (z_new, rng, psi_new), None
 
-    # ------------------------------------------------------------------
-    # Phase functions
-    # ------------------------------------------------------------------
     def _phase1_step(carry, idx):
         t = 1.0 - idx * (1.0 - t_on) / n1
         s = jnp.maximum(1.0 - (idx + 1) * (1.0 - t_on) / n1, t_on)
@@ -224,9 +212,6 @@ def sample_plan(
         s = jnp.maximum((num_steps - idx - 1) / num_steps, 0.0)
         return _step(carry, idx, t, schedule_fn(t), schedule_fn(s), True)
 
-    # ------------------------------------------------------------------
-    # Run
-    # ------------------------------------------------------------------
     carry = (z_init, rng, psi_init)
 
     if use_loop:
@@ -245,10 +230,6 @@ def sample_plan(
     return jnp.where(z_final == mask_id, fallback, z_final)
 
 
-# ---------------------------------------------------------------------------
-# Inpainting sampler (MPC / historical prefix)
-# ---------------------------------------------------------------------------
-
 def sample_plan_inpainting(
     apply_fn: ModelApplyFn,
     params: Any,
@@ -266,7 +247,7 @@ def sample_plan_inpainting(
     t_on: float,
     t_off: float,
     temperature: float,
-    top_p: Optional[float],
+    top_p: float | None,
 ) -> jnp.ndarray:
     """ReMDM sampling with a locked historical prefix (inpainting).
 
@@ -285,10 +266,21 @@ def sample_plan_inpainting(
         ``[B, plan_horizon]`` int32 completed action plan.
     """
     return sample_plan(
-        apply_fn, params, rng, obs, num_actions, plan_horizon,
-        diffusion_steps, schedule_fn,
-        remask_strategy=remask_strategy, eta=eta,
-        use_loop=use_loop, t_on=t_on, t_off=t_off,
-        temperature=temperature, top_p=top_p,
-        history=history, hist_len=hist_len,
+        apply_fn,
+        params,
+        rng,
+        obs,
+        num_actions,
+        plan_horizon,
+        diffusion_steps,
+        schedule_fn,
+        remask_strategy=remask_strategy,
+        eta=eta,
+        use_loop=use_loop,
+        t_on=t_on,
+        t_off=t_off,
+        temperature=temperature,
+        top_p=top_p,
+        history=history,
+        hist_len=hist_len,
     )

@@ -13,6 +13,7 @@ import orbax.checkpoint as ocp
 import wandb
 
 from src.diffusion.schedules import SCHEDULE_MAP
+
 from .common import (
     make_grad_step,
     make_validate,
@@ -21,23 +22,19 @@ from .common import (
     resolve_scaled_hyperparams,
 )
 from .env import Transition, make_env
+from .logging import init_wandb, make_wandb_callback
 from .model import (
     build_model,
-    init_params,
     create_train_state,
+    init_params,
     load_checkpoint_for_resume,
     make_apply_fns,
     save_checkpoint_metadata,
 )
 from .ppo import PPOAgent, build_ppo_network, load_ppo_params
-from .logging import init_wandb, make_wandb_callback
 
 
-# ---------------------------------------------------------------------------
-# make_train
-# ---------------------------------------------------------------------------
-
-def make_train(config: dict[str, Any]):
+def make_train_offline_diffusion(config: dict[str, Any]):
     """Build the offline diffusion training closure.
 
     All environment construction, model instantiation, and static pre-computation
@@ -80,8 +77,13 @@ def make_train(config: dict[str, Any]):
     model_type = config["PPO_MODEL_TYPE"]
     ppo_net = build_ppo_network(model_type, num_actions, config["LAYER_SIZE"], config)
     ppo_params = load_ppo_params(
-        config["PPO_CHECKPOINT_PATH"], ppo_net, model_type, num_envs, obs_shape, config["LAYER_SIZE"],
-        seed=int(config.get("SEED") or 0),  # C-001 (F-015/Q6)
+        config["PPO_CHECKPOINT_PATH"],
+        ppo_net,
+        model_type,
+        num_envs,
+        obs_shape,
+        config["LAYER_SIZE"],
+        seed=int(config.get("SEED") or 0),
     )
     ppo = PPOAgent(ppo_net, ppo_params, model_type, config["LAYER_SIZE"])
 
@@ -92,12 +94,18 @@ def make_train(config: dict[str, Any]):
     net = build_model(config, num_actions)
     apply_eval, apply_train = make_apply_fns(net)
     grad_step = make_grad_step(
-        apply_train, num_actions, schedule_fn, schedule_deriv_fn,
-        config.get("TRAIN_SIGMA", 0.0), config.get("LABEL_SMOOTHING", 0.0),
+        apply_train,
+        num_actions,
+        schedule_fn,
+        schedule_deriv_fn,
+        config.get("TRAIN_SIGMA", 0.0),
+        config.get("LABEL_SMOOTHING", 0.0),
     )
 
     # Cosine LR decay over total gradient steps with optional linear warm-up.
-    total_grad_steps = config["NUM_UPDATES"] * config["UPDATE_EPOCHS"] * config["NUM_MINIBATCHES"]
+    total_grad_steps = (
+        config["NUM_UPDATES"] * config["UPDATE_EPOCHS"] * config["NUM_MINIBATCHES"]
+    )
     warmup_steps = config.get("LR_WARMUP_STEPS", 0)
     lr_schedule = (
         optax.warmup_cosine_decay_schedule(
@@ -131,7 +139,9 @@ def make_train(config: dict[str, Any]):
         # Set the optimizer step counter so the LR schedule picks up at the
         # correct position.  The schedule is indexed by gradient step, which
         # equals update_step * update_epochs * num_minibatches.
-        target_opt_step = resume_step * config["UPDATE_EPOCHS"] * config["NUM_MINIBATCHES"]
+        target_opt_step = (
+            resume_step * config["UPDATE_EPOCHS"] * config["NUM_MINIBATCHES"]
+        )
         resume_state = resume_state.replace(step=target_opt_step)
 
     scan_length = config["NUM_UPDATES"] - resume_step
@@ -143,7 +153,8 @@ def make_train(config: dict[str, Any]):
             steps_per_update=num_steps * num_envs,
             val_interval=val_interval,
         )
-        if config["USE_WANDB"] else None
+        if config["USE_WANDB"]
+        else None
     )
 
     def train(rng: jax.Array) -> dict[str, Any]:
@@ -160,21 +171,26 @@ def make_train(config: dict[str, Any]):
             state = resume_state
         else:
             params = init_params(net, init_rng, obs_dim, plan_horizon)
-            state = create_train_state(net, params, lr_schedule, config["MAX_GRAD_NORM"])
+            state = create_train_state(
+                net, params, lr_schedule, config["MAX_GRAD_NORM"]
+            )
 
         obsv, env_state = env.reset(env_rng, env_params)
         init_hstate = ppo.init_hidden(num_envs)
 
         # Shared validation closure (see common.py)
         _validate = make_validate(
-            env, env_params, apply_eval, num_actions,
-            plan_horizon, schedule_fn, config,
-            val_replan_every, n_val_cycles,
+            env,
+            env_params,
+            apply_eval,
+            num_actions,
+            plan_horizon,
+            schedule_fn,
+            config,
+            val_replan_every,
+            n_val_cycles,
         )
 
-        # ------------------------------------------------------------------
-        # Update step
-        # ------------------------------------------------------------------
         def _update_step(runner, _):
             state, env_state, last_obs, last_done, hstate, rng, step_idx = runner
 
@@ -183,34 +199,53 @@ def make_train(config: dict[str, Any]):
                 es, obs, done, hs, rng = carry
                 rng, act_rng, step_rng = jax.random.split(rng, 3)
                 action, new_hs = ppo.act(
-                    obs, done, hs, act_rng, temperature=config.get("COLLECT_TEMPERATURE", 1.0),
+                    obs,
+                    done,
+                    hs,
+                    act_rng,
+                    temperature=config.get("COLLECT_TEMPERATURE", 1.0),
                 )
-                new_obs, es, reward, new_done, info = env.step(step_rng, es, action, env_params)
-                t = Transition(done=done, action=action, reward=reward, obs=obs, info=info)
+                new_obs, es, reward, new_done, info = env.step(
+                    step_rng, es, action, env_params
+                )
+                t = Transition(
+                    done=done, action=action, reward=reward, obs=obs, info=info
+                )
                 return (es, new_obs, new_done, new_hs, rng), t
 
             (env_state, last_obs, last_done, hstate, rng), traj = jax.lax.scan(
-                _env_step, (env_state, last_obs, last_done, hstate, rng), None, num_steps,
+                _env_step,
+                (env_state, last_obs, last_done, hstate, rng),
+                None,
+                num_steps,
             )
 
             # --- Diffusion window extraction ---
             def _window(t_idx):
                 obs_t = traj.obs[t_idx]
-                acts = jax.lax.dynamic_slice(traj.action, (t_idx, 0), (plan_horizon, num_envs))
+                acts = jax.lax.dynamic_slice(
+                    traj.action, (t_idx, 0), (plan_horizon, num_envs)
+                )
                 # traj.done[t] marks a reset *before* step t, so traj.done[t_idx]
                 # only tells us obs_t is an episode-start — it does NOT invalidate the
                 # window. We check done flags strictly *inside* the action sequence.
                 dones = jax.lax.dynamic_slice(
-                    traj.done, (t_idx + 1, 0), (plan_horizon - 1, num_envs),
+                    traj.done,
+                    (t_idx + 1, 0),
+                    (plan_horizon - 1, num_envs),
                 )
                 valid = ~jnp.any(dones, axis=0)
 
-                rew_seq = jax.lax.dynamic_slice(traj.reward, (t_idx, 0), (plan_horizon, num_envs))
+                rew_seq = jax.lax.dynamic_slice(
+                    traj.reward, (t_idx, 0), (plan_horizon, num_envs)
+                )
                 window_return = jnp.sum(rew_seq, axis=0)  # [num_envs]
 
                 return obs_t, jnp.swapaxes(acts, 0, 1), valid, window_return
 
-            obs_w, act_w, valid_w, returns_w = jax.vmap(_window)(jnp.arange(valid_per_rollout))
+            obs_w, act_w, valid_w, returns_w = jax.vmap(_window)(
+                jnp.arange(valid_per_rollout)
+            )
 
             flat_obs = obs_w.reshape(-1, obs_dim)
             flat_acts = act_w.reshape(-1, plan_horizon)
@@ -221,7 +256,9 @@ def make_train(config: dict[str, Any]):
             # normalisation, so the weight correctly scales each sample's contribution.
             flat_returns = returns_w.reshape(-1)
             flat_returns_clipped = jnp.clip(flat_returns, 0.0, None)
-            return_weights = flat_returns_clipped / (jnp.mean(flat_returns_clipped) + 1e-8)
+            return_weights = flat_returns_clipped / (
+                jnp.mean(flat_returns_clipped) + 1e-8
+            )
             return_weights = jnp.clip(return_weights, 0.1, return_weight_cap)
 
             dataset = (flat_obs, flat_acts, flat_valid, return_weights)
@@ -233,7 +270,8 @@ def make_train(config: dict[str, Any]):
                 perm = jax.random.permutation(perm_rng, num_samples)
                 shuffled = jax.tree.map(lambda x: jnp.take(x, perm, axis=0), ds)
                 batches = jax.tree.map(
-                    lambda x: x.reshape(config["NUM_MINIBATCHES"], -1, *x.shape[1:]), shuffled,
+                    lambda x: x.reshape(config["NUM_MINIBATCHES"], -1, *x.shape[1:]),
+                    shuffled,
                 )
 
                 def _mb(carry, batch):
@@ -247,14 +285,18 @@ def make_train(config: dict[str, Any]):
                 return (state, ds, rng), metrics
 
             (state, _, rng), loss_info = jax.lax.scan(
-                _epoch, (state, dataset, rng), None, config["UPDATE_EPOCHS"],
+                _epoch,
+                (state, dataset, rng),
+                None,
+                config["UPDATE_EPOCHS"],
             )
 
             # --- Metrics ---
             metric = jax.tree.map(jnp.mean, loss_info)
             returned = traj.info["returned_episode"]
             env_metrics = jax.tree.map(
-                lambda x: (x * returned).sum() / (returned.sum() + 1e-8), traj.info,
+                lambda x: (x * returned).sum() / (returned.sum() + 1e-8),
+                traj.info,
             )
             metric.update(env_metrics)
             metric["valid_frac"] = jnp.mean(flat_valid.astype(jnp.float32))
@@ -263,7 +305,8 @@ def make_train(config: dict[str, Any]):
             # --- Periodic validation ---
             rng, val_rng = jax.random.split(rng)
             dummy = jax.tree.map(
-                jnp.zeros_like, {f"val/{k}": v for k, v in env_metrics.items()},
+                jnp.zeros_like,
+                {f"val/{k}": v for k, v in env_metrics.items()},
             )
             val_metrics = jax.lax.cond(
                 step_idx % val_interval == 0,
@@ -280,18 +323,21 @@ def make_train(config: dict[str, Any]):
 
         rng, run_rng = jax.random.split(rng)
         runner_init = (
-            state, env_state, obsv, jnp.zeros(num_envs, dtype=bool),
-            init_hstate, run_rng, resume_step,
+            state,
+            env_state,
+            obsv,
+            jnp.zeros(num_envs, dtype=bool),
+            init_hstate,
+            run_rng,
+            resume_step,
         )
-        runner_final, metrics = jax.lax.scan(_update_step, runner_init, None, scan_length)
+        runner_final, metrics = jax.lax.scan(
+            _update_step, runner_init, None, scan_length
+        )
         return {"runner_state": runner_final, "metrics": metrics}
 
     return train
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def run_offline_diffusion(config):
     """Configure, compile, and run offline diffusion training.
@@ -322,19 +368,26 @@ def run_offline_diffusion(config):
     rng = jax.random.PRNGKey(config["SEED"])
     rngs = jax.random.split(rng, config["NUM_REPEATS"])
 
-    train_fn = jax.jit(jax.vmap(make_train(config)))
+    train_fn = jax.jit(jax.vmap(make_train_offline_diffusion(config)))
 
     t0 = time.time()
     out = train_fn(rngs)
     elapsed = time.time() - t0
-    print(f"Time: {elapsed:.1f}s  SPS: {config['OFFLINE_TOTAL_TIMESTEPS'] / elapsed:.0f}")
+    print(
+        f"Time: {elapsed:.1f}s  SPS: {config['OFFLINE_TOTAL_TIMESTEPS'] / elapsed:.0f}"
+    )
 
     if config["USE_WANDB"] and config["SAVE_POLICY"]:
         train_states = out["runner_state"][0]
         train_state = jax.tree.map(lambda x: x[0], train_states)
         path = os.path.join(wandb.run.dir, "policies")
-        with ocp.CheckpointManager(path, options=ocp.CheckpointManagerOptions(max_to_keep=1)) as mgr:
-            mgr.save(int(config["OFFLINE_TOTAL_TIMESTEPS"]), args=ocp.args.StandardSave(train_state))
+        with ocp.CheckpointManager(
+            path, options=ocp.CheckpointManagerOptions(max_to_keep=1)
+        ) as mgr:
+            mgr.save(
+                int(config["OFFLINE_TOTAL_TIMESTEPS"]),
+                args=ocp.args.StandardSave(train_state),
+            )
         print(f"Saved policy to {path}")
 
         num_updates = config["NUM_UPDATES"]
@@ -342,15 +395,15 @@ def run_offline_diffusion(config):
             path,
             mode="offline",
             update_step=num_updates,
-            total_gradient_steps=num_updates * config["UPDATE_EPOCHS"] * config["NUM_MINIBATCHES"],
+            total_gradient_steps=num_updates
+            * config["UPDATE_EPOCHS"]
+            * config["NUM_MINIBATCHES"],
             wandb_run_id=wandb.run.id if wandb.run else None,
             config=config,
         )
 
         artifact = wandb.Artifact(
-            name=f"{config['ENV_NAME']}-policy",
-            type="model",
-            metadata=config
+            name=f"{config['ENV_NAME']}-policy", type="model", metadata=config
         )
         artifact.add_dir(path)
         wandb.log_artifact(artifact)

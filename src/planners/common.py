@@ -7,7 +7,8 @@ duplication.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -60,9 +61,7 @@ def resolve_num_updates(config: dict[str, Any], mode: str) -> None:
     elif mode == "online":
         ts_key, nu_key = "ONLINE_TOTAL_TIMESTEPS", "ONLINE_NUM_UPDATES"
     else:
-        raise ValueError(
-            f"Unknown mode: {mode!r}; expected 'offline' or 'online'."
-        )
+        raise ValueError(f"Unknown mode: {mode!r}; expected 'offline' or 'online'.")
 
     ts = config.get(ts_key)
     nu = config.get(nu_key)
@@ -136,7 +135,6 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
 
     # float() first to accept YAML scientific notation parsed as string
     # (PyYAML 1.1 only auto-coerces "3.0e+8", not "3e8" or "3.0e8").
-    # ── Mode-agnostic ────────────────────────────────────────────────
     warmup_frames = config.get("LR_WARMUP_FRAMES")
     if warmup_frames is not None:
         config["LR_WARMUP_STEPS"] = int(float(warmup_frames)) // fpu
@@ -145,7 +143,6 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
     if val_frames is not None:
         config["VAL_INTERVAL"] = max(1, int(float(val_frames)) // fpu)
 
-    # ── Online-only ──────────────────────────────────────────────────
     if mode != "online":
         return
 
@@ -160,9 +157,9 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
             )
         beta_init = float(config.get("DAGGER_BETA_INIT", 1.0))
         # final = init * decay^N  =>  decay = (final / init) ** (1 / N)
-        config["DAGGER_BETA_DECAY"] = (
-            float(beta_final) / beta_init
-        ) ** (1.0 / int(num_updates))
+        config["DAGGER_BETA_DECAY"] = (float(beta_final) / beta_init) ** (
+            1.0 / int(num_updates)
+        )
 
     buffer_cycles = config.get("DAGGER_BUFFER_CYCLES")
     if buffer_cycles is not None:
@@ -256,22 +253,28 @@ def print_config_snapshot(config: dict[str, Any], mode: str) -> None:
     print(f"    num_envs            = {config['NUM_ENVS']}")
     print(f"    num_steps           = {config['NUM_STEPS']}")
     print(f"    fpu (envs*steps)    = {fpu}")
-    print(f"    num_minibatches     = {config['NUM_MINIBATCHES']}  (minibatch={minibatch})")
+    print(
+        f"    num_minibatches     = {config['NUM_MINIBATCHES']}  (minibatch={minibatch})"
+    )
     print(f"    update_epochs       = {config['UPDATE_EPOCHS']}")
     print(f"    num_repeats         = {config.get('NUM_REPEATS', 1)}")
 
     print("  -- Schedule --")
-    print(f"    {ts_key.lower():<24} = {total_frames:,}  (~{total_frames/1e6:.1f}M frames)")
+    print(
+        f"    {ts_key.lower():<24} = {total_frames:,}  (~{total_frames / 1e6:.1f}M frames)"
+    )
     print(f"    {'num_updates':<24} = {num_updates:,}")
     warmup = int(config.get("LR_WARMUP_STEPS", 0))
     print(f"    {'lr':<24} = {float(config['LR']):.2e}")
-    print(f"    {'lr_warmup_steps':<24} = {warmup}  (~{warmup * fpu / 1e6:.2f}M frames)")
+    print(
+        f"    {'lr_warmup_steps':<24} = {warmup}  (~{warmup * fpu / 1e6:.2f}M frames)"
+    )
     print(f"    {'max_grad_norm':<24} = {config.get('MAX_GRAD_NORM', 1.0)}")
 
     if mode == "online":
         beta_init = float(config.get("DAGGER_BETA_INIT", 1.0))
         beta_decay = float(config["DAGGER_BETA_DECAY"])
-        final_beta = beta_init * beta_decay ** num_updates
+        final_beta = beta_init * beta_decay**num_updates
         # Derived exactly as the runner derives them; see dagger_sizing.
         sizing = dagger_sizing(config, num_updates)
         samples_per_update = sizing["samples_per_update"]
@@ -280,20 +283,27 @@ def print_config_snapshot(config: dict[str, Any], mode: str) -> None:
         cycles = buffer_max / fpu
         configured_max = int(config["DAGGER_BUFFER_MAX"])
         cap_note = (
-            "" if buffer_max >= configured_max
+            ""
+            if buffer_max >= configured_max
             else f"  (capped from {configured_max:,} by num_updates)"
         )
         expert_det = bool(config.get("DAGGER_EXPERT_DETERMINISTIC", True))
         total_grad_steps = (
-            num_updates * n_passes
-            * int(config["UPDATE_EPOCHS"]) * int(config["NUM_MINIBATCHES"])
+            num_updates
+            * n_passes
+            * int(config["UPDATE_EPOCHS"])
+            * int(config["NUM_MINIBATCHES"])
         )
-        passes_tag = "default" if config.get("DAGGER_TRAIN_PASSES") is None else "override"
+        passes_tag = (
+            "default" if config.get("DAGGER_TRAIN_PASSES") is None else "override"
+        )
         print("  -- DAgger --")
         print(f"    {'dagger_beta_init':<24} = {beta_init}")
         print(f"    {'dagger_beta_decay':<24} = {beta_decay:.10f}")
         print(f"    {'final beta':<24} = {final_beta:.4f}  (init * decay^N)")
-        print(f"    {'buffer size (effective)':<24} = {buffer_max:,}  (~{cycles:.2f} update cycles){cap_note}")
+        print(
+            f"    {'buffer size (effective)':<24} = {buffer_max:,}  (~{cycles:.2f} update cycles){cap_note}"
+        )
         print(f"    {'samples_per_update':<24} = {samples_per_update:,}")
         print(f"    {'dagger_train_passes':<24} = {n_passes}  ({passes_tag})")
         print(f"    {'dagger_expert_determ':<24} = {expert_det}")
@@ -304,9 +314,11 @@ def print_config_snapshot(config: dict[str, Any], mode: str) -> None:
         )
         print(f"    {'total_grad_steps':<24} = {total_grad_steps:,}")
 
-    val_int = int(config.get("VAL_INTERVAL", 0))
+    val_int = int(config.get("VAL_INTERVAL", 0))  # display-only; fallback 0 != defaults.yaml (50)
     print("  -- Validation --")
-    print(f"    val_interval        = {val_int} updates  (~{val_int * fpu / 1e6:.2f}M frames)")
+    print(
+        f"    val_interval        = {val_int} updates  (~{val_int * fpu / 1e6:.2f}M frames)"
+    )
     print(f"    val_diffusion_steps = {config.get('VAL_DIFFUSION_STEPS')}")
     print(f"    val_replan_every    = {config.get('VAL_REPLAN_EVERY')}")
     print(f"    val_steps           = {config.get('VAL_STEPS')}")
@@ -318,7 +330,9 @@ def print_config_snapshot(config: dict[str, Any], mode: str) -> None:
     )
     print(f"    plan_horizon        = {config['PLAN_HORIZON']}")
     print(f"    diffusion_steps     = {config['DIFFUSION_STEPS']}")
-    print(f"    remask_strategy     = {config.get('REMASK_STRATEGY')}  eta={config.get('ETA')}")
+    print(
+        f"    remask_strategy     = {config.get('REMASK_STRATEGY')}  eta={config.get('ETA')}"
+    )
     print(
         f"    sampling: temp={config.get('TEMPERATURE')}  top_p={config.get('TOP_P')}  "
         f"loop={config.get('USE_LOOP')}  t_on/t_off={config.get('T_ON')}/{config.get('T_OFF')}"
@@ -384,9 +398,17 @@ def make_grad_step(
         advantages: jnp.ndarray,
     ) -> tuple[jnp.ndarray, dict]:
         return compute_loss(
-            apply_train, params, rng, acts, obs, valid,
-            num_actions, schedule_fn, schedule_deriv_fn,
-            sigma_t=sigma_t, label_smoothing=label_smoothing,
+            apply_train,
+            params,
+            rng,
+            acts,
+            obs,
+            valid,
+            num_actions,
+            schedule_fn,
+            schedule_deriv_fn,
+            sigma_t=sigma_t,
+            label_smoothing=label_smoothing,
             advantages=advantages,
         )
 
@@ -412,7 +434,12 @@ def make_grad_step(
             Updated ``TrainState`` and a metrics dict.
         """
         (_, info), grads = jax.value_and_grad(_loss_fn, has_aux=True)(
-            state.params, acts, obs, valid, rng, advantages,
+            state.params,
+            acts,
+            obs,
+            valid,
+            rng,
+            advantages,
         )
         state = state.apply_gradients(grads=grads)
         info["grad_norm"] = optax.tree.norm(grads)
@@ -491,20 +518,29 @@ def make_validate(
                 vs_i, vo_i, r = inner_carry
                 r, s_rng = jax.random.split(r)
                 vo_next, vs_next, _, _, info = env.step(
-                    s_rng, vs_i, plan[:, step_i], env_params,
+                    s_rng,
+                    vs_i,
+                    plan[:, step_i],
+                    env_params,
                 )
                 return (vs_next, vo_next, r), info
 
             (vs, vo, rng), step_infos = jax.lax.scan(
-                _exec_step, (vs, vo, rng), jnp.arange(val_replan_every),
+                _exec_step,
+                (vs, vo, rng),
+                jnp.arange(val_replan_every),
             )
             return (vs, vo, rng), step_infos
 
         _, cycle_infos = jax.lax.scan(
-            _val_cycle, (val_env_state, val_obs, rng), None, n_val_cycles,
+            _val_cycle,
+            (val_env_state, val_obs, rng),
+            None,
+            n_val_cycles,
         )
         infos = jax.tree.map(
-            lambda x: x.reshape(-1, *x.shape[2:]), cycle_infos,
+            lambda x: x.reshape(-1, *x.shape[2:]),
+            cycle_infos,
         )
         returned = infos["returned_episode"]
         metrics = jax.tree.map(

@@ -8,15 +8,11 @@ directly inside ``jax.lax.scan``.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
-
-
-# ---------------------------------------------------------------------------
-# Pure JAX gradient alignment (JIT-compatible)
-# ---------------------------------------------------------------------------
 
 
 def make_grad_alignment_fn(
@@ -73,17 +69,33 @@ def make_grad_alignment_fn(
 
         def rl_loss(p: Any) -> jax.Array:
             loss, _ = compute_loss(
-                apply_fn, p, rng_rl, acts, obs, valid,
-                num_actions, schedule_fn, schedule_deriv_fn,
-                sigma_t=sigma_t, advantages=advantages,
+                apply_fn,
+                p,
+                rng_rl,
+                acts,
+                obs,
+                valid,
+                num_actions,
+                schedule_fn,
+                schedule_deriv_fn,
+                sigma_t=sigma_t,
+                advantages=advantages,
             )
             return loss
 
         def bc_loss(p: Any) -> jax.Array:
             loss, _ = compute_loss(
-                apply_fn, p, rng_bc, acts, obs, valid,
-                num_actions, schedule_fn, schedule_deriv_fn,
-                sigma_t=sigma_t, advantages=None,
+                apply_fn,
+                p,
+                rng_bc,
+                acts,
+                obs,
+                valid,
+                num_actions,
+                schedule_fn,
+                schedule_deriv_fn,
+                sigma_t=sigma_t,
+                advantages=None,
             )
             return loss
 
@@ -105,11 +117,6 @@ def make_grad_alignment_fn(
     return grad_alignment
 
 
-# ---------------------------------------------------------------------------
-# Per-layer gradient norms (pure JAX, returns fixed-size arrays)
-# ---------------------------------------------------------------------------
-
-
 def compute_per_layer_grad_norms_jax(grads: Any) -> jax.Array:
     """Compute L2 gradient norm per parameter leaf as a JAX array.
 
@@ -125,13 +132,7 @@ def compute_per_layer_grad_norms_jax(grads: Any) -> jax.Array:
         ``[num_leaves]`` JAX array of per-leaf L2 norms.
     """
     leaves = jax.tree.leaves(grads)
-    norms = jnp.stack([jnp.linalg.norm(leaf) for leaf in leaves])
-    return norms  # [num_leaves]
-
-
-# ---------------------------------------------------------------------------
-# Gradient surgery metrics (pure JAX)
-# ---------------------------------------------------------------------------
+    return jnp.stack([jnp.linalg.norm(leaf) for leaf in leaves])
 
 
 def compute_surgery_metrics_jax(
@@ -150,8 +151,8 @@ def compute_surgery_metrics_jax(
     before_leaves = jax.tree.leaves(g_rl_before)
     after_leaves = jax.tree.leaves(g_rl_after)
 
-    before_sq = jnp.stack([jnp.sum(g ** 2) for g in before_leaves])
-    after_sq = jnp.stack([jnp.sum(g ** 2) for g in after_leaves])
+    before_sq = jnp.stack([jnp.sum(g**2) for g in before_leaves])
+    after_sq = jnp.stack([jnp.sum(g**2) for g in after_leaves])
 
     total_before = jnp.sum(before_sq)
     total_after = jnp.sum(after_sq)
@@ -159,9 +160,13 @@ def compute_surgery_metrics_jax(
     fraction = projected_mass / jnp.maximum(total_before, 1e-10)
 
     # Count leaves where projection was applied (dot product of diff > 0)
-    n_conflicting = jnp.sum(jnp.stack([
-        (jnp.sum(g_r * (g_r - g_a)) > 0).astype(jnp.int32)
-        for g_r, g_a in zip(before_leaves, after_leaves)
-    ]))
+    n_conflicting = jnp.sum(
+        jnp.stack(
+            [
+                (jnp.sum(g_r * (g_r - g_a)) > 0).astype(jnp.int32)
+                for g_r, g_a in zip(before_leaves, after_leaves, strict=False)
+            ]
+        )
+    )
 
     return fraction, n_conflicting

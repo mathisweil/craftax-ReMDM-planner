@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Union
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -132,9 +133,7 @@ def load_checkpoint(
         step = mgr.latest_step()
 
         if step is None:
-            raise FileNotFoundError(
-                f"No checkpoint at {path}"
-            )
+            raise FileNotFoundError(f"No checkpoint at {path}")
 
         restored = mgr.restore(
             step,
@@ -144,10 +143,7 @@ def load_checkpoint(
             ),
         )
 
-    print(
-        f"Loaded diffusion parameters from '{path}' "
-        f"(checkpoint step {step})"
-    )
+    print(f"Loaded diffusion parameters from '{path}' (checkpoint step {step})")
 
     return restored["params"]
 
@@ -155,7 +151,7 @@ def load_checkpoint(
 def create_train_state(
     model: DenoisingTransformer,
     params: Any,
-    lr: Union[float, Callable[[int], float]],
+    lr: float | Callable[[int], float],
     max_grad_norm: float,
 ) -> TrainState:
     """Create a :class:`TrainState` with gradient clipping and Adam.
@@ -187,22 +183,24 @@ def make_apply_fns(
         dropout via ``rngs={"dropout": rng}``.
     """
 
-    def apply_eval(params: Any, obs: jnp.ndarray, z_t: jnp.ndarray, t: jnp.ndarray, _rng=None):
+    def apply_eval(
+        params: Any, obs: jnp.ndarray, z_t: jnp.ndarray, t: jnp.ndarray, _rng=None
+    ):
         return model.apply(params, obs, z_t, t)
 
-    def apply_train(params: Any, obs: jnp.ndarray, z_t: jnp.ndarray, t: jnp.ndarray, rng=None):
+    def apply_train(
+        params: Any, obs: jnp.ndarray, z_t: jnp.ndarray, t: jnp.ndarray, rng=None
+    ):
         return model.apply(
-            params, obs, z_t, t,
+            params,
+            obs,
+            z_t,
+            t,
             deterministic=False,
             rngs={"dropout": rng} if rng is not None else {},
         )
 
     return apply_eval, apply_train
-
-
-# ---------------------------------------------------------------------------
-# Checkpoint metadata sidecar
-# ---------------------------------------------------------------------------
 
 
 class _NumpyEncoder(json.JSONEncoder):
@@ -282,7 +280,7 @@ def load_checkpoint_for_resume(
     obs_dim: int,
     plan_horizon: int,
     path: str,
-    lr_schedule: Union[float, Callable[[int], float]],
+    lr_schedule: float | Callable[[int], float],
     max_grad_norm: float,
 ) -> TrainState:
     """Load a full ``TrainState`` (params + optimizer state) for resume.
@@ -320,9 +318,7 @@ def load_checkpoint_for_resume(
     with ocp.CheckpointManager(path) as mgr:
         step = mgr.latest_step()
         if step is None:
-            raise FileNotFoundError(
-                f"No checkpoint found at {path}"
-            )
+            raise FileNotFoundError(f"No checkpoint found at {path}")
         restored_state = mgr.restore(
             step,
             args=ocp.args.StandardRestore(item=abstract_state),

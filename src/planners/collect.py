@@ -9,8 +9,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .ppo import load_ppo_agent
 from .env import make_env
+from .ppo import load_ppo_agent
 
 
 def collect_offline_data(config: dict[str, Any]) -> None:
@@ -33,10 +33,13 @@ def collect_offline_data(config: dict[str, Any]) -> None:
     obs_dim = env_w.observation_space(env_params).shape[0]
 
     ppo = load_ppo_agent(
-        config["PPO_CHECKPOINT_PATH"], num_actions, obs_dim,
+        config["PPO_CHECKPOINT_PATH"],
+        num_actions,
+        obs_dim,
         config.get("LAYER_SIZE", 512),
         model_type=config.get("PPO_MODEL_TYPE", "ppo_rnn"),
-        config=config, num_envs=num_envs,
+        config=config,
+        num_envs=num_envs,
     )
 
     rng = jax.random.PRNGKey(config["SEED"])
@@ -48,9 +51,12 @@ def collect_offline_data(config: dict[str, Any]) -> None:
     def _step(carry, _):
         rng, es, obs, done, hs = carry
         rng, act_rng, step_rng = jax.random.split(rng, 3)
-        action, new_hs = ppo.act(obs, done, hs, act_rng,
-                                  temperature=config.get("COLLECT_TEMPERATURE", 1.0))
-        obs_next, es, reward, done_next, _ = env_w.step(step_rng, es, action, env_params)
+        action, new_hs = ppo.act(
+            obs, done, hs, act_rng, temperature=config.get("COLLECT_TEMPERATURE", 1.0)
+        )
+        obs_next, es, reward, done_next, _ = env_w.step(
+            step_rng, es, action, env_params
+        )
         return (rng, es, obs_next, done_next, new_hs), (obs, action, reward, done)
 
     rollout_fn = jax.jit(lambda c: jax.lax.scan(_step, c, None, length=num_iters))
@@ -59,16 +65,18 @@ def collect_offline_data(config: dict[str, Any]) -> None:
     )
 
     # [steps, envs, ...] -> [envs, steps, ...]
-    obs_np  = np.array(obs_arr).transpose(1, 0, 2)
-    act_np  = np.array(act_arr).transpose(1, 0)
-    rew_np  = np.array(rew_arr).transpose(1, 0)
+    obs_np = np.array(obs_arr).transpose(1, 0, 2)
+    act_np = np.array(act_arr).transpose(1, 0)
+    rew_np = np.array(rew_arr).transpose(1, 0)
     done_np = np.array(done_arr).transpose(1, 0)
 
     out_path = config["OFFLINE_DATA_PATH"]
     pathlib.Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     np.savez(out_path, obs=obs_np, actions=act_np, rewards=rew_np, dones=done_np)
     total = obs_np.shape[0] * obs_np.shape[1]
-    print(f"Saved {obs_np.shape[0]}×{obs_np.shape[1]} transitions ({total:,}) to '{out_path}'")
+    print(
+        f"Saved {obs_np.shape[0]}×{obs_np.shape[1]} transitions ({total:,}) to '{out_path}'"
+    )
 
 
 def run_collect(config: dict[str, Any]) -> None:
