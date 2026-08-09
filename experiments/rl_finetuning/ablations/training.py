@@ -1107,10 +1107,7 @@ def make_run_ablation(
             env_score_val = env_score_dict["returned_episode_returns"]
 
             # -- Params for diagnostics (strip LoRA if needed) --
-            if is_lora:
-                params_diag = state.params["base"]
-            else:
-                params_diag = state.params
+            params_diag = state.params["base"] if is_lora else state.params
 
             # -- Gradient alignment (conditional) --
             def _do_grad_align() -> tuple[jax.Array, jax.Array, jax.Array]:
