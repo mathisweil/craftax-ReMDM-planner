@@ -34,7 +34,7 @@ from .model import (
 from .ppo import PPOAgent, build_ppo_network, load_ppo_params
 
 
-def make_train(config: dict[str, Any]):
+def make_train_offline_diffusion(config: dict[str, Any]):
     """Build the offline diffusion training closure.
 
     All environment construction, model instantiation, and static pre-computation
@@ -368,7 +368,7 @@ def run_offline_diffusion(config):
     rng = jax.random.PRNGKey(config["SEED"])
     rngs = jax.random.split(rng, config["NUM_REPEATS"])
 
-    train_fn = jax.jit(jax.vmap(make_train(config)))
+    train_fn = jax.jit(jax.vmap(make_train_offline_diffusion(config)))
 
     t0 = time.time()
     out = train_fn(rngs)
