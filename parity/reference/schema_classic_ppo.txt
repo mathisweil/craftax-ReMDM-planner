@@ -1,0 +1,79 @@
+latest_step: 1000000000
+sidecar: config.yaml
+sidecar: wandb-summary.json
+opt_state.0: None
+opt_state.1.0.count: () int32
+opt_state.1.0.mu.params.Dense_0.bias: (512,) float32
+opt_state.1.0.mu.params.Dense_0.kernel: (1345, 512) float32
+opt_state.1.0.mu.params.Dense_1.bias: (512,) float32
+opt_state.1.0.mu.params.Dense_1.kernel: (512, 512) float32
+opt_state.1.0.mu.params.Dense_2.bias: (512,) float32
+opt_state.1.0.mu.params.Dense_2.kernel: (512, 512) float32
+opt_state.1.0.mu.params.Dense_3.bias: (17,) float32
+opt_state.1.0.mu.params.Dense_3.kernel: (512, 17) float32
+opt_state.1.0.mu.params.Dense_4.bias: (512,) float32
+opt_state.1.0.mu.params.Dense_4.kernel: (512, 512) float32
+opt_state.1.0.mu.params.Dense_5.bias: (512,) float32
+opt_state.1.0.mu.params.Dense_5.kernel: (512, 512) float32
+opt_state.1.0.mu.params.Dense_6.bias: (1,) float32
+opt_state.1.0.mu.params.Dense_6.kernel: (512, 1) float32
+opt_state.1.0.mu.params.ScannedRNN_0.GRUCell_1.hn.bias: (512,) float32
+opt_state.1.0.mu.params.ScannedRNN_0.GRUCell_1.hn.kernel: (512, 512) float32
+opt_state.1.0.mu.params.ScannedRNN_0.GRUCell_1.hr.kernel: (512, 512) float32
+opt_state.1.0.mu.params.ScannedRNN_0.GRUCell_1.hz.kernel: (512, 512) float32
+opt_state.1.0.mu.params.ScannedRNN_0.GRUCell_1.in.bias: (512,) float32
+opt_state.1.0.mu.params.ScannedRNN_0.GRUCell_1.in.kernel: (512, 512) float32
+opt_state.1.0.mu.params.ScannedRNN_0.GRUCell_1.ir.bias: (512,) float32
+opt_state.1.0.mu.params.ScannedRNN_0.GRUCell_1.ir.kernel: (512, 512) float32
+opt_state.1.0.mu.params.ScannedRNN_0.GRUCell_1.iz.bias: (512,) float32
+opt_state.1.0.mu.params.ScannedRNN_0.GRUCell_1.iz.kernel: (512, 512) float32
+opt_state.1.0.nu.params.Dense_0.bias: (512,) float32
+opt_state.1.0.nu.params.Dense_0.kernel: (1345, 512) float32
+opt_state.1.0.nu.params.Dense_1.bias: (512,) float32
+opt_state.1.0.nu.params.Dense_1.kernel: (512, 512) float32
+opt_state.1.0.nu.params.Dense_2.bias: (512,) float32
+opt_state.1.0.nu.params.Dense_2.kernel: (512, 512) float32
+opt_state.1.0.nu.params.Dense_3.bias: (17,) float32
+opt_state.1.0.nu.params.Dense_3.kernel: (512, 17) float32
+opt_state.1.0.nu.params.Dense_4.bias: (512,) float32
+opt_state.1.0.nu.params.Dense_4.kernel: (512, 512) float32
+opt_state.1.0.nu.params.Dense_5.bias: (512,) float32
+opt_state.1.0.nu.params.Dense_5.kernel: (512, 512) float32
+opt_state.1.0.nu.params.Dense_6.bias: (1,) float32
+opt_state.1.0.nu.params.Dense_6.kernel: (512, 1) float32
+opt_state.1.0.nu.params.ScannedRNN_0.GRUCell_1.hn.bias: (512,) float32
+opt_state.1.0.nu.params.ScannedRNN_0.GRUCell_1.hn.kernel: (512, 512) float32
+opt_state.1.0.nu.params.ScannedRNN_0.GRUCell_1.hr.kernel: (512, 512) float32
+opt_state.1.0.nu.params.ScannedRNN_0.GRUCell_1.hz.kernel: (512, 512) float32
+opt_state.1.0.nu.params.ScannedRNN_0.GRUCell_1.in.bias: (512,) float32
+opt_state.1.0.nu.params.ScannedRNN_0.GRUCell_1.in.kernel: (512, 512) float32
+opt_state.1.0.nu.params.ScannedRNN_0.GRUCell_1.ir.bias: (512,) float32
+opt_state.1.0.nu.params.ScannedRNN_0.GRUCell_1.ir.kernel: (512, 512) float32
+opt_state.1.0.nu.params.ScannedRNN_0.GRUCell_1.iz.bias: (512,) float32
+opt_state.1.0.nu.params.ScannedRNN_0.GRUCell_1.iz.kernel: (512, 512) float32
+opt_state.1.1.count: () int32
+params.params.Dense_0.bias: (512,) float32
+params.params.Dense_0.kernel: (1345, 512) float32
+params.params.Dense_1.bias: (512,) float32
+params.params.Dense_1.kernel: (512, 512) float32
+params.params.Dense_2.bias: (512,) float32
+params.params.Dense_2.kernel: (512, 512) float32
+params.params.Dense_3.bias: (17,) float32
+params.params.Dense_3.kernel: (512, 17) float32
+params.params.Dense_4.bias: (512,) float32
+params.params.Dense_4.kernel: (512, 512) float32
+params.params.Dense_5.bias: (512,) float32
+params.params.Dense_5.kernel: (512, 512) float32
+params.params.Dense_6.bias: (1,) float32
+params.params.Dense_6.kernel: (512, 1) float32
+params.params.ScannedRNN_0.GRUCell_1.hn.bias: (512,) float32
+params.params.ScannedRNN_0.GRUCell_1.hn.kernel: (512, 512) float32
+params.params.ScannedRNN_0.GRUCell_1.hr.kernel: (512, 512) float32
+params.params.ScannedRNN_0.GRUCell_1.hz.kernel: (512, 512) float32
+params.params.ScannedRNN_0.GRUCell_1.in.bias: (512,) float32
+params.params.ScannedRNN_0.GRUCell_1.in.kernel: (512, 512) float32
+params.params.ScannedRNN_0.GRUCell_1.ir.bias: (512,) float32
+params.params.ScannedRNN_0.GRUCell_1.ir.kernel: (512, 512) float32
+params.params.ScannedRNN_0.GRUCell_1.iz.bias: (512,) float32
+params.params.ScannedRNN_0.GRUCell_1.iz.kernel: (512, 512) float32
+step: () int32
