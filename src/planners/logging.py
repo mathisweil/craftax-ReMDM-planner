@@ -160,7 +160,9 @@ def build_log_dict(
         log["val/achievements"] = val_achieve_total
 
     if sps is not None:
-        log["train/sps"] = sps
+        # Validation runs inside the timed region on val steps, so the raw
+        # rate there measures training + validation, not training slowdown.
+        log["train/sps_incl_val" if is_val_step else "train/sps"] = sps
 
     return log
 

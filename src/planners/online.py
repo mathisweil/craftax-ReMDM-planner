@@ -591,22 +591,27 @@ def make_train_online_dagger(config: dict[str, Any]):
             )
             metric.update(val_metrics)
 
-            # Best-model tracking: update when validation improves.
-            val_ret = val_metrics.get(
-                "val/returned_episode_returns",
-                jnp.array(-jnp.inf),
-            )
+            # Best-model tracking: update when validation improves.  Under
+            # cond so the full-tree select only runs on val steps.
             is_val_step = step_idx % val_interval == 0
-            improved = is_val_step & (val_ret > best_val_return)
-            best_params = jax.tree.map(
-                lambda b, c: jnp.where(improved, c, b),
-                best_params,
-                state.params,
-            )
-            best_val_return = jnp.where(
-                improved,
-                val_ret,
-                best_val_return,
+
+            def _update_best():
+                val_ret = val_metrics.get(
+                    "val/returned_episode_returns",
+                    jnp.array(-jnp.inf),
+                )
+                improved = val_ret > best_val_return
+                new_best = jax.tree.map(
+                    lambda b, c: jnp.where(improved, c, b),
+                    best_params,
+                    state.params,
+                )
+                return new_best, jnp.where(improved, val_ret, best_val_return)
+
+            best_params, best_val_return = jax.lax.cond(
+                is_val_step,
+                _update_best,
+                lambda: (best_params, best_val_return),
             )
             metric["best_val_return"] = best_val_return
 
