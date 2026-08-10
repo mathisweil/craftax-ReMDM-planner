@@ -1,8 +1,0 @@
-{
-  "eval_atol": 1e-09,
-  "eval_observed_delta": 0.0,
-  "forward_atol": 1e-06,
-  "train_atol": 1e-09,
-  "train_bit_reproducible": true,
-  "train_observed_delta": 0.0
-}

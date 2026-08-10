@@ -9,8 +9,9 @@
 # because the dependencies are already in the image.
 #
 # Optional template env vars:
-#   BRANCH   git branch to check out (default: main)
-#   REPO_URL override the clone URL (e.g. your fork or an SSH URL)
+#   BRANCH           git branch to check out (default: main)
+#   REPO_URL         override the clone URL (e.g. your fork or an SSH URL)
+#   PULL_CHECKPOINTS set to 1 to fetch the released checkpoints from the Hub
 
 set -euo pipefail
 
@@ -34,13 +35,22 @@ fi
 cd "$REPO_DIR"
 
 # 2. Dependencies are already in /opt/venv, so this only installs the project
-#    itself: seconds, no network.
+#    itself: seconds, not minutes. Warn first if the lockfile has drifted from
+#    the one the image was built with, because that silently turns this line
+#    into a multi-GB download.
+if ! cmp -s uv.lock /opt/venv/baked-uv.lock; then
+    echo "WARNING: uv.lock differs from the image's baked lockfile."
+    echo "         This sync will re-download dependencies. Rebuild the image."
+fi
 uv sync --frozen --extra cuda
 
-# 3. Checkpoints baked into the image at /opt/checkpoints. Symlink rather than
-#    copy so the container disk is not doubled up.
+# 3. Checkpoints. Symlink them if they were baked into the image, otherwise
+#    fetch from the Hub (~470 MB, under a minute).
 if [ -d /opt/checkpoints/checkpoints ] && [ ! -e "$REPO_DIR/checkpoints" ]; then
     ln -s /opt/checkpoints/checkpoints "$REPO_DIR/checkpoints"
+elif [ -n "${PULL_CHECKPOINTS:-}" ] && [ ! -d "$REPO_DIR/checkpoints" ]; then
+    uv run hf download mathisweil/remdm-craftax-checkpoints \
+        --include "checkpoints/**" --local-dir "$REPO_DIR"
 fi
 
 # 4. Interactive SSH shells land in the repo with the right env.
