@@ -237,3 +237,7 @@ CLAUDE.md
 # Chekpoints
 checkpoints/
 
+
+parity/
+CHANGES.md
+CLI_CHANGES.md
