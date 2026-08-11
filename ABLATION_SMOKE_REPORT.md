@@ -104,7 +104,7 @@ Exit codes alone can hide silent failure, so each was checked independently.
 | Diagnostics populated | 5 logged points per Phase 1 run (cadence 10 over 50 iters), all channels non-empty |
 | Eval path actually fired in Phase 3 | 25/25 recorded at least one eval |
 | **Negative control** | run with a bad checkpoint path recorded `exit=1`, proving `${PIPESTATUS[0]}` reports python and not `tee` |
-| Phase 4 confirmation re-run | PHASE4_RESULT |
+| Phase 4 confirmation re-run | 25/25 `exit=0`, no errors, 25 populated `results.json`, independent output dir |
 
 `uv run pytest tests/` → **154 passed**, 74.81s.
 `uv run ruff check experiments/` → **All checks passed**.
@@ -165,7 +165,8 @@ Not pushed. This is the only commit on top of `79bcf7c`.
 |---|---|
 | Phase 1 sweep | 3767 s (62.8 min) |
 | Phase 3 sweep | 4519 s (75.3 min) |
-| Phase 4 re-run | PHASE4_TIME |
+| Phase 4 re-run | 3799 s (63.3 min) |
+| **Total sweep wall clock** | **12085 s (3.36 h)** |
 | GPU | NVIDIA GeForce RTX 4070 Ti **SUPER**, 16376 MiB |
 | Driver / CUDA | 560.35.03 / 12.6 |
 | JAX / jaxlib | 0.11.0 / 0.11.0, `cuda12` plugin |
