@@ -45,7 +45,7 @@ RUN apt-get update \
 # source code never invalidates it.
 WORKDIR /opt/build
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --extra cuda --no-install-project
+RUN uv sync --frozen --extra cuda13 --no-install-project
 
 # Fail the build now rather than after a 10 GB pull. Reports CPU-only devices
 # at build time, which is expected: there is no GPU in the builder.
