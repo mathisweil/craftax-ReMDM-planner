@@ -244,11 +244,3 @@ artifacts/
 parity/
 CHANGES.md
 CLI_CHANGES.md
-checkpoints_*/
-experiments/rl_finetuning/outputs/**/figures/
-artifacts/
-wandb/
-checkpoints_*/
-experiments/rl_finetuning/outputs/**/figures/
-artifacts/
-wandb/
