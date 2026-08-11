@@ -42,7 +42,7 @@ if ! cmp -s uv.lock /opt/venv/baked-uv.lock; then
     echo "WARNING: uv.lock differs from the image's baked lockfile."
     echo "         This sync will re-download dependencies. Rebuild the image."
 fi
-uv sync --frozen --extra cuda
+uv sync --frozen --extra cuda13
 
 # 3. Checkpoints. Symlink them if they were baked into the image, otherwise
 #    fetch from the Hub (~470 MB, under a minute).
