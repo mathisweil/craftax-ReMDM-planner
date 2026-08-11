@@ -29,7 +29,7 @@ The planner starts from a fully-masked action sequence and iteratively unmasks t
 
 ## Setup
 
-Prerequisites: Python 3.12+, [uv](https://docs.astral.sh/uv/). For GPU nodes, a **CUDA 13** driver and toolkit (`libcuda.so`, `libcudnn`) must be installed at OS level (on HPC clusters typically `module load cuda/13.x`); they are not in `pyproject.toml`.
+Prerequisites: Python 3.12+, [uv](https://docs.astral.sh/uv/). Linux GPU use needs NVIDIA driver >= 580 for CUDA 13, or >= 525 with `--extra cuda12`. CUDA and cuDNN come from the pip wheels, so no OS-level toolkit is required; if `module load cuda/13.x` is in your shell profile, unset `LD_LIBRARY_PATH`, which otherwise shadows the wheel libraries.
 
 ```bash
 git clone --recurse-submodules https://github.com/mathisweil/craftax-ReMDM-planner.git
@@ -37,14 +37,18 @@ cd craftax-ReMDM-planner
 # Or, if already cloned without submodules:
 git submodule update --init --recursive
 
-# Base environment (CPU / macOS). Installs the dev group (pytest) too.
+# Default: CPU-only JAX (macOS, or Linux without a GPU).
+# Installs the dev group (pytest) too.
 uv sync
 
-# GPU (NVIDIA CUDA 13, Linux only): jax[cuda13]
-uv sync --extra cuda
+# Linux GPU, CUDA 13 (driver >= 580)
+uv sync --extra cuda13
+
+# Linux GPU, CUDA 12 fallback (driver >= 525, or Maxwell/Pascal cards)
+uv sync --extra cuda12
 ```
 
-Extras: `cuda` is the only extra; it adds the CUDA 13 JAX build. The same extra name exists in the minihack repo (where it installs CUDA torch).
+Extras: `cuda13` and `cuda12` are mutually exclusive and Linux-only. Unlike the minihack repo, where plain `uv sync` already yields a CUDA build on Linux, JAX ships GPU support only through these extras, so a GPU node needs one explicitly.
 
 ## Repo layout
 
@@ -60,7 +64,7 @@ craftax-ReMDM-planner/
 ├── checkpoints/             Gitignored — offline/, online/, ppo_agents/ (see Checkpoints)
 ├── demo_craftax.ipynb       Demo notebook
 ├── main.py                  CLI entry point
-└── pyproject.toml           uv project — deps, cuda extra, dev group
+└── pyproject.toml           uv project — deps, cuda12/cuda13 extras, dev group
 ```
 
 ## Quickstart
