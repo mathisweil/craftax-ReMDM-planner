@@ -248,3 +248,7 @@ checkpoints_*/
 experiments/rl_finetuning/outputs/**/figures/
 artifacts/
 wandb/
+checkpoints_*/
+experiments/rl_finetuning/outputs/**/figures/
+artifacts/
+wandb/
