@@ -31,6 +31,7 @@ from experiments.rl_finetuning.ablations.optimizers import (
     gradient_surgery,
     make_lora_params,
     make_optimizer_lora_only,
+    merge_lora_into_base,
 )
 from experiments.rl_finetuning.ablations.registry import AblationSpec
 from experiments.rl_finetuning.diagnostics.gradient import (
@@ -1176,7 +1177,10 @@ def make_run_ablation(
 
             # -- Per-layer gradient norms (conditional) --
             def _do_per_layer() -> jax.Array:
-                return compute_per_layer_grad_norms_jax(grads_for_diag)
+                # Base tree only: under LoRA the grads carry 48 extra adapter
+                # leaves, which would not match num_param_leaves.
+                g = grads_for_diag["base"] if is_lora else grads_for_diag
+                return compute_per_layer_grad_norms_jax(g)
 
             per_layer = jax.lax.cond(
                 step_idx % per_layer_every == 0,
@@ -1522,22 +1526,13 @@ def run_ablation(
     # (e.g. action distribution analysis) get standard flat params.
     if is_lora:
         ema = final_carry.ema_params
-        alpha = config.get("LORA_ALPHA", 16.0)
-        rank = config.get("LORA_RANK", 8)
-        scale = alpha / max(rank, 1)
-        lora_p = ema["lora"]
-
-        def _inject(path: tuple, param: jnp.ndarray) -> jnp.ndarray:
-            path_str = "/".join(
-                str(k.key) if hasattr(k, "key") else str(k) for k in path
-            )
-            if path_str in lora_p:
-                ab = lora_p[path_str]
-                return param + scale * (ab["A"] @ ab["B"])
-            return param
-
         final_params = jax.device_get(
-            jax.tree_util.tree_map_with_path(_inject, ema["base"])
+            merge_lora_into_base(
+                ema["base"],
+                ema["lora"],
+                config.get("LORA_ALPHA", 16.0),
+                config.get("LORA_RANK", 8),
+            )
         )
     else:
         final_params = jax.device_get(final_carry.ema_params)

@@ -946,7 +946,7 @@ def plot_group_comparison(
 
     with plt.rc_context(_STYLE):
         fig, ax = plt.subplots(figsize=(8, 5))
-        bp = ax.boxplot(data, labels=ordered_groups, patch_artist=True, widths=0.5)
+        bp = ax.boxplot(data, tick_labels=ordered_groups, patch_artist=True, widths=0.5)
         for patch, c in zip(bp["boxes"], colors, strict=False):
             patch.set_facecolor(c)
             patch.set_alpha(0.6)

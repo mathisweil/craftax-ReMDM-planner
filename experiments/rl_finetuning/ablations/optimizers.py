@@ -266,6 +266,38 @@ def make_lora_params(
     return lora
 
 
+def merge_lora_into_base(
+    base_params: Any,
+    lora_params: dict[str, dict[str, jax.Array]],
+    alpha: float,
+    rank: int,
+) -> Any:
+    """Fold each LoRA delta into the base kernel it adapts.
+
+    Args:
+        base_params: Frozen base parameters (never modified in-place).
+        lora_params: LoRA parameter dict from ``make_lora_params``.
+        alpha:       LoRA alpha scaling factor.
+        rank:        LoRA rank (must match ``make_lora_params``).
+
+    Returns:
+        Pytree of the same structure as ``base_params`` with the deltas applied.
+    """
+    scale = alpha / max(rank, 1)
+
+    def inject(path: tuple, param: jnp.ndarray) -> jnp.ndarray:
+        path_str = "/".join(str(k.key) if hasattr(k, "key") else str(k) for k in path)
+        if path_str in lora_params:
+            ab = lora_params[path_str]
+            # A: [d_in, rank], B: [rank, d_out] → delta: [d_in, d_out],
+            # reshaped back to the kernel's own (possibly 3-D) shape.
+            delta = (ab["A"] @ ab["B"]).reshape(param.shape)
+            return param + scale * delta
+        return param
+
+    return jax.tree_util.tree_map_with_path(inject, base_params)
+
+
 def apply_fn_with_lora(
     base_apply_fn: Callable,
     base_params: Any,
@@ -299,19 +331,7 @@ def apply_fn_with_lora(
     Returns:
         ``[B, H, num_actions]`` logits.
     """
-    scale = alpha / max(rank, 1)
-
-    def inject(path: tuple, param: jnp.ndarray) -> jnp.ndarray:
-        path_str = "/".join(str(k.key) if hasattr(k, "key") else str(k) for k in path)
-        if path_str in lora_params:
-            ab = lora_params[path_str]
-            # A: [d_in, rank], B: [rank, d_out] → delta: [d_in, d_out],
-            # reshaped back to the kernel's own (possibly 3-D) shape.
-            delta = (ab["A"] @ ab["B"]).reshape(param.shape)
-            return param + scale * delta
-        return param
-
-    effective_params = jax.tree_util.tree_map_with_path(inject, base_params)
+    effective_params = merge_lora_into_base(base_params, lora_params, alpha, rank)
     return base_apply_fn(effective_params, obs, z_t, t, rng)
 
 
