@@ -236,8 +236,15 @@ CLAUDE.md
 
 # Chekpoints
 checkpoints/
+checkpoints_*/
+experiments/rl_finetuning/outputs/**/figures/
+artifacts/
 
 
 parity/
 CHANGES.md
 CLI_CHANGES.md
+checkpoints_*/
+experiments/rl_finetuning/outputs/**/figures/
+artifacts/
+wandb/
