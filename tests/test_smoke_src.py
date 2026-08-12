@@ -392,7 +392,7 @@ FINAL_CONFIG_DERIVATIONS = {
     },
     "configs/final_craftax_ucl.yaml": {
         "NUM_ENVS": 448,
-        "NUM_UPDATES": 3487,
+        "NUM_UPDATES": 5231,
         "LR_WARMUP_STEPS": 1371,
         "DAGGER_BUFFER_MAX": 43_750,
     },
@@ -404,7 +404,7 @@ FINAL_CONFIG_DERIVATIONS = {
     },
     "configs/final_craftax_qmul.yaml": {
         "NUM_ENVS": 64,
-        "NUM_UPDATES": 24_414,
+        "NUM_UPDATES": 36_621,
         "LR_WARMUP_STEPS": 9600,
         "DAGGER_BUFFER_MAX": 6_250,
     },

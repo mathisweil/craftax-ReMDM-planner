@@ -39,7 +39,7 @@ temperature: 0.3
 # ── Optimisation ─────────────────────────────────────────────────────────────
 lr: 5.0e-4
 # IDENTICAL to UCL as a frame budget.  On this file's 64 envs it resolves to
-# lr_warmup_steps = 9600 against 1,562,496 gradient steps.
+# lr_warmup_steps = 9600 against 2,343,744 gradient steps.
 lr_warmup_frames: 7.86432e7         # -> lr_warmup_steps = 9600
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ offline_total_timesteps: 3.0e+8        # IDENTICAL to UCL
 
 # ── Online DAgger training ───────────────────────────────────────────────────
 online_total_timesteps: 3.0e+8         # IDENTICAL to UCL
-dagger_beta_final: 0.385            # resolves to decay 0.9999609 over 24,414 updates
+dagger_beta_final: 0.385            # resolves to decay 0.9999739 over 36,621 updates
 # 0.76294 cycles * 8192 fpu = 6,250 samples, not the ~37,500 an earlier
 # num_envs: 384 gave.  Whether the recipe wants a fixed sample count or a
 # fixed cycle count is an open question for the author.

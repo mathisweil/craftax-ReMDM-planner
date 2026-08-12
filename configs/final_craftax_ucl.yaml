@@ -15,7 +15,7 @@
 # Inherited values resolve differently here, because num_envs sets the frames
 # per update (448 * 128 = 57,344) that every env-frame budget divides by:
 #   lr_warmup_frames: 7.86432e7   -> lr_warmup_steps = 1371
-#   dagger_beta_final: 0.385      -> decay 0.9997263 over 3487 updates
+#   dagger_beta_final: 0.385      -> decay 0.9998175 over 5231 updates
 #   dagger_buffer_cycles: 0.76294 -> dagger_buffer_max = 43,750 samples
 #
 # The buffer is 43,750 samples, not the ~200K an earlier num_envs: 2048 gave.
