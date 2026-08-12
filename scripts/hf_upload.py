@@ -1,12 +1,15 @@
-"""Upload the trained Craftax ReMDM checkpoints to the Hugging Face Hub.
+"""Upload the trained Craftax ReMDM checkpoints and results to the Hugging Face Hub.
 
-Discovers every Orbax checkpoint under ``checkpoints/``, stages it with the
-repo-relative layout preserved, drops wandb environment metadata (which carries
-the author's email, hostname and local paths), generates a model card from the
-checkpoints' own config snapshots, and uploads.
+Discovers every Orbax checkpoint under ``checkpoints/``, every ablation run
+under ``experiments/rl_finetuning/outputs/`` and every ``--mode inference``
+result under ``results/inference/``, stages them with the repo-relative layout
+preserved, drops wandb environment metadata (which carries the author's email,
+hostname and local paths), generates a model card from the checkpoints' own
+config snapshots, and uploads.
 
     HF_TOKEN=hf_xxx uv run python scripts/hf_upload.py \\
-        --repo-id MathisW78/remdm-craftax-checkpoints [--dry-run] [--private]
+        --repo-id mathisweil/remdm-craftax-checkpoints \\
+        [--inference-results PATH ...] [--dry-run] [--private]
 """
 
 from __future__ import annotations
@@ -23,18 +26,26 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 CKPTS = ROOT / "checkpoints"
+RUNS = ROOT / "experiments" / "rl_finetuning" / "outputs"
+INFERENCE = ROOT / "results" / "inference"
 
 PAPER = (
     "The Double Intractability of Reinforcement Learning "
     "for Discrete Diffusion Planners"
 )
 CODE_URL = "https://github.com/mathisweil/craftax-ReMDM-planner"
+ENV_NAME = "Craftax"
 
 ROLES = {
     "offline": "Diffusion planner (offline BC)",
     "online": "Diffusion planner (online DAgger)",
     "ppo_agents": "PPO-RNN expert",
 }
+
+# An ablation run is published as its own summary plus tables and figures; the
+# raw per-iteration logs stay in the code repository.
+RUN_FILES = ("results.json", "diagnosis.md")
+RUN_DIRS = ("tables", "figures")
 
 # wandb-metadata.json is pure environment provenance (email, host, git remote,
 # absolute paths) and is never needed to restore a checkpoint.
@@ -44,7 +55,11 @@ COPY_IGNORE = shutil.ignore_patterns(
 HUB_IGNORE = ["**/.DS_Store", "**/__pycache__/**", "**/wandb-metadata.json"]
 
 
-def discover() -> dict[Path, list[int]]:
+# =============================================================================
+# Discovery
+# =============================================================================
+
+def discover_checkpoints() -> dict[Path, list[int]]:
     """Map each checkpoint directory to its saved step numbers."""
     models: dict[Path, list[int]] = {}
     for marker in sorted(CKPTS.glob("*/*/*/_CHECKPOINT_METADATA")):
@@ -52,9 +67,73 @@ def discover() -> dict[Path, list[int]]:
     return models
 
 
+def discover_runs() -> list[Path]:
+    """Every ablation output directory holding a ``results.json``."""
+    if not RUNS.is_dir():
+        return []
+    return sorted(d for d in RUNS.iterdir() if (d / "results.json").is_file())
+
+
+def discover_inference(extra: list[str]) -> list[Path]:
+    """Inference result JSONs: the default directory plus any given paths."""
+    found: list[Path] = []
+    for source in [INFERENCE, *(Path(p) for p in extra)]:
+        if source.is_dir():
+            found.extend(sorted(source.glob("*.json")))
+        elif source.is_file():
+            found.append(source)
+        elif source != INFERENCE:
+            print(f"No inference results at {source}.", file=sys.stderr)
+    return list(dict.fromkeys(found))
+
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
 def dir_size_mb(path: Path) -> float:
+    if path.is_file():
+        return path.stat().st_size / 1_048_576
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) / 1_048_576
 
+
+def human_size(path: Path) -> str:
+    mb = dir_size_mb(path)
+    return f"{mb:.0f} MB" if mb >= 1 else f"{max(mb * 1024, 1):.0f} KB"
+
+
+def plural(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+def shorten_paths(value):
+    """Shorten absolute cluster paths anywhere in a staged JSON document."""
+    if isinstance(value, dict):
+        return {k: shorten_paths(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [shorten_paths(v) for v in value]
+    if isinstance(value, str) and value.startswith("/"):
+        return "/".join(Path(value).parts[-2:])
+    return value
+
+
+def strip_wandb_block(config_yaml: Path) -> None:
+    """Remove the ``_wandb`` blob (email, local paths) from a staged config."""
+    raw = yaml.safe_load(config_yaml.read_text())
+    raw.pop("_wandb", None)
+    config_yaml.write_text(yaml.safe_dump(raw, sort_keys=True))
+
+
+def scrub_abs_paths(resume_json: Path) -> None:
+    """Shorten absolute cluster paths in a staged config snapshot."""
+    meta = json.loads(resume_json.read_text())
+    meta["config_snapshot"] = shorten_paths(meta.get("config_snapshot", {}))
+    resume_json.write_text(json.dumps(meta, indent=2))
+
+
+# =============================================================================
+# Description
+# =============================================================================
 
 def describe(model_dir: Path, steps: list[int]) -> dict[str, str]:
     """Pull env name and training detail out of a checkpoint's own metadata."""
@@ -74,34 +153,51 @@ def describe(model_dir: Path, steps: list[int]) -> dict[str, str]:
         arch = f"RNN, layer size {cfg['LAYER_SIZE']}"
     return {
         "path": str(model_dir.relative_to(ROOT)),
-        "role": ROLES[model_dir.parent.name],
+        "role": ROLES.get(model_dir.parent.name, model_dir.parent.name),
         "env": cfg["ENV_NAME"],
         "arch": arch,
-        "step": str(max(steps)),
+        "step": f"{max(steps):,}",
         "detail": detail,
-        "size": f"{dir_size_mb(model_dir):.0f} MB",
+        "size": human_size(model_dir),
     }
 
 
-def strip_wandb_block(config_yaml: Path) -> None:
-    """Remove the ``_wandb`` blob (email, local paths) from a staged config."""
-    raw = yaml.safe_load(config_yaml.read_text())
-    raw.pop("_wandb", None)
-    config_yaml.write_text(yaml.safe_dump(raw, sort_keys=True))
+def describe_run(run: Path, staged: Path) -> dict[str, str]:
+    """Summarise what an ablation run contributes to the release."""
+    counts = [
+        f"{len(list((staged / d).glob('*')))} {d}"
+        for d in RUN_DIRS if (staged / d).is_dir()
+    ]
+    files = [f for f in RUN_FILES if (staged / f).is_file()]
+    return {
+        "run": run.name,
+        "path": str(run.relative_to(ROOT)),
+        "contents": ", ".join([*(f"`{f}`" for f in files), *counts]),
+        "size": human_size(staged),
+    }
 
 
-def scrub_abs_paths(resume_json: Path) -> None:
-    """Shorten absolute cluster paths in a staged config snapshot."""
-    meta = json.loads(resume_json.read_text())
-    cfg = meta.get("config_snapshot", {})
-    for key, value in cfg.items():
-        if isinstance(value, str) and value.startswith("/"):
-            cfg[key] = "/".join(Path(value).parts[-2:])
-    resume_json.write_text(json.dumps(meta, indent=2))
+def describe_inference(name: str, payload: dict) -> dict[str, str]:
+    """Summarise one ``--mode inference`` result JSON."""
+    metrics = payload.get("metrics", payload)
+    score = metrics.get("mean_score")
+    envs, steps = metrics.get("eval_num_envs"), metrics.get("eval_steps")
+    return {
+        "file": name,
+        "env": payload.get("env_name", "-"),
+        "episodes": f"{envs} envs x {steps} steps" if envs and steps else "-",
+        "metric": (
+            f"mean score {score:.2f}" if isinstance(score, int | float) else "-"
+        ),
+    }
 
 
-def stage(staging: Path, models: dict[Path, list[int]]) -> list[dict[str, str]]:
-    """Copy checkpoints, LICENSE and model card into ``staging``."""
+# =============================================================================
+# Staging
+# =============================================================================
+
+def stage_checkpoints(staging: Path, models: dict[Path, list[int]]) -> list[dict[str, str]]:
+    """Copy each checkpoint directory, scrubbing its provenance metadata."""
     rows = []
     for model_dir, steps in models.items():
         target = staging / model_dir.relative_to(ROOT)
@@ -112,23 +208,132 @@ def stage(staging: Path, models: dict[Path, list[int]]) -> list[dict[str, str]]:
         if (target / "resume_metadata.json").exists():
             scrub_abs_paths(target / "resume_metadata.json")
         rows.append(describe(model_dir, steps))
-
-    shutil.copy2(ROOT / "LICENSE", staging / "LICENSE")
     return rows
 
 
-def model_card(repo_id: str, rows: list[dict[str, str]]) -> str:
-    header = (
-        "| Path | Role | Environment | Architecture | Selected at | Training | Size |\n"
-        "|---|---|---|---|---|---|---|\n"
+def stage_runs(staging: Path, runs: list[Path]) -> list[dict[str, str]]:
+    """Copy each ablation run's summary, tables and figures."""
+    rows = []
+    for run in runs:
+        target = staging / run.relative_to(ROOT)
+        target.mkdir(parents=True, exist_ok=True)
+        for name in RUN_FILES:
+            if (run / name).is_file():
+                shutil.copy2(run / name, target / name)
+        for name in RUN_DIRS:
+            if (run / name).is_dir():
+                shutil.copytree(run / name, target / name, ignore=COPY_IGNORE)
+        rows.append(describe_run(run, target))
+    return rows
+
+
+def stage_inference(staging: Path, files: list[Path]) -> list[dict[str, str]]:
+    """Copy each inference result JSON into ``results/inference/``."""
+    target_dir = staging / INFERENCE.relative_to(ROOT)
+    rows: list[dict[str, str]] = []
+    for src in files:
+        try:
+            payload = json.loads(src.read_text())
+        except json.JSONDecodeError:
+            print(f"Skipping unreadable inference result {src}.", file=sys.stderr)
+            continue
+        name = src.name
+        if any(r["file"] == name for r in rows):
+            name = f"{src.parent.name}-{src.name}"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        (target_dir / name).write_text(
+            json.dumps(shorten_paths(payload), indent=2) + "\n",
+        )
+        row = describe_inference(name, payload)
+        row["size"] = human_size(target_dir / name)
+        rows.append(row)
+    return rows
+
+
+def stage(
+    staging: Path,
+    models: dict[Path, list[int]],
+    runs: list[Path],
+    inference: list[Path],
+) -> tuple[list[dict[str, str]], list[dict[str, str]], list[dict[str, str]]]:
+    """Stage checkpoints, results and LICENSE; the card is written by the caller."""
+    rows = stage_checkpoints(staging, models)
+    run_rows = stage_runs(staging, runs)
+    inf_rows = stage_inference(staging, inference)
+    shutil.copy2(ROOT / "LICENSE", staging / "LICENSE")
+    return rows, run_rows, inf_rows
+
+
+# =============================================================================
+# Model card
+# =============================================================================
+
+def table(headers: list[str], lines: list[str]) -> str:
+    sep = "|".join(["---"] * len(headers))
+    return f"| {' | '.join(headers)} |\n|{sep}|\n" + "".join(f"| {ln} |\n" for ln in lines)
+
+
+def checkpoint_table(rows: list[dict[str, str]]) -> str:
+    return table(
+        ["Path", "Role", "Environment", "Architecture", "Selected at", "Training", "Size"],
+        [
+            f"`{r['path']}` | {r['role']} | `{r['env']}` | {r['arch']} | "
+            f"{r['step']} | {r['detail']} | {r['size']}"
+            for r in sorted(rows, key=lambda r: r["path"])
+        ],
     )
-    table = header + "".join(
-        f"| `{r['path']}` | {r['role']} | `{r['env']}` | {r['arch']} | "
-        f"{r['step']} | {r['detail']} | {r['size']} |\n"
-        for r in sorted(rows, key=lambda r: r["path"])
-    )
+
+
+def results_section(run_rows: list[dict[str, str]], inf_rows: list[dict[str, str]]) -> str:
+    """Ablation and inference tables; empty when the release carries neither."""
+    parts = []
+    if run_rows:
+        parts.append(
+            "RL fine-tuning ablation runs, as produced by "
+            "`experiments/rl_finetuning/run_ablations.py`. Each run ships its "
+            "`results.json` summary, the `diagnosis.md` write-up, and the "
+            "tables (`.csv` and `.tex`) and figures generated from it.\n\n"
+            + table(
+                ["Run", "Contents", "Size"],
+                [
+                    f"`{r['path']}` | {r['contents']} | {r['size']}"
+                    for r in sorted(run_rows, key=lambda r: r["run"])
+                ],
+            ),
+        )
+    if inf_rows:
+        parts.append(
+            "Evaluation results produced by `main.py --mode inference` on the "
+            "checkpoints above, under `results/inference/`.\n\n"
+            + table(
+                ["File", "Environment", "Evaluation", "Headline metric", "Size"],
+                [
+                    f"`{r['file']}` | `{r['env']}` | {r['episodes']} | "
+                    f"{r['metric']} | {r['size']}"
+                    for r in sorted(inf_rows, key=lambda r: r["file"])
+                ],
+            ),
+        )
+    return "## Results\n\n" + "\n".join(parts) if parts else ""
+
+
+def featured(rows: list[dict[str, str]]) -> dict[str, str]:
+    """The checkpoint the download and usage examples are written against."""
+    planners = [r for r in rows if "planner" in r["role"].lower()]
+    return sorted(planners or rows, key=lambda r: r["path"])[0]
+
+
+def model_card(
+    repo_id: str,
+    rows: list[dict[str, str]],
+    run_rows: list[dict[str, str]],
+    inf_rows: list[dict[str, str]],
+    total_mb: float,
+) -> str:
+    example = featured(rows)
     return f"""---
 license: mit
+library_name: jax
 pipeline_tag: reinforcement-learning
 tags:
 - reinforcement-learning
@@ -141,18 +346,18 @@ tags:
 - orbax
 ---
 
-# ReMDM Planner: Craftax checkpoints
+# ReMDM Planner: {ENV_NAME} checkpoints
 
 Trained weights accompanying *{PAPER}*: a remasking discrete diffusion model
 (ReMDM) used as an action-sequence planner in
 [Craftax](https://github.com/MichaelTMatthews/Craftax), together with the
-PPO-RNN experts that supervise it.
+PPO-RNN experts that supervise it, and the results reported in the paper.
 
 Code, configs and evaluation harness: {CODE_URL}
 
 ## Contents
 
-{table}
+{checkpoint_table(rows)}
 Each diffusion checkpoint ships a `resume_metadata.json` holding the full
 config snapshot it was trained under; each PPO expert ships `config.yaml` and
 `wandb-summary.json` (final training metrics).
@@ -162,19 +367,20 @@ Weights are [Orbax](https://orbax.readthedocs.io) checkpoint directories
 `orbax.checkpoint`, and the paths above mirror the source repository so a
 snapshot can be dropped straight into a working copy.
 
+{results_section(run_rows, inf_rows)}
 ## Download
 
 ```python
 from huggingface_hub import snapshot_download
 
-# everything (~{sum(float(r['size'].split()[0]) for r in rows):.0f} MB)
+# everything (~{total_mb:.0f} MB)
 snapshot_download(repo_id="{repo_id}", local_dir=".")
 
 # a single model
 snapshot_download(
     repo_id="{repo_id}",
     local_dir=".",
-    allow_patterns="checkpoints/online/Craftax-Classic-*/**",
+    allow_patterns="{example['path']}/**",
 )
 ```
 
@@ -184,7 +390,8 @@ From a clone of the code repository, after downloading into it:
 
 ```bash
 uv run python main.py --mode inference \\
-    --checkpoint checkpoints/online/Craftax-Classic-Symbolic-v1-OnlineDiffusion-DAgger-100M
+    --checkpoint {example['path']} \\
+    --output results/inference/eval.json
 ```
 
 Programmatic loading uses `src.planners.model.load_checkpoint` for the
@@ -204,9 +411,8 @@ remasking strategy, schedule and sampling settings, are in the per-checkpoint
 metadata files listed above, which are the authoritative record.
 
 Directory names encode the environment and the total environment timesteps the
-run was trained for. `Latest step` is whatever each run used as its Orbax step
-counter: environment frames for most runs, and update steps for the full
-Craftax DAgger run, whose 1,743 updates cover the same ~100M timesteps.
+run was trained for. `Selected at` is whatever each run used as its Orbax step
+counter, which is environment frames for the runs published here.
 
 ## Limitations
 
@@ -232,9 +438,18 @@ MIT, see `LICENSE`.
 """
 
 
+# =============================================================================
+# Entry point
+# =============================================================================
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("--repo-id", required=True, help="e.g. MathisW78/remdm-craftax-checkpoints")
+    p.add_argument("--repo-id", required=True, help="e.g. mathisweil/remdm-craftax-checkpoints")
+    p.add_argument(
+        "--inference-results", nargs="*", default=[], metavar="PATH",
+        help=f"extra --mode inference JSONs or directories, on top of "
+             f"{INFERENCE.relative_to(ROOT)}/",
+    )
     p.add_argument("--private", action="store_true", help="create the repo private")
     p.add_argument("--dry-run", action="store_true", help="stage and print, do not upload")
     p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
@@ -249,24 +464,41 @@ def main() -> int:
         print("HF_TOKEN is not set.", file=sys.stderr)
         return 1
 
-    models = discover()
+    models = discover_checkpoints()
     if not models:
         print(f"No Orbax checkpoints found under {CKPTS}.", file=sys.stderr)
         return 1
+    runs = discover_runs()
+    inference = discover_inference(args.inference_results)
 
-    with tempfile.TemporaryDirectory(prefix="remdm-ckpt-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="remdm-craftax-") as tmp:
         staging = Path(tmp)
-        rows = stage(staging, models)
-        (staging / "README.md").write_text(model_card(args.repo_id, rows))
+        rows, run_rows, inf_rows = stage(staging, models, runs, inference)
+        total_mb = dir_size_mb(staging)
+        card = model_card(args.repo_id, rows, run_rows, inf_rows, total_mb)
+        (staging / "README.md").write_text(card)
 
         files = [f for f in staging.rglob("*") if f.is_file()]
-        print(f"Staged {len(models)} checkpoints, {len(files)} files, "
-              f"{dir_size_mb(staging):.0f} MB")
+        print(f"Staged {plural(len(rows), 'checkpoint')}, "
+              f"{plural(len(run_rows), 'ablation run')}, "
+              f"{plural(len(inf_rows), 'inference result')}, "
+              f"{plural(len(files), 'file')}, {total_mb:.0f} MB")
         for r in sorted(rows, key=lambda r: r["path"]):
             print(f"  {r['path']:<70} {r['size']:>8}")
+        for r in sorted(run_rows, key=lambda r: r["run"]):
+            print(f"  {r['path']:<70} {r['size']:>8}  {r['contents']}")
+        for r in sorted(inf_rows, key=lambda r: r["file"]):
+            print(f"  results/inference/{r['file']:<52} {r['size']:>8}  {r['metric']}")
+        if not run_rows:
+            print(f"Warning: no ablation runs with a results.json under {RUNS}.",
+                  file=sys.stderr)
+        if not inf_rows:
+            print("Warning: no inference results; produce them with "
+                  "`main.py --mode inference --output "
+                  f"{INFERENCE.relative_to(ROOT)}/<name>.json`.", file=sys.stderr)
 
         if args.dry_run:
-            print(f"Dry run; staged tree left nowhere. Card:\n\n{model_card(args.repo_id, rows)}")
+            print(f"Dry run; staged tree left nowhere. Card:\n\n{card}")
             return 0
 
         if not args.yes:
@@ -284,7 +516,7 @@ def main() -> int:
             folder_path=str(staging),
             repo_type="model",
             ignore_patterns=HUB_IGNORE,
-            commit_message="Upload Craftax ReMDM planner and PPO expert checkpoints",
+            commit_message="Upload Craftax ReMDM planner checkpoints and results",
         )
         print(f"Done: https://huggingface.co/{args.repo_id}")
     return 0
