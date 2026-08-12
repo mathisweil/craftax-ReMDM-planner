@@ -266,6 +266,10 @@ limit it is given, which is why Classic at 320 reports 11,412 MB of temp at
 | `final_classic_ucl.yaml` | `num_envs: 512` | **384** | Largest that runs. Needs `XLA_PYTHON_CLIENT_MEM_FRACTION=0.90`; at 0.75 it OOMs. |
 | `final_craftax_ucl.yaml` | `num_envs: 448` | **256** | Largest that runs, at 0.90. |
 
+Section 9.4 moves Classic one step further, to 320, for a reason that has nothing
+to do with this table. The rest of this section is the picture at the default
+XLA settings; the recommended run plan is in section 8.
+
 Nothing else changed. `optimistic_reset_ratio`, the model dimensions and
 `plan_horizon` are untouched, as `PERF_DAGGER_PROMPT_CRAFTAX.md:158-161` requires.
 
@@ -316,7 +320,7 @@ Measured compile times, `MEM_FRACTION=0.90`, cold (no compilation cache):
 | `configs/smoke.yaml` | 8 | - | 31.4 s | 31.6 s |
 
 **Is compilation a material share?** For a full paper run, no: 52 s against the
-~36 hours in section 8 is 0.04%. For the 25-entry ablation suite in prompt 3, if
+31 to 36 hours in section 8 is under 0.05%. For the 25-entry ablation suite in prompt 3, if
 each entry is a separate process and each recompiles, it is 25 x 52 s = 22
 minutes of pure compilation for Classic and 38 minutes for full Craftax, before
 any training happens. That is what change D1 is for, and it is the number prompt
@@ -494,6 +498,47 @@ Classic : 2,034 x 61.84 s + 102 x 30.66 s + 52 s   = 129,084 s = 35.9 h
 Craftax : 6,103 x 41.00 s + 204 x 22.08 s + 92 s   = 254,819 s = 70.8 h
 ```
 
+**The recommended plan is the deterministic one**, for the reasons in section
+9.4: it fixes the reproducibility problem section 9.1 found and it is faster.
+Classic gives up `num_envs: 384` for 320 to fit the larger deterministic
+workspace, and still comes out ahead.
+
+| | Classic, deterministic | Craftax, deterministic |
+|---|---|---|
+| `num_envs` | 320 | 256 |
+| s per update | 43.83 | 35.63 |
+| `NUM_UPDATES` | 2,441 | 6,103 |
+| total frames | 99,983,360 | 199,983,104 |
+| minibatch | 5,120 | 4,096 |
+| `samples_per_update` | 31,040 | 24,832 |
+| `DAGGER_BUFFER_MAX` | 78,125 (1.91 cycles) | 25,000 (0.76 cycles) |
+| validations | 102 | 204 |
+| peak VRAM | 14,244 MB | 14,287 MB |
+| **hours per seed** | **30.6** | **62.0** |
+
+```
+Classic : 2,441 x 43.83 s + 102 x 30.66 s + 60 s   = 110,176 s = 30.6 h   (-15%)
+Craftax : 6,103 x 35.63 s + 204 x 28.50 s + 92 s   = 223,356 s = 62.0 h   (-12%)
+```
+
+Craftax's 28.50 s validation is measured under determinism
+(`cxdet256_u2val2` minus `cxdet256_u2`). Classic's is not: the equivalent run
+OOMed at `num_envs: 320` when validation was forced on every update, so the
+30.66 s measured by default at 384 envs is carried across as an upper bound. It
+is 2.8% of the total either way, so nothing in the conclusion turns on it.
+
+The command, for the record:
+
+```bash
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.90 \
+XLA_FLAGS=--xla_gpu_deterministic_ops=true \
+python main.py --mode online \
+    --config configs/final_classic_ucl.yaml \
+    --ppo-checkpoint checkpoints/ppo_agents/Craftax-Classic-Symbolic-v1-PPO_RNN-1000M \
+    --override num_envs=320 \
+    --override jax_compilation_cache_dir=/var/tmp/$USER/jax-cache
+```
+
 Headroom is quoted against the physical card, not against the allocator limit,
 because `MEM_FRACTION=0.90` is a choice this report made and can be raised
 further if a run comes close. Against the 15,076 MB limit actually in force the
@@ -554,31 +599,40 @@ reason to run sequentially is that the alternative does not fit.
 
 **Classic: go, with conditions.**
 
-- `--override num_envs=384`, `XLA_PYTHON_CLIENT_MEM_FRACTION=0.90`.
-- 35.9 hours per seed, 4.5 days for three seeds run sequentially.
-- The card must be otherwise idle. 7% headroom against the allocator limit does
-  not survive a second process, and section 9.3 records what contention looks
-  like when it happens.
+- `--override num_envs=320`, `XLA_PYTHON_CLIENT_MEM_FRACTION=0.90`,
+  `XLA_FLAGS=--xla_gpu_deterministic_ops=true`.
+- 30.6 hours per seed, 3.8 days for three seeds run sequentially.
+- The card must be otherwise idle. The headroom does not survive a second
+  process, and section 9.3 records what contention looks like when it happens.
 - The run is comparable to the paper's, not identical: section 4's table is the
-  full list of what moved.
+  full list of what moved, and the deterministic plan moves `num_envs` one step
+  further (320 rather than 384).
 
 **Full Craftax: no-go as configured, and the decision is the author's.**
 
-- It runs, at `--override num_envs=256` and `MEM_FRACTION=0.90`, with 6% headroom.
-- 70.8 hours per seed. Three seeds are 8.9 days of exclusive GPU, before prompt
+- It runs, at `--override num_envs=256` with the same two settings, with roughly
+  5% headroom against the allocator limit.
+- 62.0 hours per seed. Three seeds are 7.8 days of exclusive GPU, before prompt
   3's ablation suite gets any time on the same card.
-- Nothing in section 8 changes that: the profile says 94% of it is the gradient
-  work the recipe specifies, and the recipe is pinned. There is no engineering
-  fix here, only a budget decision.
+- Nothing in section 10 changes that: the profile says 94% of it is the gradient
+  work the recipe specifies, and the recipe is pinned. Determinism bought 12%;
+  there is no second 12% to find. This is a budget decision, not an engineering
+  one.
 - The lever that exists is `online_total_timesteps`, currently 2.0e8 against
-  Classic's 1.0e8. Halving it halves the wall clock to 35 hours per seed and
+  Classic's 1.0e8. Halving it halves the wall clock to 31 hours per seed and
   would make full Craftax cost what Classic costs. That is a change to the
   experiment, it is on the pinned list, and it is not mine to make.
 
 The recommendation is to run Classic here and to find another card for full
-Craftax, or to accept nine days for it. Either way the number to decide on is
-70.8 hours per seed, and it is measured rather than extrapolated from a
+Craftax, or to accept eight days for it. Either way the number to decide on is
+62.0 hours per seed, and it is measured rather than extrapolated from a
 single-update run.
+
+Both runs also depend on an author decision that is not about performance: with
+`--xla_gpu_deterministic_ops` unset, section 9.1 shows the runs are not
+reproducible at a fixed seed. The plan above sets it. If the author prefers not
+to, the wall clock rises to 35.9 and 70.8 hours and the reproducibility caveat
+has to go in the paper.
 
 ## 9. Verification
 
@@ -679,6 +733,59 @@ No configs could be compiled.
 which reads like a compiler bug and is contention. The same command passed
 immediately once the card was free. Anyone treating the smoke run as a green
 light between stages needs the GPU idle first.
+
+### 9.4 What determinism costs: memory, and negative time
+
+`--xla_gpu_deterministic_ops=true` changes which kernels XLA may select, so it
+changes both the memory footprint and the speed. Both directions surprised me,
+so both are measured rather than assumed.
+
+**Memory.** Deterministic kernels need more workspace, enough to change what
+fits. Classic, XLA temp plus output, compile-only:
+
+| `num_envs` | default | deterministic |
+|---|---|---|
+| 384 | 13,998 MB | 16,449 MB, **OOMs at execution** |
+| 352 | - | 19,353 MB |
+| 320 | 12,039 MB | 14,226 MB, runs (peak 14,244 MB) |
+| 288 | - | 15,888 MB |
+| 256 | 11,631 MB | 14,260 MB, runs (peak 14,279 MB) |
+
+So Classic's largest workable size drops from 384 to 320. Full Craftax stays at
+256 (peak 14,287 MB against 14,121 MB by default), so nothing is lost there.
+
+**Time.** Deterministic kernels are *faster* on this card, at matched `num_envs`:
+
+| Config, `num_envs` | default | deterministic | |
+|---|---|---|---|
+| Classic, 256 | 39.23 s/update | 33.06 s/update | **15.7% faster** |
+| Classic, 320 | - | 43.83 s/update | |
+| full Craftax, 256 | 41.00 s/update | 35.63 s/update | **13.1% faster** |
+
+That is not what "deterministic mode" usually means, and it is worth stating
+plainly rather than explaining away: on this GPU, for these shapes, the
+non-deterministic algorithms XLA reaches for by default are also the slower ones.
+The most likely reading is that the atomics-based split-k reductions that cost
+reproducibility are not winning back the time they spend, but this report does
+not open the kernels to check, so treat the mechanism as unverified and the
+measurement as solid.
+
+The comparison that matters is throughput at each option's largest workable size,
+because Classic has to give up `num_envs: 384` to get determinism:
+
+| Classic setting | `num_envs` | s/update | frames/s |
+|---|---|---|---|
+| default | 384 | 61.84 | 795 |
+| deterministic | 320 | 43.83 | **934, 17.5% better** |
+
+**Recommendation, and it is unusual enough to say twice: set
+`XLA_FLAGS=--xla_gpu_deterministic_ops=true` for the paper runs.** It makes the
+runs reproducible, which section 9.1 says they currently are not, and on this
+card it also makes them faster, even after paying for the smaller `num_envs`
+Classic needs. The only cost is Classic's minibatch dropping from 4,656 to 3,880
+samples, which is the same axis section 4 already moved and is small next to it.
+
+Section 8 gives the run plan both ways.
 
 
 ## 10. The changes, and what each was worth
@@ -796,6 +903,11 @@ again silently.
   (section 3.3).
 - **Did not change the DAgger buffer denomination.** Author decision
   (section 3.2).
+- **Did not set `--xla_gpu_deterministic_ops` anywhere in the repo.** It is the
+  recommendation of section 9.4 and it is in the run plan's command line, but
+  baking it into the code would silently change what every existing run means
+  and would change which `num_envs` values fit. That is the author's call, and
+  it is a claim about the paper, not a performance tweak.
 - **Did not edit `num_envs` in the shipped configs.** `final_classic_ucl.yaml:2`
   and `final_craftax_ucl.yaml:2` declare themselves as 24 GB configurations, and
   they are correct for that hardware. The re-sizing is expressed as an override
