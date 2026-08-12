@@ -3,19 +3,10 @@
 # Matches checkpoint produced by: configs/final_classic_qmul.yaml
 #   (d_model=384, n_heads=8, n_layers=6, d_ff=768, plan_horizon=32, seed 43)
 # Target hardware: QMUL H200 8 GB partition
-# Holds only its deltas: every other key is inherited from
-# ablations_default.yaml, which is layered on automatically.
+# That shape is the ablations_default.yaml architecture, so it is inherited
+# rather than restated here. This file holds only its own deltas; every
+# other key comes from the base, which is layered on automatically.
 # =============================================================================
-
-# ── Transformer architecture (must match pretrained checkpoint) ───────────────
-d_model: 384
-n_heads: 8
-n_layers: 6
-d_ff: 768
-obs_encoder_width: 768
-
-# ── Diffusion (must match pretrained checkpoint) ─────────────────────────────
-plan_horizon: 32
 
 # ── Training loop (8 GB VRAM — 64 envs / 512 batch uses ~5 GB) ───────────────
 batch_size: 256

@@ -3,19 +3,10 @@
 # Matches checkpoint produced by: configs/final_classic_ucl.yaml
 #   (d_model=384, n_heads=8, n_layers=6, d_ff=768, plan_horizon=32, seed 42)
 # Target hardware: UCL RTX 3090 Ti (24 GB VRAM)
-# Holds only its deltas: every other key is inherited from
-# ablations_default.yaml, which is layered on automatically.
+# That shape is the ablations_default.yaml architecture, so it is inherited
+# rather than restated here. This file holds only its own deltas; every
+# other key comes from the base, which is layered on automatically.
 # =============================================================================
-
-# ── Transformer architecture (must match pretrained checkpoint) ───────────────
-d_model: 384
-n_heads: 8
-n_layers: 6
-d_ff: 768
-obs_encoder_width: 768
-
-# ── Diffusion (must match pretrained checkpoint) ─────────────────────────────
-plan_horizon: 32
 
 # ── Training loop (24 GB VRAM — 192/2048 OOM'd on EWC at 19.4 GiB) ──────────
 num_envs: 192                 # 3x default; keeps rollout diversity high
