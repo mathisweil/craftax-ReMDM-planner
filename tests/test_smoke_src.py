@@ -16,6 +16,7 @@ from conftest import (
     NUM_ACTIONS,
     OBS_DIM,
     PLAN_HORIZON,
+    ROOT,
     SEED,
     SRC_MODULES,
     import_or_skip,
@@ -374,6 +375,69 @@ def test_dagger_sizing_defaults_to_one_train_pass(real_config) -> None:
     assert sizing["max_buffer_size"] == 400
 
     assert dagger_sizing({**config, "DAGGER_TRAIN_PASSES": 4}, 10)["n_train_passes"] == 4
+
+
+def test_compile_and_run_separates_compile_from_execute() -> None:
+    """Regression: the runners timed ``out = train_fn(rngs)`` with no block.
+
+    JAX dispatch is asynchronous, so that call returns once compilation is done
+    and the work is enqueued. The reported SPS therefore divided total frames
+    by a duration that excluded nearly all of the execution.
+    """
+    from src.planners.common import compile_and_run
+
+    @jax.jit
+    def train_fn(x):
+        def body(c, _):
+            return jnp.tanh(c @ c) * 1.0001, None
+
+        out, _ = jax.lax.scan(body, x, None, 200)
+        return out
+
+    x = jnp.eye(64, dtype=jnp.float32) * 0.5
+
+    out, timing = compile_and_run(train_fn, x, total_frames=1000)
+
+    assert _finite(out)
+    assert set(timing) == {
+        "compile_s",
+        "execute_s",
+        "total_s",
+        "sps_execute",
+        "sps_total",
+    }
+    assert timing["compile_s"] > 0.0
+    assert timing["execute_s"] > 0.0
+    # The execute leg is blocked, so it is real time, not dispatch time.
+    assert timing["total_s"] == pytest.approx(
+        timing["compile_s"] + timing["execute_s"]
+    )
+    assert timing["sps_total"] < timing["sps_execute"]
+
+
+def test_format_timing_reports_both_legs() -> None:
+    from src.planners.common import format_timing
+
+    text = format_timing(
+        {
+            "compile_s": 52.0,
+            "execute_s": 3600.0,
+            "total_s": 3652.0,
+            "sps_execute": 27_000.0,
+            "sps_total": 26_600.0,
+        }
+    )
+    assert "Compile: 52.0s" in text
+    assert "Execute: 3600.0s" in text
+    assert "27000 (execute)" in text
+    assert "26600 (including compile)" in text
+
+
+def test_online_runner_no_longer_reports_one_fused_time() -> None:
+    """The old shape printed a single ``Time: ...s  SPS: ...`` line."""
+    source = (ROOT / "src" / "planners" / "online.py").read_text()
+    assert "compile_and_run" in source
+    assert 'f"Time: {elapsed' not in source
 
 
 def test_snapshot_reports_the_gradient_steps_that_actually_run(real_config, capsys) -> None:

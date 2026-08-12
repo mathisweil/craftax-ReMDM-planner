@@ -14,7 +14,6 @@ Each DAgger iteration:
 from __future__ import annotations
 
 import os
-import time
 from typing import Any, NamedTuple
 
 import jax
@@ -28,7 +27,9 @@ from src.diffusion.sampling import sample_plan
 from src.diffusion.schedules import SCHEDULE_MAP
 
 from .common import (
+    compile_and_run,
     dagger_sizing,
+    format_timing,
     make_grad_step,
     make_validate,
     print_config_snapshot,
@@ -706,12 +707,8 @@ def run_online(config: dict[str, Any]) -> dict[str, Any]:
 
     train_fn = jax.jit(jax.vmap(make_train_online_dagger(config)))
 
-    t0 = time.time()
-    out = train_fn(rngs)
-    elapsed = time.time() - t0
-    print(
-        f"Time: {elapsed:.1f}s  SPS: {config['ONLINE_TOTAL_TIMESTEPS'] / elapsed:.0f}"
-    )
+    out, timing = compile_and_run(train_fn, rngs, config["ONLINE_TOTAL_TIMESTEPS"])
+    print(format_timing(timing))
 
     if config.get("USE_WANDB") and config.get("SAVE_POLICY"):
         # Final checkpoint (last iteration params)
