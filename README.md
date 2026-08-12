@@ -62,6 +62,7 @@ craftax-ReMDM-planner/
 ├── scripts/                 Param counter, PPO evaluator, HF upload utilities
 ├── tests/                   Smoke suite — uv run pytest
 ├── checkpoints/             Gitignored — offline/, online/, ppo_agents/ (see Checkpoints)
+├── results/inference/       Eval JSONs from --mode inference (published, see Checkpoints)
 ├── demo_craftax.ipynb       Demo notebook
 ├── main.py                  CLI entry point
 └── pyproject.toml           uv project — deps, cuda12/cuda13 extras, dev group
@@ -145,7 +146,7 @@ The DAgger replay buffer is not persisted; it refills within a few iterations. T
 ## Evaluation from a checkpoint
 
 ```bash
-python main.py --mode inference --checkpoint /path/to/checkpoint --output results.json
+python main.py --mode inference --checkpoint /path/to/checkpoint --output results/inference/eval.json
 
 # Released checkpoints need their matching config (see Checkpoints)
 python main.py --mode inference \
@@ -154,6 +155,8 @@ python main.py --mode inference \
 ```
 
 Prints mean episode return, completed episodes, steps per second, and per-achievement unlock counts; `--output` also writes them as JSON. Uses historical inpainting: the first `hist_len` plan positions are locked to observed history. Evaluation length is set by the `eval_steps` / `eval_num_envs` config keys.
+
+Write eval JSONs into `results/inference/` (created for you): `scripts/hf_upload.py` publishes every JSON it finds there.
 
 Any checkpoint flag (`--checkpoint`, `--ppo-checkpoint`, `--resume`) accepts a W&B artifact reference prefixed `wandb:`; the artifact downloads automatically (location: `wandb_download_dir`, default `./artifacts/`).
 
@@ -270,11 +273,15 @@ python main.py --mode online \
     --ppo-checkpoint checkpoints/ppo_agents/Craftax-Symbolic-v1-PPO_RNN-1000M
 ```
 
-Re-upload after retraining with `scripts/hf_upload.py` (rediscovers checkpoints, strips wandb environment metadata, regenerates the model card):
+### Publishing to the Hub
+
+`scripts/hf_upload.py` rediscovers and uploads three things, each keeping its repo-relative path: `checkpoints/`, every `experiments/rl_finetuning/outputs/<run>/` holding a `results.json` (with `diagnosis.md`, `tables/`, `figures/`), and the eval JSONs in `results/inference/`. It drops wandb environment metadata, shortens absolute paths and regenerates the model card.
 
 ```bash
-HF_TOKEN=hf_xxx uv run python scripts/hf_upload.py --repo-id mathisweil/remdm-craftax-checkpoints
+HF_TOKEN=hf_xxx uv run python scripts/hf_upload.py --repo-id mathisweil/remdm-craftax-checkpoints --dry-run
 ```
+
+`--dry-run` prints the staged tree and card without uploading; drop it to upload. Also `--inference-results <FILE|DIR> ...` (eval JSONs kept elsewhere), `--private`, `--yes`. Discovery expects `checkpoints/<role>/<name>/<step>/`, so copy a run's `wandb.run.dir/policies` directory to `checkpoints/{offline,online}/<name>` first.
 
 ## Results, citation, licence
 
