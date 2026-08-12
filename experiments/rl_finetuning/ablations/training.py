@@ -1292,6 +1292,24 @@ def metrics_to_history(
     did_ta = jax.device_get(all_metrics.did_t_analysis)
     did_pl = jax.device_get(all_metrics.did_per_layer)
     did_surg = jax.device_get(all_metrics.did_surgery)
+    win_rate = jax.device_get(all_metrics.win_rate)
+    eff_batch_size = jax.device_get(all_metrics.eff_batch_size)
+    eval_score = jax.device_get(all_metrics.eval_score)
+    cos_sim = jax.device_get(all_metrics.cos_sim)
+    rl_grad_norm = jax.device_get(all_metrics.rl_grad_norm)
+    bc_grad_norm = jax.device_get(all_metrics.bc_grad_norm)
+    kl_mean = jax.device_get(all_metrics.kl_mean)
+    kl_low_t = jax.device_get(all_metrics.kl_low_t)
+    kl_mid_t = jax.device_get(all_metrics.kl_mid_t)
+    kl_high_t = jax.device_get(all_metrics.kl_high_t)
+    cka = jax.device_get(all_metrics.cka)
+    t_bin_norms = jax.device_get(all_metrics.t_bin_norms)
+    t_norm_low = jax.device_get(all_metrics.t_norm_low)
+    t_norm_high = jax.device_get(all_metrics.t_norm_high)
+    low_high_cos = jax.device_get(all_metrics.low_high_cos)
+    per_layer_norms = jax.device_get(all_metrics.per_layer_norms)
+    surgery_frac = jax.device_get(all_metrics.surgery_frac)
+    surgery_n_conflict = jax.device_get(all_metrics.surgery_n_conflict)
 
     for i in range(max_iter):
         step = i + 1  # 1-based
@@ -1302,15 +1320,15 @@ def metrics_to_history(
             history.loss.append(float(loss[i]))
             history.env_score_iters.append(step)
             history.env_score.append(float(env_score[i]))
-            history.win_rate.append(float(jax.device_get(all_metrics.win_rate[i])))
+            history.win_rate.append(float(win_rate[i]))
             history.effective_batch_size.append(
-                float(jax.device_get(all_metrics.eff_batch_size[i])),
+                float(eff_batch_size[i]),
             )
 
         # Eval
         if did_eval[i] > 0.5:
             history.eval_iters.append(step)
-            history.eval_score.append(float(jax.device_get(all_metrics.eval_score[i])))
+            history.eval_score.append(float(eval_score[i]))
             # Achievement rates are not available from scan output
             # (variable-key dicts aren't JAX-compatible); populated separately
             history.per_achievement_rates.append({})
@@ -1318,54 +1336,54 @@ def metrics_to_history(
         # Gradient alignment
         if did_ga[i] > 0.5:
             history.grad_align_iters.append(step)
-            history.grad_align.append(float(jax.device_get(all_metrics.cos_sim[i])))
+            history.grad_align.append(float(cos_sim[i]))
             history.rl_grad_norm.append(
-                float(jax.device_get(all_metrics.rl_grad_norm[i]))
+                float(rl_grad_norm[i])
             )
             history.bc_grad_norm.append(
-                float(jax.device_get(all_metrics.bc_grad_norm[i]))
+                float(bc_grad_norm[i])
             )
 
         # Representation drift
         if did_rd[i] > 0.5:
             history.repr_drift_iters.append(step)
-            history.repr_drift_kl.append(float(jax.device_get(all_metrics.kl_mean[i])))
+            history.repr_drift_kl.append(float(kl_mean[i]))
             history.repr_drift_kl_low_t.append(
-                float(jax.device_get(all_metrics.kl_low_t[i]))
+                float(kl_low_t[i])
             )
             history.repr_drift_kl_mid_t.append(
-                float(jax.device_get(all_metrics.kl_mid_t[i]))
+                float(kl_mid_t[i])
             )
             history.repr_drift_kl_high_t.append(
-                float(jax.device_get(all_metrics.kl_high_t[i]))
+                float(kl_high_t[i])
             )
 
         # CKA
         if did_cka[i] > 0.5:
             history.cka_iters.append(step)
-            history.cka_similarity.append(float(jax.device_get(all_metrics.cka[i])))
+            history.cka_similarity.append(float(cka[i]))
 
         # t-analysis
         if did_ta[i] > 0.5:
             history.t_analysis_iters.append(step)
-            t_norms = jax.device_get(all_metrics.t_bin_norms[i])
+            t_norms = t_bin_norms[i]
             bin_dict = {}
             for j in range(n_t_bins):
                 label = f"t_{bin_edges[j]:.1f}-{bin_edges[j + 1]:.1f}"
                 bin_dict[label] = float(t_norms[j])
             history.t_bin_norms.append(bin_dict)
-            history.norm_low_t.append(float(jax.device_get(all_metrics.t_norm_low[i])))
+            history.norm_low_t.append(float(t_norm_low[i]))
             history.norm_high_t.append(
-                float(jax.device_get(all_metrics.t_norm_high[i]))
+                float(t_norm_high[i])
             )
             history.lowhigh_cos.append(
-                float(jax.device_get(all_metrics.low_high_cos[i]))
+                float(low_high_cos[i])
             )
 
         # Per-layer norms
         if did_pl[i] > 0.5:
             history.per_layer_iters.append(step)
-            norms = jax.device_get(all_metrics.per_layer_norms[i])
+            norms = per_layer_norms[i]
             # Convert to dict with leaf indices as keys
             history.per_layer_norms.append(
                 {f"leaf_{j}": float(norms[j]) for j in range(len(norms))},
@@ -1375,10 +1393,10 @@ def metrics_to_history(
         if did_surg[i] > 0.5 and did_ga[i] > 0.5:
             history.surgery_iters.append(step)
             history.surgery_fraction.append(
-                float(jax.device_get(all_metrics.surgery_frac[i])),
+                float(surgery_frac[i]),
             )
             history.surgery_n_conflicting.append(
-                int(jax.device_get(all_metrics.surgery_n_conflict[i])),
+                int(surgery_n_conflict[i]),
             )
 
     return history
