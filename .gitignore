@@ -237,7 +237,6 @@ CLAUDE.md
 # Chekpoints
 checkpoints/
 checkpoints_*/
-experiments/rl_finetuning/outputs/**/figures/
 artifacts/
 
 
