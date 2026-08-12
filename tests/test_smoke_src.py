@@ -487,6 +487,33 @@ def test_validate_config_requires_checkpoints() -> None:
     main_module.validate_config({"MODE": "inference", "CHECKPOINT_PATH": "x"})
 
 
+def test_compilation_cache_is_opt_in_and_creates_its_directory(tmp_path) -> None:
+    import main as main_module
+
+    assert main_module.configure_compilation_cache({}) is None
+    assert main_module.configure_compilation_cache({"JAX_COMPILATION_CACHE_DIR": None}) is None
+
+    target = tmp_path / "nested" / "jax-cache"
+    try:
+        resolved = main_module.configure_compilation_cache(
+            {"JAX_COMPILATION_CACHE_DIR": str(target)}
+        )
+        assert resolved == str(target)
+        assert target.is_dir()
+        assert jax.config.jax_compilation_cache_dir == str(target)
+    finally:
+        # Session-wide config; leave it as the rest of the suite expects.
+        jax.config.update("jax_compilation_cache_dir", None)
+
+
+def test_defaults_config_declares_the_compilation_cache_key(real_config: dict) -> None:
+    """main.py reads it, so defaults.yaml must declare it or --override rejects it."""
+    assert "JAX_COMPILATION_CACHE_DIR" in real_config
+    assert real_config["JAX_COMPILATION_CACHE_DIR"] is None, (
+        "the shipped default must be off: the right path is machine-specific"
+    )
+
+
 def test_dispatch_table_covers_every_mode() -> None:
     import main as main_module
 

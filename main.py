@@ -370,6 +370,44 @@ def validate_config(config: dict[str, Any]) -> None:
 
 
 # =============================================================================
+# Compilation cache
+# =============================================================================
+
+def configure_compilation_cache(config: dict[str, Any]) -> str | None:
+    """Enable JAX's persistent compilation cache when a directory is configured.
+
+    Compiling the online DAgger training graph takes ~52 s on the 4070 Ti and
+    the full Craftax graph considerably longer.  Every seed launched as its own
+    process, every resumed run and every entry in the RL fine-tuning ablation
+    suite currently repeats that compilation from scratch.  The cache is keyed
+    on the lowered HLO, so a hit is bit-identical to a miss: this changes no
+    numerics.
+
+    Must be called before the first compilation, i.e. before dispatch.
+
+    Args:
+        config: Upper-cased config dict.
+
+    Returns:
+        The resolved cache directory, or ``None`` when caching is disabled.
+    """
+    cache_dir = config.get("JAX_COMPILATION_CACHE_DIR")
+    if not cache_dir:
+        return None
+
+    path = pathlib.Path(str(cache_dir)).expanduser()
+    path.mkdir(parents=True, exist_ok=True)
+    jax.config.update("jax_compilation_cache_dir", str(path))
+    # -1 caches every executable regardless of size; the default skips small
+    # ones, which here means skipping nothing useful and complicating the
+    # hit-rate story.
+    jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+    jax.config.update("jax_persistent_cache_min_compile_time_secs", 1.0)
+    print(f"JAX persistent compilation cache: {path}")
+    return str(path)
+
+
+# =============================================================================
 # Execution
 # =============================================================================
 
@@ -390,6 +428,7 @@ def run(config: dict[str, Any]) -> None:
     """
     _resolve_wandb_paths(config)
     validate_config(config)
+    configure_compilation_cache(config)
     _resolve_resume(config)
 
     mode = config["MODE"]
