@@ -208,14 +208,17 @@ python experiments/rl_finetuning/run_ablations.py \
 
 One YAML config holds the experiment; the CLI holds the run.
 
-- **Config files** (`configs/*.yaml`): hyperparameters, model and method settings, ablation definitions. Any file passed via `--config` is merged onto `configs/defaults.yaml`.
-- **`extends: <file>`** (config files only): a preset may name another preset as its base, resolved relative to the declaring file. The chain is applied base first, then the child, then `defaults.yaml` underneath it all. Cycles and missing bases are errors, not silent fallbacks. `extends` is stripped before the config is built and is rejected as an `--override`.
+- **Config files** (`configs/*.yaml`): hyperparameters, model and method settings, ablation definitions. Any file passed via `--config` is merged onto `configs/defaults.yaml`. Exactly two layers: a preset never inherits from another preset.
 - **CLI flags**: per-invocation values — `--seed`, `--checkpoint`, `--ppo-checkpoint`, `--data`, `--output`, `--resume*`, `--jit/--no-jit` (disable JIT for debugging).
 - **`--override KEY=VALUE`** (repeatable): ad hoc config overrides. Keys are validated against `defaults.yaml` and values are cast to the key's type; a typo is an error, not a silent no-op.
 
-Precedence, lowest to highest: `configs/defaults.yaml` < `extends` base chain < `--config` file < `--override` and run flags.
+Precedence, lowest to highest: `configs/defaults.yaml` < `--config` file < `--override` and run flags.
 
-**Presets hold only deltas, never restate a default.** `defaults.yaml` is the single source of truth: a key belongs in a preset only if its value differs from the default it inherits. Restating a default is not harmless duplication — it silently pins the preset when the default later moves, which is how two configs that are meant to be identical drift apart.
+**`defaults.yaml` is the final Craftax Classic recipe, not a neutral baseline.** Run `main.py` with no `--config` and you get the paper's Classic DAgger run: a 384-dim, 6-layer model over 100M env frames. The per-cluster files hold only what genuinely differs between machines, which is `num_envs` and `seed`.
+
+**Presets hold only deltas, never restate a value they would inherit.** A key belongs in a preset only if its value differs from `defaults.yaml`. Restating one is not harmless duplication: it silently pins the preset when the recipe later moves. `tests/test_config.py` enforces this.
+
+> **PRIMARY keys override LEGACY ones.** Five settings come in a pair: an env-frame **PRIMARY** form (`lr_warmup_frames`, `online_total_timesteps`, `dagger_beta_final`, `dagger_buffer_cycles`, `val_interval_frames`) and an update-count **LEGACY** form (`lr_warmup_steps`, `online_num_updates`, `dagger_beta_decay`, `dagger_buffer_max`, `val_interval`). Whenever the PRIMARY is non-null it wins, and all five are non-null in `defaults.yaml`. **A preset that sets only the LEGACY form must pin the PRIMARY one to `null`, or its setting is silently ignored.** The `exp_*` presets and `smoke.yaml` do exactly that, under a `Baseline pins` heading; those pins are load-bearing.
 
 ```bash
 python main.py --mode offline --ppo-checkpoint <ppo> \
@@ -225,18 +228,19 @@ python main.py --mode offline --ppo-checkpoint <ppo> --no-jit --override num_env
 
 | Preset | Purpose |
 |---|---|
-| `configs/defaults.yaml` | Base defaults for all modes |
+| `configs/defaults.yaml` | The final Craftax Classic recipe, and what every other preset layers onto |
 | `configs/smoke.yaml` | `--mode smoke` overrides (see the sizing invariants commented in the file) |
 | `configs/{classic,craftax}_exp_a_beta_fix.yaml` | DAgger — beta decay fix only (isolates data quality) |
 | `configs/{classic,craftax}_exp_b_beta_big_model.yaml` | DAgger — beta fix + larger transformer |
 | `configs/{classic,craftax}_exp_c_full_recipe.yaml` | DAgger — beta + big model + training dynamics |
 | `configs/classic_exp_d_{100K,250K,850K,3M}_model.yaml` | Craftax Classic model-size scaling sweep |
 | `configs/craftax_exp_d_{500K,1M,3M,7M}_model.yaml` | Full Craftax model-size scaling sweep |
-| `configs/final_{classic,craftax}_qmul.yaml` | Final DAgger runs — QMUL H200, seed 43. Shared base for each cluster pair |
-| `configs/final_classic_ucl.yaml` | Final Classic DAgger — UCL 3090 Ti, seed 42 (feeds the ablation suite). `extends: final_classic_qmul.yaml` |
-| `configs/final_craftax_ucl.yaml` | Final Full Craftax DAgger — UCL 4090, seed 42 (feeds the ablation suite). `extends: final_craftax_qmul.yaml` |
+| `configs/final_classic_{qmul,ucl}.yaml` | Final Classic DAgger — `num_envs` and `seed` only; the recipe is `defaults.yaml` |
+| `configs/final_craftax_{qmul,ucl}.yaml` | Final Full Craftax DAgger — the 11 keys where Full Craftax departs from the Classic recipe, plus `num_envs` and `seed` |
 
-Each `final_*_ucl.yaml` extends its QMUL sibling and restates only `num_envs` and `seed`, so the "identical hyperparameters across clusters" invariant is enforced by the loader rather than by keeping two files in step by hand. Fairness-critical values are env-frame denominated (**PRIMARY** keys `*_total_timesteps`, `lr_warmup_frames`, `val_interval_frames`, `dagger_beta_final`, `dagger_buffer_cycles`) and rescaled by `resolve_scaled_hyperparams()` at load, so one config runs on any hardware tier. Key hyperparameters are documented inline in `configs/defaults.yaml`; the [appendix](#key-hyperparameters) tabulates them. Ablation-suite hyperparameters live in `experiments/rl_finetuning/configs/`, loaded by `run_ablations.py`, not `main.py`.
+Within each family the two cluster configs differ only in `num_envs` and `seed`. Nothing in the loader enforces that: the guard is `test_cluster_siblings_differ_only_in_num_envs_and_seed`. **A Full Craftax hyperparameter change must be made in both `final_craftax_*` files**, since with no inheritance those 11 keys are duplicated verbatim in each; a Classic one belongs in `defaults.yaml`.
+
+Fairness-critical values are env-frame denominated (the **PRIMARY** keys above) and rescaled by `resolve_scaled_hyperparams()` at load, so one recipe runs on any hardware tier: the Classic recipe resolves to 8138 updates on QMUL's 96 envs and 1525 on UCL's 512. Key hyperparameters are documented inline in `configs/defaults.yaml`; the [appendix](#key-hyperparameters) tabulates them. Ablation-suite hyperparameters live in `experiments/rl_finetuning/configs/`, loaded by `run_ablations.py`, not `main.py`.
 
 ## Checkpoints
 
