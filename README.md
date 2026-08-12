@@ -205,11 +205,14 @@ python experiments/rl_finetuning/run_ablations.py \
 
 One YAML config holds the experiment; the CLI holds the run.
 
-- **Config files** (`configs/*.yaml`): hyperparameters, model and method settings, ablation definitions. Any file passed via `--config` is deep-merged onto `configs/defaults.yaml`, so presets contain only their deltas.
+- **Config files** (`configs/*.yaml`): hyperparameters, model and method settings, ablation definitions. Any file passed via `--config` is merged onto `configs/defaults.yaml`.
+- **`extends: <file>`** (config files only): a preset may name another preset as its base, resolved relative to the declaring file. The chain is applied base first, then the child, then `defaults.yaml` underneath it all. Cycles and missing bases are errors, not silent fallbacks. `extends` is stripped before the config is built and is rejected as an `--override`.
 - **CLI flags**: per-invocation values — `--seed`, `--checkpoint`, `--ppo-checkpoint`, `--data`, `--output`, `--resume*`, `--jit/--no-jit` (disable JIT for debugging).
 - **`--override KEY=VALUE`** (repeatable): ad hoc config overrides. Keys are validated against `defaults.yaml` and values are cast to the key's type; a typo is an error, not a silent no-op.
 
-Precedence, lowest to highest: `configs/defaults.yaml` < `--config` file < `--override` and run flags.
+Precedence, lowest to highest: `configs/defaults.yaml` < `extends` base chain < `--config` file < `--override` and run flags.
+
+**Presets hold only deltas, never restate a default.** `defaults.yaml` is the single source of truth: a key belongs in a preset only if its value differs from the default it inherits. Restating a default is not harmless duplication — it silently pins the preset when the default later moves, which is how two configs that are meant to be identical drift apart.
 
 ```bash
 python main.py --mode offline --ppo-checkpoint <ppo> \
@@ -226,11 +229,11 @@ python main.py --mode offline --ppo-checkpoint <ppo> --no-jit --override num_env
 | `configs/{classic,craftax}_exp_c_full_recipe.yaml` | DAgger — beta + big model + training dynamics |
 | `configs/classic_exp_d_{100K,250K,850K,3M}_model.yaml` | Craftax Classic model-size scaling sweep |
 | `configs/craftax_exp_d_{500K,1M,3M,7M}_model.yaml` | Full Craftax model-size scaling sweep |
-| `configs/final_classic_ucl.yaml` | Final Classic DAgger — UCL 3090 Ti, seed 42 (feeds the ablation suite) |
-| `configs/final_craftax_ucl.yaml` | Final Full Craftax DAgger — UCL 4090, seed 42 (feeds the ablation suite) |
-| `configs/final_{classic,craftax}_qmul.yaml` | Env-frame-matched second seeds — QMUL H200, seed 43 |
+| `configs/final_{classic,craftax}_qmul.yaml` | Final DAgger runs — QMUL H200, seed 43. Shared base for each cluster pair |
+| `configs/final_classic_ucl.yaml` | Final Classic DAgger — UCL 3090 Ti, seed 42 (feeds the ablation suite). `extends: final_classic_qmul.yaml` |
+| `configs/final_craftax_ucl.yaml` | Final Full Craftax DAgger — UCL 4090, seed 42 (feeds the ablation suite). `extends: final_craftax_qmul.yaml` |
 
-`final_*_qmul.yaml` differs from its UCL counterpart only in `num_envs` and `seed`; fairness-critical values are env-frame denominated (**PRIMARY** keys `*_total_timesteps`, `lr_warmup_frames`, `val_interval_frames`, `dagger_beta_final`, `dagger_buffer_cycles`) and rescaled by `resolve_scaled_hyperparams()` at load, so one config runs on any hardware tier. Key hyperparameters are documented inline in `configs/defaults.yaml`; the [appendix](#key-hyperparameters) tabulates them. Ablation-suite hyperparameters live in `experiments/rl_finetuning/configs/`, loaded by `run_ablations.py`, not `main.py`.
+Each `final_*_ucl.yaml` extends its QMUL sibling and restates only `num_envs` and `seed`, so the "identical hyperparameters across clusters" invariant is enforced by the loader rather than by keeping two files in step by hand. Fairness-critical values are env-frame denominated (**PRIMARY** keys `*_total_timesteps`, `lr_warmup_frames`, `val_interval_frames`, `dagger_beta_final`, `dagger_buffer_cycles`) and rescaled by `resolve_scaled_hyperparams()` at load, so one config runs on any hardware tier. Key hyperparameters are documented inline in `configs/defaults.yaml`; the [appendix](#key-hyperparameters) tabulates them. Ablation-suite hyperparameters live in `experiments/rl_finetuning/configs/`, loaded by `run_ablations.py`, not `main.py`.
 
 ## Checkpoints
 

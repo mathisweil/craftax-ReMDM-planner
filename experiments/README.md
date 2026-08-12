@@ -30,15 +30,29 @@ rl_finetuning/
 │   ├── tables.py             # Summary tables as polars DataFrames + LaTeX export
 │   └── report.py             # diagnosis.md + decision tree figure
 └── configs/
-    ├── ablations_default.yaml              # Full-run hyperparameters (self-contained)
-    ├── ablations_fast.yaml                 # Smoke-test overrides (50 iterations, 16 envs)
+    ├── ablations_default.yaml              # Base hyperparameters for every ablation run
+    ├── ablations_fast.yaml                 # Smoke-test overlay (50 iterations, 16 envs)
     ├── ablations_final_classic_ucl.yaml    # Matches configs/final_classic_ucl.yaml   (UCL 3090 Ti, seed 42)
     ├── ablations_final_classic_qmul.yaml   # Matches configs/final_classic_qmul.yaml  (QMUL H200, seed 43)
     ├── ablations_final_craftax_ucl.yaml    # Matches configs/final_craftax_ucl.yaml   (UCL 4090,   seed 42)
     └── ablations_final_craftax_qmul.yaml   # Matches configs/final_craftax_qmul.yaml  (QMUL H200, seed 43)
 ```
 
-The `ablations_final_*` presets pin the transformer architecture and sampling hyperparameters to exactly match the corresponding pretrained DAgger checkpoints under `configs/final_*`, so they can be consumed without re-specifying every field. They are **self-contained** (do not require `ablations_default.yaml`).
+The `ablations_final_*` presets pin the transformer architecture and sampling hyperparameters to exactly match the corresponding pretrained DAgger checkpoints under `configs/final_*`, so they can be consumed without re-specifying every field.
+
+#### Config precedence
+
+Lowest to highest:
+
+```
+configs/defaults.yaml -> ablations_default.yaml -> machine config -> ablations_fast.yaml (--fast only) -> CLI flags
+```
+
+Any file given to `--ablations-config` layers on top of `ablations_default.yaml` automatically, so the `ablations_final_*` presets carry only their own deltas. A config may set `extends: <file>` to name a different base (resolved relative to the declaring file), or `extends:` with an empty value to opt out of inheritance entirely. Cycles and missing bases raise an error rather than falling back silently, and `extends` is stripped before the config namespace is built.
+
+`ablations_fast.yaml` is deliberately **not** part of that chain: `--fast` reads it raw and overlays it last. Routing it through `extends` would drag `ablations_default.yaml`'s values back over whichever machine config is in use.
+
+**Presets hold only deltas, never restate a default.** A key belongs in a machine config only if its value differs from `ablations_default.yaml`. Restating a default silently pins the preset when the base later moves.
 
 ### Usage
 
