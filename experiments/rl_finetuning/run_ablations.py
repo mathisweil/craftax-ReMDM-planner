@@ -16,9 +16,10 @@ Usage::
         --checkpoint /path/to/pretrained \\
         --ppo-checkpoint /path/to/ppo
 
-    # Fast smoke test
+    # Fast smoke test.  --fast overlays configs/ablations_fast.yaml on top of
+    # whichever ablations config is in use; do not also pass it as
+    # --ablations-config, which would make it the base instead of the overlay.
     python experiments/rl_finetuning/run_ablations.py \\
-        --ablations-config experiments/rl_finetuning/configs/ablations_fast.yaml \\
         --ablations baseline_rl kl_penalty --fast
 
     # Analysis only (load existing JSON results)
@@ -57,6 +58,10 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+_CONFIG_DIR = _PROJECT_ROOT / "experiments" / "rl_finetuning" / "configs"
+_DEFAULT_ABLATIONS_CONFIG = _CONFIG_DIR / "ablations_default.yaml"
+_FAST_ABLATIONS_CONFIG = _CONFIG_DIR / "ablations_fast.yaml"
+
 # Add Craftax_Baselines to sys.path so its internal modules (like logz) can be found
 _CRAFTAX_BASELINES = _PROJECT_ROOT / "Craftax_Baselines"
 if str(_CRAFTAX_BASELINES) not in sys.path:
@@ -92,6 +97,96 @@ def _load_yaml(path: str | None) -> dict:
         return {}
     with open(path) as f:
         return yaml.safe_load(f) or {}
+
+
+def _resolve_extends(value: str, relative_to: Path) -> Path:
+    """Resolve an ``extends`` value against the extending file's directory.
+
+    Args:
+        value: Path string from the ``extends`` key.
+        relative_to: Directory of the file that declared it.
+
+    Returns:
+        Absolute, resolved path.
+    """
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        candidate = relative_to / candidate
+    return candidate.resolve()
+
+
+def _load_ablation_config(path: str | None) -> dict:
+    """Load an ablations config, resolving its ``extends`` chain.
+
+    Machine-specific configs (e.g. ``ablations_final_craftax_ucl.yaml``) carry
+    only the keys they change and inherit the rest from
+    ``ablations_default.yaml``. The base is chosen by, in order:
+
+    * an explicit ``extends: <path>`` key, resolved relative to the file that
+      declares it (absolute paths are also accepted);
+    * ``extends:`` with an empty value, which opts out of inheritance;
+    * otherwise ``ablations_default.yaml``, unless this *is* that file.
+
+    Later files in the chain override earlier ones. ``extends`` is stripped
+    from the result so it never reaches the config namespace.
+
+    Args:
+        path: File path or None.
+
+    Returns:
+        Merged config dict.
+
+    Raises:
+        ValueError: If the chain contains a cycle.
+        FileNotFoundError: If a referenced base config does not exist.
+    """
+    if path is None:
+        return {}
+
+    default_base = _DEFAULT_ABLATIONS_CONFIG.resolve()
+    chain: list[tuple[Path, dict]] = []
+    seen: set[Path] = set()
+    current: Path | None = Path(path).expanduser().resolve()
+
+    while current is not None:
+        if current in seen:
+            visited = " -> ".join(p.name for p, _ in chain)
+            raise ValueError(
+                f"Circular 'extends' chain in ablation configs: "
+                f"{visited} -> {current.name}"
+            )
+        seen.add(current)
+        raw = _load_yaml(str(current))
+        chain.append((current, raw))
+
+        if "extends" in raw:
+            parent_value = raw["extends"]
+            parent = (
+                _resolve_extends(str(parent_value), current.parent)
+                if parent_value
+                else None
+            )
+        elif current != default_base:
+            parent = default_base
+        else:
+            parent = None
+
+        if parent is not None and not parent.exists():
+            raise FileNotFoundError(
+                f"Base config '{parent}' referenced by '{current}' does not exist"
+            )
+        current = parent
+
+    merged: dict = {}
+    for _, raw in reversed(chain):  # base first, override last
+        merged.update({k: v for k, v in raw.items() if k != "extends"})
+
+    if len(chain) > 1:
+        logger.info(
+            "Ablation config chain: %s",
+            " -> ".join(p.name for p, _ in reversed(chain)),
+        )
+    return merged
 
 
 def _merge_configs(*dicts: dict) -> dict:
@@ -142,10 +237,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--ablations-config",
         type=str,
-        default=str(
-            _PROJECT_ROOT / "experiments/rl_finetuning/configs/ablations_default.yaml"
+        default=str(_DEFAULT_ABLATIONS_CONFIG),
+        help=(
+            "Ablations-specific config. Layered on top of "
+            "ablations_default.yaml unless it sets its own 'extends'."
         ),
-        help="Path to ablations-specific config YAML.",
     )
 
     # Checkpoints
@@ -246,7 +342,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _apply_fast_overrides(config: dict) -> dict:
-    """Apply --fast smoke-test overrides to a config dict.
+    """Overlay configs/ablations_fast.yaml on a config dict.
+
+    The fast config is read raw, deliberately NOT through the ``extends``
+    chain: it is an overlay applied on top of whichever ablations config is in
+    use, so it must contribute only its own keys and never drag
+    ablations_default.yaml back over a machine-specific config.
 
     Args:
         config: UPPERCASE config dict.
@@ -254,23 +355,8 @@ def _apply_fast_overrides(config: dict) -> dict:
     Returns:
         Config dict with fast overrides applied.
     """
-    return {
-        **config,
-        "MAX_ITER": 50,
-        "NUM_ENVS": 16,
-        "NUM_STEPS": 64,
-        "BATCH_SIZE": 128,
-        "EVAL_EVERY": 10,
-        "EVAL_STEPS": 128,
-        "GRAD_ALIGN_EVERY": 10,
-        "REPR_DRIFT_EVERY": 10,
-        "T_ANALYSIS_EVERY": 10,
-        "CKA_EVERY": 25,
-        "PER_LAYER_EVERY": 10,
-        "EWC_FISHER_BATCHES": 5,
-        "REWARD_MODEL_TRAIN_STEPS": 10,
-        "MIXED_REPLAY_BUFFER_SIZE": 500,
-    }
+    fast_cfg = _to_upper(_load_yaml(str(_FAST_ABLATIONS_CONFIG)))
+    return {**config, **fast_cfg}
 
 
 def _apply_cli_overrides(config: dict, args: argparse.Namespace) -> dict:
@@ -548,8 +634,14 @@ def main(argv: list[str] | None = None) -> None:
         logger.info("Analysis complete. Outputs in %s", output_dir)
         return
 
-    main_cfg = _load_yaml(args.config)
-    abl_cfg = _load_yaml(args.ablations_config)
+    # Precedence: defaults.yaml -> ablations_default.yaml -> machine config
+    # -> ablations_fast.yaml (--fast only) -> CLI flags.  The first three are
+    # layered here; `_load_ablation_config` walks the `extends` chain so a
+    # machine config need only carry its own deltas.
+    main_cfg = _load_yaml(
+        args.config or str(_PROJECT_ROOT / "configs" / "defaults.yaml")
+    )
+    abl_cfg = _load_ablation_config(args.ablations_config)
     merged = _to_upper(_merge_configs(main_cfg, abl_cfg))
 
     if args.fast:
