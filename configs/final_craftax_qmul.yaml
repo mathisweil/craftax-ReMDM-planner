@@ -48,10 +48,10 @@ num_steps: 128
 update_epochs: 8
 
 # ── Offline training ─────────────────────────────────────────────────────────
-offline_total_timesteps: 2.0e+8        # IDENTICAL to UCL
+offline_total_timesteps: 3.0e+8        # IDENTICAL to UCL
 
 # ── Online DAgger training ───────────────────────────────────────────────────
-online_total_timesteps: 2.0e+8         # IDENTICAL to UCL
+online_total_timesteps: 3.0e+8         # IDENTICAL to UCL
 dagger_beta_final: 0.385            # resolves to decay 0.9999609 over 24,414 updates
 # 0.76294 cycles * 8192 fpu = 6,250 samples, not the ~37,500 an earlier
 # num_envs: 384 gave.  Whether the recipe wants a fixed sample count or a
