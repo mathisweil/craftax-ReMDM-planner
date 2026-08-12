@@ -5,20 +5,11 @@
 # transformer (~18 GB peak VRAM).
 # =============================================================================
 
-# ── Transformer architecture ─────────────────────────────────────────────────
-d_model: 384
-n_heads: 8
-n_layers: 6
-d_ff: 768
-obs_encoder_width: 768
-
 # ── Optimisation ─────────────────────────────────────────────────────────────
 lr_warmup_steps: 200
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 4096
-num_steps: 128
-update_epochs: 8
 
 # ── Online DAgger training ───────────────────────────────────────────────────
 online_num_updates: 1500
@@ -27,7 +18,22 @@ dagger_buffer_max: 1000000
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
 val_interval: 30
-val_steps: 256
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 seed: 42
+
+# ── Baseline pins ────────────────────────────────────────────────────────────
+# defaults.yaml holds the final Classic recipe, not a neutral baseline. This
+# experiment predates that recipe and is defined against the original
+# baseline, so it pins the values it used to inherit. They are load-bearing:
+# removing them silently redefines this experiment.
+
+# These PRIMARY env-frame keys override their LEGACY counterparts whenever
+# they are non-null. Held at null so this file's own settings stay
+# authoritative: lr_warmup_steps=200, online_num_updates=1500,
+# dagger_beta_decay=0.9993, dagger_buffer_max=1000000, val_interval=30
+lr_warmup_frames: null
+online_total_timesteps: null
+dagger_beta_final: null
+dagger_buffer_cycles: null
+val_interval_frames: null

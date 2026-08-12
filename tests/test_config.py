@@ -20,11 +20,7 @@ _DEFAULTS = _CONFIGS / "defaults.yaml"
 _ABL_CONFIGS = _ROOT / "experiments" / "rl_finetuning" / "configs"
 _ABL_DEFAULT = _ABL_CONFIGS / "ablations_default.yaml"
 
-# smoke.yaml is deliberately exempt from the delta-only rule: it pins the
-# PRIMARY env-frame keys to null so a later change to defaults.yaml cannot
-# silently lengthen the smoke run.  test_smoke_budget_resolves_to_a_short_run
-# asserts that invariant.
-_DELTA_EXEMPT = {"defaults.yaml", "smoke.yaml"}
+_DELTA_EXEMPT = {"defaults.yaml"}
 
 
 def _write(directory: Path, name: str, body: str) -> Path:

@@ -1,6 +1,29 @@
 # =============================================================================
-# ReMDM default configuration
+# ReMDM default configuration — the final Craftax Classic recipe
 # Override any value via CLI: python main.py --mode offline --lr 1e-4
+# -----------------------------------------------------------------------------
+# This file IS the paper's Classic DAgger recipe, not a neutral baseline: run
+# main.py with no --config and you get it. The per-cluster configs
+# (final_classic_{qmul,ucl}.yaml) hold only what genuinely differs between the
+# two machines, which is num_envs and seed.
+#
+# Two consequences worth knowing before editing:
+#
+#   * Presets that predate this recipe pin the values they used to inherit,
+#     under a "Baseline pins" heading. Those pins are load-bearing.
+#   * Several keys below come in a PRIMARY / LEGACY pair. The PRIMARY,
+#     env-frame form silently wins whenever it is non-null, and five of them
+#     are non-null here. A preset that sets only the LEGACY form must pin the
+#     PRIMARY one to null or it will be ignored.
+#
+# Derived quantities quoted below come from resolve_num_updates and
+# resolve_scaled_hyperparams, not from arithmetic done by hand, and are
+# asserted by test_final_configs_resolve_to_their_documented_quantities.
+#
+# Units caveat: lr_warmup_steps is handed to optax as a *gradient*-step count,
+# while decay_steps is num_updates * update_epochs * num_minibatches. Read as
+# update steps a warmup can look as though it outlasts the run when it does
+# not. Open for the author; see PERF_DAGGER_RESULTS_CRAFTAX.md.
 # =============================================================================
 
 # ── Environment ──────────────────────────────────────────────────────────────
@@ -9,12 +32,14 @@ use_optimistic_resets: false
 optimistic_reset_ratio: 16
 
 # ── Transformer architecture ─────────────────────────────────────────────────
-d_model: 256
-n_heads: 4
-n_layers: 4
-d_ff: 512
+# 9M parameters. Matches every released DAgger checkpoint, so --mode inference
+# against one needs no architecture override.
+d_model: 384
+n_heads: 8
+n_layers: 6
+d_ff: 768
 obs_encoder_layers: 2
-obs_encoder_width: 512
+obs_encoder_width: 768
 dropout_rate: 0.1
 
 # ── Diffusion ────────────────────────────────────────────────────────────────
@@ -40,14 +65,15 @@ max_grad_norm: 1.0
 # lr_warmup_frames is the env-frame-denominated source of truth (invariant
 # under num_envs changes).  When set, it overrides lr_warmup_steps via:
 #   lr_warmup_steps = lr_warmup_frames // (num_envs * num_steps)
-lr_warmup_frames: null              # PRIMARY: env-frame warmup budget
+# Resolves to lr_warmup_steps 8533 on QMUL's 96 envs and 1600 on UCL's 512.
+lr_warmup_frames: 1.048576e8        # PRIMARY: env-frame warmup budget
 lr_warmup_steps: 0                  # LEGACY: linear warm-up before cosine LR decay (0 = disabled)
 
 # ── Rollout (shared by offline + online) ─────────────────────────────────────
-num_envs: 1024
-num_steps: 64
+num_envs: 1024                      # overridden per cluster: 96 QMUL, 512 UCL
+num_steps: 128
 num_minibatches: 8
-update_epochs: 4
+update_epochs: 8
 num_repeats: 1                      # independent training seeds (vmapped)
 
 # ── Offline training (--mode offline) ────────────────────────────────────────
@@ -60,18 +86,21 @@ return_weight_cap: 5.0              # clip ceiling for per-window return weights
 
 # ── Online DAgger training (--mode online) ───────────────────────────────────
 # num_updates is derived as online_total_timesteps // (num_envs * num_steps).
-online_total_timesteps: null        # PRIMARY: env-frame budget
+online_total_timesteps: 1.0e+8      # PRIMARY: env-frame budget
 online_num_updates: 1000            # LEGACY: used only when online_total_timesteps is unset
 dagger_beta_init: 1.0               # initial expert mixing probability beta_1
 # dagger_beta_final is the env-frame-invariant source of truth: the target
 # mixing ratio at the end of training.  When set, it overrides
 # dagger_beta_decay via:  decay = (beta_final / beta_init) ** (1 / num_updates)
-dagger_beta_final: null             # PRIMARY: target final beta
+# Resolves to decay 0.9998689 over QMUL's 8138 updates, 0.9993005 over UCL's 1525.
+dagger_beta_final: 0.344            # PRIMARY: target final beta
 dagger_beta_decay: 0.95             # LEGACY: per-update decay  beta_i = beta_init * decay^i
 # dagger_buffer_cycles measures buffer capacity in *update cycles of history*
 # (1 cycle = num_envs * num_steps frames), invariant under num_envs.  When
 # set, it overrides dagger_buffer_max via:  buffer_max = cycles * fpu
-dagger_buffer_cycles: null          # PRIMARY: buffer capacity in update cycles
+# Resolves to 23,438 samples on QMUL, 125,000 on UCL. Whether the recipe wants
+# a fixed sample count or a fixed cycle count is an open question for the author.
+dagger_buffer_cycles: 1.90735       # PRIMARY: buffer capacity in update cycles
 dagger_buffer_max: 100000           # LEGACY: max samples in DAgger replay buffer
 # B1: passes per update over the aggregated buffer.  Each pass redraws a
 # fresh sample of size samples_per_update from D, so total samples seen
@@ -88,11 +117,11 @@ dagger_expert_deterministic: true
 # ── Validation rollouts ──────────────────────────────────────────────────────
 # val_interval_frames is the env-frame-invariant source of truth.  When set,
 # it overrides val_interval via:  val_interval = val_interval_frames // fpu
-val_interval_frames: null           # PRIMARY: env-frames between validations
+val_interval_frames: 1.0e+6         # PRIMARY: env-frames between validations
 val_interval: 50                    # LEGACY: update steps between validation rollouts
 val_diffusion_steps: 50             # denoising steps during validation
 val_replan_every: 4                 # env steps executed per diffusion plan
-val_steps: 128                      # total env steps per validation rollout
+val_steps: 256                      # total env steps per validation rollout
 
 # ── Data collection (--mode collect) ─────────────────────────────────────────
 collect_num_steps: 10000000

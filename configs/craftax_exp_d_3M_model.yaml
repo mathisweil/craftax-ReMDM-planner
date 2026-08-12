@@ -23,8 +23,6 @@ lr_warmup_frames: 7.86432e7         # = 300 update steps at this hardware (300 *
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 1240
-num_steps: 128
-update_epochs: 8
 
 # ── Offline training ─────────────────────────────────────────────────────────
 offline_total_timesteps: 2.0e+8
@@ -35,10 +33,16 @@ dagger_beta_final: 0.385            # 0.9995^1907 at this hardware; auto-resolve
 dagger_buffer_cycles: 0.76294       # ~200K samples on UCL = ~0.76 update cycles of history
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
-val_interval_frames: 1.0e+6
 val_diffusion_steps: 25
 val_replan_every: 2
-val_steps: 256
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 seed: 42
+
+# ── Baseline pins ────────────────────────────────────────────────────────────
+# defaults.yaml holds the final Classic recipe, not a neutral baseline. This
+# experiment predates that recipe and is defined against the original
+# baseline, so it pins the values it used to inherit. They are load-bearing:
+# removing them silently redefines this experiment.
+
+n_heads: 4

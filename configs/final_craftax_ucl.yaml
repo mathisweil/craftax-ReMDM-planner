@@ -3,34 +3,57 @@
 # Big transformer + full sampling recipe + slow beta decay.  Produces the Full
 # Craftax DAgger checkpoint used by the RL fine-tuning ablation suite.
 # -----------------------------------------------------------------------------
-# Inherits from `final_craftax_qmul.yaml`, which itself layers onto
-# configs/defaults.yaml.  Only the genuine UCL deltas live here.
+# configs/defaults.yaml holds the Classic recipe. Full Craftax departs from it
+# in eleven places, listed below, and those eleven are DUPLICATED verbatim in
+# final_craftax_qmul.yaml: with no inheritance between configs there is nowhere
+# else to put them. Only num_envs and seed genuinely differ between the two.
 #
-# The two clusters run the same recipe at different rollout widths, so the
-# "identical hyperparameters across clusters" invariant is now enforced by
-# inheritance rather than by keeping two files in step by hand.  Every
-# fairness-critical hyperparameter is denominated in env frames or update
-# cycles and is scaled to this hardware tier by resolve_scaled_hyperparams().
+# So: a Full Craftax hyperparameter change must be made in BOTH files. The
+# guard is test_craftax_siblings_differ_only_in_num_envs_and_seed, which fails
+# if they drift.
 #
-# Inherited values resolve differently here, because num_envs sets the frames
-# per update (448 * 128 = 57,344) that every env-frame budget divides by:
-#   lr_warmup_frames: 7.86432e7   -> lr_warmup_steps = 1371
-#   dagger_beta_final: 0.385      -> decay 0.9998175 over 5231 updates
-#   dagger_buffer_cycles: 0.76294 -> dagger_buffer_max = 43,750 samples
+# Fairness-critical hyperparameters are denominated in env frames or update
+# cycles, so resolve_scaled_hyperparams() rescales them to this rollout width
+# automatically. Resolves to num_updates = 5231, lr_warmup_steps = 1371,
+# dagger_buffer_max = 43,750, beta decay 0.9998175.
 #
-# The buffer is 43,750 samples, not the ~200K an earlier num_envs: 2048 gave.
-# Whether the recipe wants a fixed sample count or a fixed cycle count is an
-# open question for the author.  See the QMUL base for the lr_warmup_steps
-# units caveat, which applies to both files.
-#
-# These come from resolve_num_updates and resolve_scaled_hyperparams, not from
-# arithmetic done by hand, and are asserted by
-# test_final_configs_resolve_to_their_documented_quantities.
+# Units caveat: lr_warmup_steps is handed to optax as a *gradient*-step count,
+# while decay_steps is num_updates * update_epochs * num_minibatches. Read as
+# update steps a warmup can look as though it outlasts the run when it does
+# not. Open for the author; see PERF_DAGGER_RESULTS_CRAFTAX.md.
 # =============================================================================
-extends: final_craftax_qmul.yaml
+
+# ── Environment ──────────────────────────────────────────────────────────────
+env_name: "Craftax-Symbolic-v1"
+
+# ── Reverse sampling ─────────────────────────────────────────────────────────
+diffusion_steps: 25
+temperature: 0.3
+
+# ── Optimisation ─────────────────────────────────────────────────────────────
+lr: 5.0e-4
+# IDENTICAL to QMUL as a frame budget.  On this file's 448 envs it resolves to
+# lr_warmup_steps = 1371 against 334,784 gradient steps, i.e. update 21 of
+# 5231: far earlier than reading it as update steps would suggest.
+lr_warmup_frames: 7.86432e7         # -> lr_warmup_steps = 1371
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 448
+
+# ── Offline training ─────────────────────────────────────────────────────────
+offline_total_timesteps: 3.0e+8        # IDENTICAL to QMUL
+
+# ── Online DAgger training ───────────────────────────────────────────────────
+online_total_timesteps: 3.0e+8         # IDENTICAL to QMUL
+dagger_beta_final: 0.385            # resolves to decay 0.9998175 over 5231 updates
+# 0.76294 cycles * 57,344 fpu = 43,750 samples, not the ~200K an earlier
+# num_envs: 2048 gave.  Whether the recipe wants a fixed sample count or a
+# fixed cycle count is an open question for the author.
+dagger_buffer_cycles: 0.76294       # -> dagger_buffer_max = 43,750 samples
+
+# ── Validation rollouts ──────────────────────────────────────────────────────
+val_diffusion_steps: 25
+val_replan_every: 2
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 seed: 42

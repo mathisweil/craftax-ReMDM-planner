@@ -2,35 +2,28 @@
 # Final Full Craftax DAgger — QMUL H200 8 GB partition - EXP C - 15M model
 # Env-frame-matched second seed of final_craftax_ucl.yaml.
 # -----------------------------------------------------------------------------
-# This file is the shared base for the pair: `final_craftax_ucl.yaml` extends
-# it and restates only num_envs (448 vs 64 here) and seed (42 vs 43 here), so
-# the two clusters cannot drift apart on any other hyperparameter.
+# configs/defaults.yaml holds the Classic recipe. Full Craftax departs from it
+# in eleven places, listed below, and those eleven are DUPLICATED verbatim in
+# final_craftax_ucl.yaml: with no inheritance between configs there is nowhere
+# else to put them. Only num_envs and seed genuinely differ between the two.
 #
-# It carries only its deltas against configs/defaults.yaml.  All
-# fairness-critical hyperparameters are denominated in env frames or update
-# cycles, so they are AUTOMATICALLY scaled to this hardware tier by
-# resolve_scaled_hyperparams() — no manual derivation.
+# So: a Full Craftax hyperparameter change must be made in BOTH files. The
+# guard is test_craftax_siblings_differ_only_in_num_envs_and_seed, which fails
+# if they drift.
 #
-# Units caveat, applying to both files in the pair: lr_warmup_steps is handed
-# to optax as a *gradient*-step count, while decay_steps is
-# num_updates * update_epochs * num_minibatches.  Read as update steps a
-# warmup can look as though it outlasts the run when it does not.  The units
-# question is open for the author; see PERF_DAGGER_RESULTS_CRAFTAX.md.
+# Fairness-critical hyperparameters are denominated in env frames or update
+# cycles, so resolve_scaled_hyperparams() rescales them to this rollout width
+# automatically. Resolves to num_updates = 36,621, lr_warmup_steps = 9600,
+# dagger_buffer_max = 6,250, beta decay 0.9999739.
 #
-# The derived quantities quoted below come from resolve_num_updates and
-# resolve_scaled_hyperparams, not from arithmetic done by hand, and are
-# asserted by test_final_configs_resolve_to_their_documented_quantities.
+# Units caveat: lr_warmup_steps is handed to optax as a *gradient*-step count,
+# while decay_steps is num_updates * update_epochs * num_minibatches. Read as
+# update steps a warmup can look as though it outlasts the run when it does
+# not. Open for the author; see PERF_DAGGER_RESULTS_CRAFTAX.md.
 # =============================================================================
 
 # ── Environment ──────────────────────────────────────────────────────────────
 env_name: "Craftax-Symbolic-v1"
-
-# ── Transformer architecture ─────────────────────────────────────────────────
-d_model: 384
-n_heads: 8
-n_layers: 6
-d_ff: 768
-obs_encoder_width: 768
 
 # ── Reverse sampling ─────────────────────────────────────────────────────────
 diffusion_steps: 25
@@ -44,8 +37,6 @@ lr_warmup_frames: 7.86432e7         # -> lr_warmup_steps = 9600
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 64
-num_steps: 128
-update_epochs: 8
 
 # ── Offline training ─────────────────────────────────────────────────────────
 offline_total_timesteps: 3.0e+8        # IDENTICAL to UCL
@@ -59,10 +50,8 @@ dagger_beta_final: 0.385            # resolves to decay 0.9999739 over 36,621 up
 dagger_buffer_cycles: 0.76294       # -> dagger_buffer_max = 6,250 samples
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
-val_interval_frames: 1.0e+6
 val_diffusion_steps: 25
 val_replan_every: 2
-val_steps: 256
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 seed: 43

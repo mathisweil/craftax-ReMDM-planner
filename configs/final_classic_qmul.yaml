@@ -2,54 +2,21 @@
 # Final Craftax Classic DAgger — QMUL H200 8 GB partition (seed 43) - EXP B - 9M model
 # Env-frame-matched second seed of final_classic_ucl.yaml.
 # -----------------------------------------------------------------------------
-# This file is the shared base for the pair: `final_classic_ucl.yaml` extends
-# it and restates only num_envs (512 vs 96 here) and seed (42 vs 43 here), so
-# the two clusters cannot drift apart on any other hyperparameter.
+# The recipe itself lives in configs/defaults.yaml. Only what differs between
+# the two clusters lives here, which is the rollout width and the seed.
 #
-# It carries only its deltas against configs/defaults.yaml.  All
-# fairness-critical hyperparameters are denominated in env frames or update
-# cycles, so they are AUTOMATICALLY scaled to this hardware tier by
-# resolve_scaled_hyperparams() — no manual derivation.
+# Nothing enforces that this file and final_classic_ucl.yaml stay in step: the
+# guard is test_ucl_and_qmul_siblings_differ_only_in_num_envs_and_seed. A
+# hyperparameter change meant for both belongs in defaults.yaml, not here.
 #
-# Units caveat, applying to both files in the pair: lr_warmup_steps is handed
-# to optax as a *gradient*-step count, while decay_steps is
-# num_updates * update_epochs * num_minibatches.  Read as update steps a
-# warmup can look as though it outlasts the run when it does not.  The units
-# question is open for the author; see PERF_DAGGER_RESULTS_CRAFTAX.md.
-#
-# The derived quantities quoted below come from resolve_num_updates and
-# resolve_scaled_hyperparams, not from arithmetic done by hand, and are
-# asserted by test_final_configs_resolve_to_their_documented_quantities.
+# All fairness-critical hyperparameters are denominated in env frames or update
+# cycles, so resolve_scaled_hyperparams() rescales them to this rollout width
+# automatically. Resolves to num_updates = 8138, lr_warmup_steps = 8533,
+# dagger_buffer_max = 23,438, beta decay 0.9998689.
 # =============================================================================
-
-# ── Transformer architecture ─────────────────────────────────────────────────
-d_model: 384
-n_heads: 8
-n_layers: 6
-d_ff: 768
-obs_encoder_width: 768
-
-# ── Optimisation ─────────────────────────────────────────────────────────────
-# IDENTICAL to UCL as a frame budget.  On this file's 96 envs it resolves to
-# lr_warmup_steps = 8533 against 520,832 gradient steps: read as update steps
-# it would outlast num_updates = 8138, which is the units caveat above.
-lr_warmup_frames: 1.048576e8        # -> lr_warmup_steps = 8533
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 96                        # VRAM-tuned to ~6.5–7.5 GB; minibatch = 96*128/8 = 1536
-num_steps: 128
-update_epochs: 8
-
-# ── Online DAgger training ───────────────────────────────────────────────────
-online_total_timesteps: 1.0e+8
-dagger_beta_final: 0.344            # resolves to decay 0.9998689 over 8138 updates
-# 1.90735 cycles * 12,288 fpu = 23,438 samples.  Whether the recipe wants a
-# fixed sample count or a fixed cycle count is an open question for the author.
-dagger_buffer_cycles: 1.90735       # -> dagger_buffer_max = 23,438 samples
-
-# ── Validation rollouts ──────────────────────────────────────────────────────
-val_interval_frames: 1.0e+6
-val_steps: 256
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 seed: 43

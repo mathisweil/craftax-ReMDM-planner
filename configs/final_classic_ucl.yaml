@@ -3,31 +3,18 @@
 # Big transformer + slow beta decay. Produces the Classic DAgger checkpoint
 # used by the RL fine-tuning ablation suite.
 # -----------------------------------------------------------------------------
-# Inherits from `final_classic_qmul.yaml`, which itself layers onto
-# configs/defaults.yaml.  Only the genuine UCL deltas live here.
+# The recipe itself lives in configs/defaults.yaml. Only what differs between
+# the two clusters lives here, which is the rollout width and the seed.
 #
-# The two clusters run the same recipe at different rollout widths, so the
-# "identical hyperparameters across clusters" invariant is now enforced by
-# inheritance rather than by keeping two files in step by hand.  Every
-# fairness-critical hyperparameter is denominated in env frames or update
-# cycles and is scaled to this hardware tier by resolve_scaled_hyperparams().
+# Nothing enforces that this file and final_classic_qmul.yaml stay in step: the
+# guard is test_ucl_and_qmul_siblings_differ_only_in_num_envs_and_seed. A
+# hyperparameter change meant for both belongs in defaults.yaml, not here.
 #
-# Inherited values resolve differently here, because num_envs sets the frames
-# per update (512 * 128 = 65,536) that every env-frame budget divides by:
-#   lr_warmup_frames: 1.048576e8  -> lr_warmup_steps = 1600
-#   dagger_beta_final: 0.344      -> decay 0.9993005 over 1525 updates
-#   dagger_buffer_cycles: 1.90735 -> dagger_buffer_max = 125,000 samples
-#
-# The buffer is 125,000 samples, not the ~1M an earlier num_envs: 4096 gave.
-# Whether the recipe wants a fixed sample count or a fixed cycle count is an
-# open question for the author.  See the QMUL base for the lr_warmup_steps
-# units caveat, which applies to both files.
-#
-# These come from resolve_num_updates and resolve_scaled_hyperparams, not from
-# arithmetic done by hand, and are asserted by
-# test_final_configs_resolve_to_their_documented_quantities.
+# All fairness-critical hyperparameters are denominated in env frames or update
+# cycles, so resolve_scaled_hyperparams() rescales them to this rollout width
+# automatically. Resolves to num_updates = 1525, lr_warmup_steps = 1600,
+# dagger_buffer_max = 125,000, beta decay 0.9993005.
 # =============================================================================
-extends: final_classic_qmul.yaml
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 512
