@@ -6,8 +6,6 @@
 
 # ── Environment ──────────────────────────────────────────────────────────────
 env_name: "Craftax-Symbolic-v1"
-use_optimistic_resets: false
-optimistic_reset_ratio: 16
 
 # ── Transformer architecture ─────────────────────────────────────────────────
 d_model: 64
@@ -16,45 +14,25 @@ n_layers: 2
 d_ff: 128
 obs_encoder_layers: 1
 obs_encoder_width: 128
-dropout_rate: 0.1
-
-# ── Diffusion ────────────────────────────────────────────────────────────────
-plan_horizon: 32
-diffusion_schedule: "cosine"
-train_sigma: 0.0
-label_smoothing: 0.0
 
 # ── Reverse sampling ─────────────────────────────────────────────────────────
 diffusion_steps: 25
-diffusion_steps_eval: 10
-remask_strategy: "rescale"
-eta: 0.5
-use_loop: true
-t_on: 0.7
-t_off: 0.3
 temperature: 0.3
-top_p: 0.95
 
 # ── Optimisation ─────────────────────────────────────────────────────────────
 lr: 5.0e-4
-max_grad_norm: 1.0
 lr_warmup_frames: 7.86432e7         # = 300 update steps at this hardware (300 * 2048 * 128)
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 1536
 num_steps: 128
-num_minibatches: 8
 update_epochs: 8
-num_repeats: 1
 
 # ── Offline training ─────────────────────────────────────────────────────────
 offline_total_timesteps: 2.0e+8
-collect_temperature: 1.0
-return_weight_cap: 5.0
 
 # ── Online DAgger training ───────────────────────────────────────────────────
 online_total_timesteps: 2.0e+8
-dagger_beta_init: 1.0
 dagger_beta_final: 0.385            # 0.9995^1907 at this hardware; auto-resolves per fpu
 dagger_buffer_cycles: 0.76294       # ~200K samples on UCL = ~0.76 update cycles of history
 
@@ -64,21 +42,5 @@ val_diffusion_steps: 25
 val_replan_every: 2
 val_steps: 256
 
-# ── Data collection ──────────────────────────────────────────────────────────
-collect_num_steps: 10000000
-collect_num_envs: 128
-ppo_model_type: "ppo_rnn"
-layer_size: 512
-
-# ── Inference ────────────────────────────────────────────────────────────────
-eval_steps: 10000
-eval_num_envs: 32
-
-# ── Checkpointing ────────────────────────────────────────────────────────────
-save_policy: true
-
 # ── Logging ──────────────────────────────────────────────────────────────────
 seed: 42
-use_wandb: true
-wandb_project: craftax-ReMDM-planner
-wandb_entity: myopic-planner

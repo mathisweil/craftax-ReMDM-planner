@@ -2,92 +2,39 @@
 # Final Craftax Classic DAgger — QMUL H200 8 GB partition (seed 43) - EXP B - 9M model
 # Env-frame-matched second seed of final_classic_ucl.yaml.
 # -----------------------------------------------------------------------------
-# Identical to final_classic_ucl.yaml except for num_envs (96 vs 4096) and
-# seed (43 vs 42).  All fairness-critical hyperparameters are now denominated
-# in env frames or update cycles, so they are AUTOMATICALLY scaled to this
-# hardware tier by resolve_scaled_hyperparams() — no manual derivation.
+# This file is the shared base for the pair: `final_classic_ucl.yaml` extends
+# it and restates only num_envs (512 vs 96 here) and seed (42 vs 43 here), so
+# the two clusters cannot drift apart on any other hyperparameter.
+#
+# It carries only its deltas against configs/defaults.yaml.  All
+# fairness-critical hyperparameters are denominated in env frames or update
+# cycles, so they are AUTOMATICALLY scaled to this hardware tier by
+# resolve_scaled_hyperparams() — no manual derivation.
 # =============================================================================
-
-# ── Environment ──────────────────────────────────────────────────────────────
-env_name: "Craftax-Classic-Symbolic-v1"
-use_optimistic_resets: false
-optimistic_reset_ratio: 16
 
 # ── Transformer architecture ─────────────────────────────────────────────────
 d_model: 384
 n_heads: 8
 n_layers: 6
 d_ff: 768
-obs_encoder_layers: 2
 obs_encoder_width: 768
-dropout_rate: 0.1
-
-# ── Diffusion ────────────────────────────────────────────────────────────────
-plan_horizon: 32
-diffusion_schedule: "cosine"
-train_sigma: 0.0
-label_smoothing: 0.0
-
-# ── Reverse sampling ─────────────────────────────────────────────────────────
-diffusion_steps: 15
-diffusion_steps_eval: 10
-remask_strategy: "rescale"
-eta: 0.5
-use_loop: true
-t_on: 0.7
-t_off: 0.3
-temperature: 0.5
-top_p: 0.95
 
 # ── Optimisation ─────────────────────────────────────────────────────────────
-lr: 3.0e-4
-max_grad_norm: 1.0
 lr_warmup_frames: 1.048576e8        # IDENTICAL to UCL; resolves to 8533 update steps on 96 envs
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 96                        # VRAM-tuned to ~6.5–7.5 GB; minibatch = 96*128/8 = 1536
 num_steps: 128
-num_minibatches: 8
 update_epochs: 8
-num_repeats: 1
-
-# ── Offline training ─────────────────────────────────────────────────────────
-offline_total_timesteps: 1.0e+8
-collect_temperature: 1.0
-return_weight_cap: 5.0
 
 # ── Online DAgger training ───────────────────────────────────────────────────
 online_total_timesteps: 1.0e+8
-dagger_beta_init: 1.0
 dagger_beta_final: 0.344
 dagger_buffer_cycles: 1.90735
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
 val_interval_frames: 1.0e+6
-val_diffusion_steps: 50
-val_replan_every: 4
 val_steps: 256
-
-# ── Data collection ──────────────────────────────────────────────────────────
-collect_num_steps: 10000000
-collect_num_envs: 128
-ppo_model_type: "ppo_rnn"
-layer_size: 512
-
-# ── Inference ────────────────────────────────────────────────────────────────
-eval_steps: 10000
-eval_num_envs: 32
-
-# ── Checkpointing ────────────────────────────────────────────────────────────
-save_policy: true
-
-# ── Resume ───────────────────────────────────────────────────────────────────
-resume_checkpoint_path: null
-resume_wandb_run_id: null
-resume_step: null
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 seed: 43
-use_wandb: true
-wandb_project: craftax-ReMDM-planner
-wandb_entity: myopic-planner
