@@ -38,7 +38,13 @@ top_p: 0.95
 # ── Optimisation ─────────────────────────────────────────────────────────────
 lr: 3.0e-4
 max_grad_norm: 1.0
-lr_warmup_frames: 1.048576e8        # = 200 update steps at this hardware (200 * 4096 * 128)
+# 1.048576e8 frames / (512 * 128) = 1600, against num_updates = 1525: read as
+# update steps the warmup outlasts the whole run.  It does not, because
+# lr_warmup_steps is handed to optax as a *gradient*-step count while
+# decay_steps is num_updates * update_epochs * num_minibatches, so the warmup
+# ends at gradient step 1600, i.e. update 25 of 1525 (~1.6M frames, not
+# 104.9M).  See PERF_DAGGER_RESULTS_CRAFTAX.md; open for the author.
+lr_warmup_frames: 1.048576e8        # -> lr_warmup_steps = 1600
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 512
@@ -56,7 +62,10 @@ return_weight_cap: 5.0
 online_total_timesteps: 1.0e+8
 dagger_beta_init: 1.0
 dagger_beta_final: 0.344            # 0.9993^1525 at this hardware; auto-resolves per fpu
-dagger_buffer_cycles: 1.90735       # ~1M samples on UCL = ~1.91 update cycles of history
+# 1.90735 cycles * 65536 fpu = 125,000 samples, not the ~1M an earlier
+# num_envs: 4096 gave.  Whether the recipe wants a fixed sample count or a
+# fixed cycle count is an open question for the author.
+dagger_buffer_cycles: 1.90735       # -> dagger_buffer_max = 125,000 samples
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
 val_interval_frames: 1.0e+6

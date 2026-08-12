@@ -20,6 +20,7 @@ from conftest import (
     SEED,
     SRC_MODULES,
     import_or_skip,
+    load_config,
 )
 
 
@@ -375,6 +376,75 @@ def test_dagger_sizing_defaults_to_one_train_pass(real_config) -> None:
     assert sizing["max_buffer_size"] == 400
 
     assert dagger_sizing({**config, "DAGGER_TRAIN_PASSES": 4}, 10)["n_train_passes"] == 4
+
+
+# Derived quantities the four shipped final configs' comments now quote.
+# Every one comes from resolve_num_updates + resolve_scaled_hyperparams, not
+# from arithmetic done by hand. The comments went stale once already: they
+# described a num_envs the files no longer set, overstating the DAgger buffer
+# by 4.6x and 8x and naming an update count off by 1.8x.
+FINAL_CONFIG_DERIVATIONS = {
+    "configs/final_classic_ucl.yaml": {
+        "NUM_ENVS": 512,
+        "NUM_UPDATES": 1525,
+        "LR_WARMUP_STEPS": 1600,
+        "DAGGER_BUFFER_MAX": 125_000,
+    },
+    "configs/final_craftax_ucl.yaml": {
+        "NUM_ENVS": 448,
+        "NUM_UPDATES": 3487,
+        "LR_WARMUP_STEPS": 1371,
+        "DAGGER_BUFFER_MAX": 43_750,
+    },
+    "configs/final_classic_qmul.yaml": {
+        "NUM_ENVS": 96,
+        "NUM_UPDATES": 8138,
+        "LR_WARMUP_STEPS": 8533,
+        "DAGGER_BUFFER_MAX": 23_438,
+    },
+    "configs/final_craftax_qmul.yaml": {
+        "NUM_ENVS": 64,
+        "NUM_UPDATES": 24_414,
+        "LR_WARMUP_STEPS": 9600,
+        "DAGGER_BUFFER_MAX": 6_250,
+    },
+}
+
+
+@pytest.mark.parametrize("config_path", sorted(FINAL_CONFIG_DERIVATIONS))
+def test_final_configs_resolve_to_their_documented_quantities(config_path: str) -> None:
+    from src.planners.common import resolve_num_updates, resolve_scaled_hyperparams
+
+    config = {**load_config("configs/defaults.yaml"), **load_config(config_path)}
+    resolve_num_updates(config, "online")
+    resolve_scaled_hyperparams(config, "online")
+
+    for key, expected in FINAL_CONFIG_DERIVATIONS[config_path].items():
+        assert int(config[key]) == expected, (
+            f"{config_path}: {key} resolves to {config[key]}, not {expected}. "
+            "Update the config's comments in the same change."
+        )
+
+
+@pytest.mark.parametrize("config_path", sorted(FINAL_CONFIG_DERIVATIONS))
+def test_lr_warmup_is_shorter_than_the_cosine_horizon(config_path: str) -> None:
+    """optax rejects warmup_steps >= decay_steps, and the runners pass
+    decay_steps = num_updates * update_epochs * num_minibatches while passing
+    lr_warmup_steps unconverted. Two of these configs set a warmup that
+    outlasts the run when read as update steps, so this guards the units the
+    runners actually use rather than the ones the names suggest."""
+    from src.planners.common import resolve_num_updates, resolve_scaled_hyperparams
+
+    config = {**load_config("configs/defaults.yaml"), **load_config(config_path)}
+    resolve_num_updates(config, "online")
+    resolve_scaled_hyperparams(config, "online")
+
+    grad_steps = (
+        int(config["NUM_UPDATES"])
+        * int(config["UPDATE_EPOCHS"])
+        * int(config["NUM_MINIBATCHES"])
+    )
+    assert int(config["LR_WARMUP_STEPS"]) < grad_steps
 
 
 def test_compile_and_run_separates_compile_from_execute() -> None:

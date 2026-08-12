@@ -2,7 +2,7 @@
 # Final Craftax Classic DAgger — QMUL H200 8 GB partition (seed 43) - EXP B - 9M model
 # Env-frame-matched second seed of final_classic_ucl.yaml.
 # -----------------------------------------------------------------------------
-# Identical to final_classic_ucl.yaml except for num_envs (96 vs 4096) and
+# Identical to final_classic_ucl.yaml except for num_envs (96 vs 512) and
 # seed (43 vs 42).  All fairness-critical hyperparameters are now denominated
 # in env frames or update cycles, so they are AUTOMATICALLY scaled to this
 # hardware tier by resolve_scaled_hyperparams() — no manual derivation.
@@ -42,7 +42,10 @@ top_p: 0.95
 # ── Optimisation ─────────────────────────────────────────────────────────────
 lr: 3.0e-4
 max_grad_norm: 1.0
-lr_warmup_frames: 1.048576e8        # IDENTICAL to UCL; resolves to 8533 update steps on 96 envs
+# IDENTICAL to UCL.  Resolves to lr_warmup_steps = 8533 on 96 envs, against
+# num_updates = 8138: read as update steps the warmup outlasts the run.  It is
+# in fact consumed as a gradient-step count (see final_classic_ucl.yaml).
+lr_warmup_frames: 1.048576e8        # -> lr_warmup_steps = 8533
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 96                        # VRAM-tuned to ~6.5–7.5 GB; minibatch = 96*128/8 = 1536
@@ -59,8 +62,8 @@ return_weight_cap: 5.0
 # ── Online DAgger training ───────────────────────────────────────────────────
 online_total_timesteps: 1.0e+8
 dagger_beta_init: 1.0
-dagger_beta_final: 0.344
-dagger_buffer_cycles: 1.90735
+dagger_beta_final: 0.344            # resolves to decay 0.9998689 over 8138 updates
+dagger_buffer_cycles: 1.90735       # -> dagger_buffer_max = 23,438 samples
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
 val_interval_frames: 1.0e+6
