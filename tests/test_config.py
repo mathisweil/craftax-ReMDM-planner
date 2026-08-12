@@ -200,6 +200,24 @@ def test_ablation_missing_base_raises_naming_both_files(tmp_path) -> None:
     assert "orphan.yaml" in str(excinfo.value)
 
 
+def test_ablation_suite_sees_the_main_defaults() -> None:
+    """run_ablations layers configs/defaults.yaml under the ablations config.
+
+    Keys that live only there would otherwise be absent from the suite's
+    config entirely. jax_compilation_cache_dir is the one with teeth: the
+    suite reads it to enable the persistent XLA cache, so dropping
+    defaults.yaml from the chain would silently disable caching rather than
+    fail, and every (ablation, seed) would recompile from scratch.
+    """
+    defaults = yaml.safe_load(_DEFAULTS.read_text())
+    abl = yaml.safe_load(_ABL_DEFAULT.read_text())
+    assert "jax_compilation_cache_dir" in defaults
+    assert "jax_compilation_cache_dir" not in abl
+
+    merged = {**defaults, **_load_ablation_config(str(_ABL_DEFAULT))}
+    assert "jax_compilation_cache_dir" in merged
+
+
 # ---------------------------------------------------------------------------
 # the fast overlay stays outside the chain
 # ---------------------------------------------------------------------------

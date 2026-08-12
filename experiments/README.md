@@ -54,6 +54,19 @@ Any file given to `--ablations-config` layers on top of `ablations_default.yaml`
 
 **Presets hold only deltas, never restate a default.** A key belongs in a machine config only if its value differs from `ablations_default.yaml`. Restating a default silently pins the preset when the base later moves.
 
+#### Compilation cache
+
+The suite is the workload the persistent XLA cache helps most. Each `(ablation, seed)` builds its own `jax.jit` closure, so nothing is reused within a process, yet the graph is identical across the seeds of one ablation: only the PRNG key differs, and that is a runtime argument. With `num_seeds: 3` that makes two runs in three a cache hit, and the same applies to reruns and to the per-GPU processes of the `--merge` workflow.
+
+It is off unless `jax_compilation_cache_dir` is set, and the key reaches the suite through `configs/defaults.yaml` at the bottom of the chain above. Point it at local disk, not an NFS home. `run_ablations.py` has no `--override`, so set it in `configs/defaults.yaml`:
+
+```yaml
+# configs/defaults.yaml
+jax_compilation_cache_dir: /var/tmp/your-user/jax-cache
+```
+
+The cache is keyed on the lowered HLO, so a hit is bit-identical to a miss: it changes no numerics.
+
 ### Usage
 
 The pretrained diffusion checkpoint can come from either offline training (`--mode offline`) or DAgger online training (`--mode online`) — the checkpoint format is identical. Use `--checkpoint` to point to it. For DAgger runs, either the final (`{env}-policy`) or best-validation (`{env}-policy-best`) artifact produced by `--mode online` can be consumed directly.

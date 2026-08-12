@@ -277,7 +277,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--fast",
         action="store_true",
-        help="Override max_iter=50, num_envs=16, eval_every=10 for smoke tests.",
+        help=(
+            "Smoke-test overlay: apply configs/ablations_fast.yaml "
+            "(max_iter=50, num_envs=16, eval_every=10 and 12 more) last."
+        ),
     )
     p.add_argument(
         "--analyze-only",
@@ -654,6 +657,17 @@ def main(argv: list[str] | None = None) -> None:
         parser.error("--checkpoint is required for training mode.")
     if not merged.get("PPO_CHECKPOINT_PATH"):
         parser.error("--ppo-checkpoint is required for training mode.")
+
+    # Enable the persistent XLA cache before the first compilation.  The suite
+    # is the workload it helps most: run_ablation builds a fresh jax.jit
+    # closure per (ablation, seed), so nothing is reused in-process, yet the
+    # graph is identical across seeds of one ablation -- only the PRNG key
+    # differs, and that is a runtime argument. Seeds 2..N are cache hits, as
+    # are reruns and the per-GPU processes of the --merge workflow.
+    # Off unless jax_compilation_cache_dir is set; see configs/defaults.yaml.
+    from main import configure_compilation_cache
+
+    configure_compilation_cache(merged)
 
     # Resolve wandb: artifact paths before any checkpoint loading
     from src.planners.model import resolve_checkpoint_path
