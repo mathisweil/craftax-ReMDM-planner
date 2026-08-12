@@ -717,7 +717,7 @@ def make_run_ablation(
     # Advantage params
     floor = config.get("RETURN_WEIGHT_FLOOR", 0.1)
     cap = config.get("RETURN_WEIGHT_CAP", 5.0)
-    win_thresh = config.get("WIN_THRESHOLD", 0.1)
+    win_thresh = config.get("WIN_THRESHOLD", 0.5)
     ema_decay = config.get("RUNNING_STATS_EMA_DECAY", 0.99)
 
     # Mixed replay
