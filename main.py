@@ -39,6 +39,12 @@ _CLI_CONFIG_KEYS = {
     "inference_output",
 }
 
+# Config-file-only key naming a base preset to inherit from.  Resolved and
+# stripped before the config dict is built, so it never reaches the namespace.
+# Deliberately excluded from the --override key set: inheritance is a property
+# of a file, not of a run.
+_EXTENDS_KEY = "extends"
+
 
 # =============================================================================
 # Parser
@@ -130,6 +136,45 @@ def _validate_keys(keys, allowed: set[str], source: str) -> None:
         )
 
 
+def _load_config_chain(path: pathlib.Path) -> list[tuple[pathlib.Path, dict]]:
+    """Load a config and its `extends` ancestors, base first.
+
+    `extends` names a base config, resolved relative to the file that declares
+    it; absolute paths are also accepted.  Later entries in the returned list
+    override earlier ones.
+    """
+    chain: list[tuple[pathlib.Path, dict]] = []
+    seen: set[pathlib.Path] = set()
+    current: pathlib.Path | None = path.resolve()
+
+    while current is not None:
+        if current in seen:
+            loop = " -> ".join(p.name for p, _ in chain)
+            raise ValueError(
+                f"Circular 'extends' chain in configs: {loop} -> {current.name}"
+            )
+        seen.add(current)
+        with open(current) as f:
+            raw = yaml.safe_load(f) or {}
+        chain.append((current, raw))
+
+        base = raw.get(_EXTENDS_KEY)
+        if not base:
+            break
+        base_path = pathlib.Path(base).expanduser()
+        if not base_path.is_absolute():
+            base_path = current.parent / base_path
+        base_path = base_path.resolve()
+        if not base_path.exists():
+            raise FileNotFoundError(
+                f"Base config '{base_path}' referenced by '{current}' does not exist"
+            )
+        current = base_path
+
+    chain.reverse()
+    return chain
+
+
 def _cast_override(key: str, raw: str, current) -> object:
     """Cast a CLI override string to the type of the current config value."""
     if isinstance(current, str):
@@ -195,16 +240,20 @@ def build_config() -> dict[str, Any]:
 
     # Smoke mode overlays configs/smoke.yaml on the defaults.  Only when the
     # user did not name their own --config, so an explicit config always wins.
+    # Either way the named file is loaded through its `extends` chain, so a
+    # preset that inherits from another preset layers base-first onto defaults.
+    overlay_path = None
     if args.mode == "smoke" and args.config == default_cfg:
-        with open(smoke_cfg) as f:
-            overlay = yaml.safe_load(f) or {}
-        _validate_keys(overlay, allowed, smoke_cfg)
-        yaml_cfg.update(overlay)
+        overlay_path = smoke_cfg
     elif args.config != default_cfg:
-        with open(args.config) as f:
-            overlay = yaml.safe_load(f) or {}
-        _validate_keys(overlay, allowed, args.config)
-        yaml_cfg.update(overlay)
+        overlay_path = args.config
+
+    if overlay_path is not None:
+        for source, overlay in _load_config_chain(pathlib.Path(overlay_path)):
+            _validate_keys(overlay, allowed | {_EXTENDS_KEY}, str(source))
+            yaml_cfg.update(
+                {k: v for k, v in overlay.items() if k != _EXTENDS_KEY}
+            )
 
     overrides = _parse_overrides(args.override)
     _validate_keys(overrides, allowed, "--override")
