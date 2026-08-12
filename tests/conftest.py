@@ -36,6 +36,7 @@ for _path in (ROOT, ROOT / "Craftax_Baselines"):
 
 import jax
 import jax.numpy as jnp
+import yaml
 
 SEED = 0
 NUM_ACTIONS = 5
@@ -92,18 +93,12 @@ def import_or_skip(module_name: str):
 def load_config(relative_path: str) -> dict:
     """Load a repo YAML config and upper-case its keys, as the runners do.
 
-    Follows `extends`, so a preset that inherits from another resolves exactly
-    as it does under main.build_config. Reading the file alone would silently
-    drop everything the preset inherits: a delta-only config such as
-    final_craftax_ucl.yaml would resolve against defaults.yaml rather than
-    against its base, giving derived quantities that no run would ever use.
+    Presets are a single layer over defaults.yaml, so reading the named file is
+    the whole story; callers that want a resolved config merge it onto the
+    defaults themselves.
     """
-    import main  # local: pulls in jax and the planners, so not at collection
-
-    merged: dict = {}
-    for _, raw in main._load_config_chain(ROOT / relative_path):
-        merged.update({k: v for k, v in raw.items() if k != "extends"})
-    return {k.upper(): v for k, v in merged.items()}
+    with open(ROOT / relative_path) as f:
+        return {k.upper(): v for k, v in (yaml.safe_load(f) or {}).items()}
 
 
 def run_entry_point(args: list[str], timeout: int = 120) -> subprocess.CompletedProcess:
