@@ -447,6 +447,41 @@ def test_lr_warmup_is_shorter_than_the_cosine_horizon(config_path: str) -> None:
     assert int(config["LR_WARMUP_STEPS"]) < grad_steps
 
 
+def test_snapshot_minibatch_matches_what_the_runners_use(real_config, capsys) -> None:
+    """Regression: print_config_snapshot derived the minibatch from fpu.
+
+    Both modes train on sliding windows, so a rollout of num_steps transitions
+    yields num_steps - plan_horizon + 1 windows per environment. offline.py:68
+    sets MINIBATCH_SIZE from that, and the DAgger training scan reshapes a
+    dataset of the same size. Deriving from fpu overstated the printed
+    minibatch by num_steps / valid_per_rollout.
+    """
+    from src.planners.common import (
+        dagger_sizing,
+        print_config_snapshot,
+        resolve_num_updates,
+        resolve_scaled_hyperparams,
+    )
+
+    config = {**real_config}
+    resolve_num_updates(config, "offline")
+    resolve_scaled_hyperparams(config, "offline")
+
+    sizing = dagger_sizing(config, config["NUM_UPDATES"])
+    expected = sizing["samples_per_update"] // config["NUM_MINIBATCHES"]
+    fpu_derived = (
+        config["NUM_STEPS"] * config["NUM_ENVS"] // config["NUM_MINIBATCHES"]
+    )
+    assert expected != fpu_derived, "pick a config where the two disagree"
+
+    print_config_snapshot(config, "offline")
+    out = capsys.readouterr().out
+
+    assert f"minibatch={expected}" in out
+    assert f"minibatch={fpu_derived}" not in out
+    assert f"samples_per_update  = {sizing['samples_per_update']:,}" in out
+
+
 def test_compile_and_run_separates_compile_from_execute() -> None:
     """Regression: the runners timed ``out = train_fn(rngs)`` with no block.
 

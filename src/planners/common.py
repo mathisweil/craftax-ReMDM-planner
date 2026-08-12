@@ -300,7 +300,14 @@ def print_config_snapshot(config: dict[str, Any], mode: str) -> None:
     """
     fpu = int(config["NUM_STEPS"]) * int(config["NUM_ENVS"])
     num_updates = int(config["NUM_UPDATES"])
-    minibatch = fpu // int(config["NUM_MINIBATCHES"])
+    # Both modes train on sliding windows, not on raw frames: a rollout of
+    # num_steps transitions yields num_steps - plan_horizon + 1 windows per
+    # environment (offline.py:57-67, dagger_sizing).  Deriving the minibatch
+    # from fpu instead overstated it by num_steps / valid_per_rollout, which is
+    # 32% at plan_horizon 32 and num_steps 128.
+    sizing = dagger_sizing(config, num_updates)
+    samples_per_update = sizing["samples_per_update"]
+    minibatch = samples_per_update // int(config["NUM_MINIBATCHES"])
     ts_key = f"{mode.upper()}_TOTAL_TIMESTEPS"
     total_frames = int(config[ts_key])
 
@@ -314,6 +321,7 @@ def print_config_snapshot(config: dict[str, Any], mode: str) -> None:
     print(f"    num_envs            = {config['NUM_ENVS']}")
     print(f"    num_steps           = {config['NUM_STEPS']}")
     print(f"    fpu (envs*steps)    = {fpu}")
+    print(f"    samples_per_update  = {samples_per_update:,}  (windows, not frames)")
     print(
         f"    num_minibatches     = {config['NUM_MINIBATCHES']}  (minibatch={minibatch})"
     )
@@ -337,8 +345,6 @@ def print_config_snapshot(config: dict[str, Any], mode: str) -> None:
         beta_decay = float(config["DAGGER_BETA_DECAY"])
         final_beta = beta_init * beta_decay**num_updates
         # Derived exactly as the runner derives them; see dagger_sizing.
-        sizing = dagger_sizing(config, num_updates)
-        samples_per_update = sizing["samples_per_update"]
         buffer_max = sizing["max_buffer_size"]
         n_passes = sizing["n_train_passes"]
         cycles = buffer_max / fpu
@@ -365,7 +371,6 @@ def print_config_snapshot(config: dict[str, Any], mode: str) -> None:
         print(
             f"    {'buffer size (effective)':<24} = {buffer_max:,}  (~{cycles:.2f} update cycles){cap_note}"
         )
-        print(f"    {'samples_per_update':<24} = {samples_per_update:,}")
         print(f"    {'dagger_train_passes':<24} = {n_passes}  ({passes_tag})")
         print(f"    {'dagger_expert_determ':<24} = {expert_det}")
         print(f"    {'total_grad_steps':<24} = {total_grad_steps:,}")
