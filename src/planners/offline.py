@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import time
 from typing import Any
 
 import jax
@@ -15,6 +14,8 @@ import wandb
 from src.diffusion.schedules import SCHEDULE_MAP
 
 from .common import (
+    compile_and_run,
+    format_timing,
     make_grad_step,
     make_validate,
     print_config_snapshot,
@@ -369,12 +370,8 @@ def run_offline_diffusion(config):
 
     train_fn = jax.jit(jax.vmap(make_train_offline_diffusion(config)))
 
-    t0 = time.time()
-    out = train_fn(rngs)
-    elapsed = time.time() - t0
-    print(
-        f"Time: {elapsed:.1f}s  SPS: {config['OFFLINE_TOTAL_TIMESTEPS'] / elapsed:.0f}"
-    )
+    out, timing = compile_and_run(train_fn, rngs, config["OFFLINE_TOTAL_TIMESTEPS"])
+    print(format_timing(timing))
 
     if config["USE_WANDB"] and config["SAVE_POLICY"]:
         train_states = out["runner_state"][0]

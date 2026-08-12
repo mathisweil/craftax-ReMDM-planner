@@ -482,6 +482,47 @@ def test_snapshot_minibatch_matches_what_the_runners_use(real_config, capsys) ->
     assert f"samples_per_update  = {sizing['samples_per_update']:,}" in out
 
 
+@pytest.mark.parametrize("config_path", sorted(FINAL_CONFIG_DERIVATIONS))
+def test_offline_and_dagger_stay_compute_matched(config_path: str, capsys) -> None:
+    """The BC baseline's whole purpose: same updates, same gradient steps.
+
+    common.py:22 resolves NUM_UPDATES for both modes and dagger_sizing documents
+    DAGGER_TRAIN_PASSES=1 as the thing that keeps the per-update gradient work
+    equal. Both final config pairs set the two frame budgets equal.
+    """
+    from src.planners.common import (
+        print_config_snapshot,
+        resolve_num_updates,
+        resolve_scaled_hyperparams,
+    )
+
+    base = {**load_config("configs/defaults.yaml"), **load_config(config_path)}
+    assert int(float(base["OFFLINE_TOTAL_TIMESTEPS"])) == int(
+        float(base["ONLINE_TOTAL_TIMESTEPS"])
+    ), "the two budgets must match or the baseline is not compute-matched"
+
+    snapshots = {}
+    for mode in ("offline", "online"):
+        config = {**base}
+        resolve_num_updates(config, mode)
+        resolve_scaled_hyperparams(config, mode)
+        print_config_snapshot(config, mode)
+        out = capsys.readouterr().out
+        grad_steps = (
+            config["NUM_UPDATES"]
+            * config["UPDATE_EPOCHS"]
+            * config["NUM_MINIBATCHES"]
+        )
+        snapshots[mode] = (config["NUM_UPDATES"], grad_steps)
+        assert "total_grad_steps" in out
+        assert f"= {grad_steps:,}" in out
+
+    assert snapshots["offline"] == snapshots["online"], (
+        f"{config_path}: offline {snapshots['offline']} vs "
+        f"online {snapshots['online']}"
+    )
+
+
 def test_compile_and_run_separates_compile_from_execute() -> None:
     """Regression: the runners timed ``out = train_fn(rngs)`` with no block.
 
