@@ -119,7 +119,7 @@ def stage(staging: Path, models: dict[Path, list[int]]) -> list[dict[str, str]]:
 
 def model_card(repo_id: str, rows: list[dict[str, str]]) -> str:
     header = (
-        "| Path | Role | Environment | Architecture | Latest step | Training | Size |\n"
+        "| Path | Role | Environment | Architecture | Selected at | Training | Size |\n"
         "|---|---|---|---|---|---|---|\n"
     )
     table = header + "".join(
@@ -141,7 +141,7 @@ tags:
 - orbax
 ---
 
-# ReMDM Planner — Craftax checkpoints
+# ReMDM Planner: Craftax checkpoints
 
 Trained weights accompanying *{PAPER}*: a remasking discrete diffusion model
 (ReMDM) used as an action-sequence planner in

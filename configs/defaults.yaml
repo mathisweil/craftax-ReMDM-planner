@@ -112,6 +112,14 @@ resume_checkpoint_path: null        # accepts wandb: refs
 resume_wandb_run_id: null           # auto-read from checkpoint metadata if null
 resume_step: null                   # auto-read from checkpoint metadata if null
 
+# ── XLA ──────────────────────────────────────────────────────────────────────
+# Persistent compilation cache.  Compiling the online DAgger graph costs ~52 s
+# on a 4070 Ti, and every separately-launched seed and every ablation entry
+# pays it again.  The cache key is the HLO, so this changes no numerics.
+# Point it at LOCAL disk: on an NFS home the cache costs more than the compile
+# it replaces.  null = disabled (JAX's own default).
+jax_compilation_cache_dir: null
+
 # ── Logging ──────────────────────────────────────────────────────────────────
 seed: null                          # random if not set
 use_wandb: true

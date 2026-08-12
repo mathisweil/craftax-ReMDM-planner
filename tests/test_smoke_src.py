@@ -16,9 +16,11 @@ from conftest import (
     NUM_ACTIONS,
     OBS_DIM,
     PLAN_HORIZON,
+    ROOT,
     SEED,
     SRC_MODULES,
     import_or_skip,
+    load_config,
 )
 
 
@@ -376,6 +378,138 @@ def test_dagger_sizing_defaults_to_one_train_pass(real_config) -> None:
     assert dagger_sizing({**config, "DAGGER_TRAIN_PASSES": 4}, 10)["n_train_passes"] == 4
 
 
+# Derived quantities the four shipped final configs' comments now quote.
+# Every one comes from resolve_num_updates + resolve_scaled_hyperparams, not
+# from arithmetic done by hand. The comments went stale once already: they
+# described a num_envs the files no longer set, overstating the DAgger buffer
+# by 4.6x and 8x and naming an update count off by 1.8x.
+FINAL_CONFIG_DERIVATIONS = {
+    "configs/final_classic_ucl.yaml": {
+        "NUM_ENVS": 512,
+        "NUM_UPDATES": 1525,
+        "LR_WARMUP_STEPS": 1600,
+        "DAGGER_BUFFER_MAX": 125_000,
+    },
+    "configs/final_craftax_ucl.yaml": {
+        "NUM_ENVS": 448,
+        "NUM_UPDATES": 3487,
+        "LR_WARMUP_STEPS": 1371,
+        "DAGGER_BUFFER_MAX": 43_750,
+    },
+    "configs/final_classic_qmul.yaml": {
+        "NUM_ENVS": 96,
+        "NUM_UPDATES": 8138,
+        "LR_WARMUP_STEPS": 8533,
+        "DAGGER_BUFFER_MAX": 23_438,
+    },
+    "configs/final_craftax_qmul.yaml": {
+        "NUM_ENVS": 64,
+        "NUM_UPDATES": 24_414,
+        "LR_WARMUP_STEPS": 9600,
+        "DAGGER_BUFFER_MAX": 6_250,
+    },
+}
+
+
+@pytest.mark.parametrize("config_path", sorted(FINAL_CONFIG_DERIVATIONS))
+def test_final_configs_resolve_to_their_documented_quantities(config_path: str) -> None:
+    from src.planners.common import resolve_num_updates, resolve_scaled_hyperparams
+
+    config = {**load_config("configs/defaults.yaml"), **load_config(config_path)}
+    resolve_num_updates(config, "online")
+    resolve_scaled_hyperparams(config, "online")
+
+    for key, expected in FINAL_CONFIG_DERIVATIONS[config_path].items():
+        assert int(config[key]) == expected, (
+            f"{config_path}: {key} resolves to {config[key]}, not {expected}. "
+            "Update the config's comments in the same change."
+        )
+
+
+@pytest.mark.parametrize("config_path", sorted(FINAL_CONFIG_DERIVATIONS))
+def test_lr_warmup_is_shorter_than_the_cosine_horizon(config_path: str) -> None:
+    """optax rejects warmup_steps >= decay_steps, and the runners pass
+    decay_steps = num_updates * update_epochs * num_minibatches while passing
+    lr_warmup_steps unconverted. Two of these configs set a warmup that
+    outlasts the run when read as update steps, so this guards the units the
+    runners actually use rather than the ones the names suggest."""
+    from src.planners.common import resolve_num_updates, resolve_scaled_hyperparams
+
+    config = {**load_config("configs/defaults.yaml"), **load_config(config_path)}
+    resolve_num_updates(config, "online")
+    resolve_scaled_hyperparams(config, "online")
+
+    grad_steps = (
+        int(config["NUM_UPDATES"])
+        * int(config["UPDATE_EPOCHS"])
+        * int(config["NUM_MINIBATCHES"])
+    )
+    assert int(config["LR_WARMUP_STEPS"]) < grad_steps
+
+
+def test_compile_and_run_separates_compile_from_execute() -> None:
+    """Regression: the runners timed ``out = train_fn(rngs)`` with no block.
+
+    JAX dispatch is asynchronous, so that call returns once compilation is done
+    and the work is enqueued. The reported SPS therefore divided total frames
+    by a duration that excluded nearly all of the execution.
+    """
+    from src.planners.common import compile_and_run
+
+    @jax.jit
+    def train_fn(x):
+        def body(c, _):
+            return jnp.tanh(c @ c) * 1.0001, None
+
+        out, _ = jax.lax.scan(body, x, None, 200)
+        return out
+
+    x = jnp.eye(64, dtype=jnp.float32) * 0.5
+
+    out, timing = compile_and_run(train_fn, x, total_frames=1000)
+
+    assert _finite(out)
+    assert set(timing) == {
+        "compile_s",
+        "execute_s",
+        "total_s",
+        "sps_execute",
+        "sps_total",
+    }
+    assert timing["compile_s"] > 0.0
+    assert timing["execute_s"] > 0.0
+    # The execute leg is blocked, so it is real time, not dispatch time.
+    assert timing["total_s"] == pytest.approx(
+        timing["compile_s"] + timing["execute_s"]
+    )
+    assert timing["sps_total"] < timing["sps_execute"]
+
+
+def test_format_timing_reports_both_legs() -> None:
+    from src.planners.common import format_timing
+
+    text = format_timing(
+        {
+            "compile_s": 52.0,
+            "execute_s": 3600.0,
+            "total_s": 3652.0,
+            "sps_execute": 27_000.0,
+            "sps_total": 26_600.0,
+        }
+    )
+    assert "Compile: 52.0s" in text
+    assert "Execute: 3600.0s" in text
+    assert "27000 (execute)" in text
+    assert "26600 (including compile)" in text
+
+
+def test_online_runner_no_longer_reports_one_fused_time() -> None:
+    """The old shape printed a single ``Time: ...s  SPS: ...`` line."""
+    source = (ROOT / "src" / "planners" / "online.py").read_text()
+    assert "compile_and_run" in source
+    assert 'f"Time: {elapsed' not in source
+
+
 def test_snapshot_reports_the_gradient_steps_that_actually_run(real_config, capsys) -> None:
     """Regression: print_config_snapshot used to derive n_train_passes as
     ``buffer_max // samples_per_update`` while the runner used 1, overstating
@@ -421,6 +555,33 @@ def test_validate_config_requires_checkpoints() -> None:
 
     main_module.validate_config({"MODE": "offline", "PPO_CHECKPOINT_PATH": "x"})
     main_module.validate_config({"MODE": "inference", "CHECKPOINT_PATH": "x"})
+
+
+def test_compilation_cache_is_opt_in_and_creates_its_directory(tmp_path) -> None:
+    import main as main_module
+
+    assert main_module.configure_compilation_cache({}) is None
+    assert main_module.configure_compilation_cache({"JAX_COMPILATION_CACHE_DIR": None}) is None
+
+    target = tmp_path / "nested" / "jax-cache"
+    try:
+        resolved = main_module.configure_compilation_cache(
+            {"JAX_COMPILATION_CACHE_DIR": str(target)}
+        )
+        assert resolved == str(target)
+        assert target.is_dir()
+        assert jax.config.jax_compilation_cache_dir == str(target)
+    finally:
+        # Session-wide config; leave it as the rest of the suite expects.
+        jax.config.update("jax_compilation_cache_dir", None)
+
+
+def test_defaults_config_declares_the_compilation_cache_key(real_config: dict) -> None:
+    """main.py reads it, so defaults.yaml must declare it or --override rejects it."""
+    assert "JAX_COMPILATION_CACHE_DIR" in real_config
+    assert real_config["JAX_COMPILATION_CACHE_DIR"] is None, (
+        "the shipped default must be off: the right path is machine-specific"
+    )
 
 
 def test_dispatch_table_covers_every_mode() -> None:

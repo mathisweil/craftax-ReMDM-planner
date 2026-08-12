@@ -403,6 +403,24 @@ Controlled by the `remask_strategy` key. All strategies operate on top of the th
 | `wandb_project` | `remdm-craftax` | W&B project name |
 | `wandb_entity` | (author's) | W&B entity |
 | `wandb_download_dir` | `null` | Download dir for W&B artifacts; null = `./artifacts/` |
+| `jax_compilation_cache_dir` | `null` | Persistent XLA compilation cache; null = off. See below |
+
+### Persistent compilation cache
+
+The whole training run is one `jax.jit`, so every process pays a single large
+compilation before any work happens: about 52 s for `final_classic_ucl.yaml` on
+a 4070 Ti. Multi-seed runs launched as separate processes, resumed runs and the
+RL fine-tuning ablation suite all repeat it. Setting `jax_compilation_cache_dir`
+makes the second and later runs of the same graph skip it.
+
+The cache is keyed on the lowered HLO, so a hit is bit-identical to a miss; it
+changes no numerics. Point it at local disk, not an NFS home:
+
+```bash
+python main.py --mode online --ppo-checkpoint <ppo> \
+    --config configs/final_classic_ucl.yaml \
+    --override jax_compilation_cache_dir=/var/tmp/$USER/jax-cache
+```
 
 ## Environment wrappers
 

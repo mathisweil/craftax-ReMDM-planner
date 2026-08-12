@@ -7,6 +7,7 @@ duplication.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -17,6 +18,66 @@ import optax
 from src.diffusion.loss import compute_loss
 from src.diffusion.sampling import sample_plan
 from src.diffusion.schedules import ScheduleFn
+
+
+def compile_and_run(
+    train_fn: Callable,
+    args: Any,
+    total_frames: int,
+) -> tuple[Any, dict[str, float]]:
+    """Compile a jitted training function, then run it, timing each separately.
+
+    The runners used to time ``out = train_fn(rngs)`` alone.  That measures
+    neither the thing it claimed nor anything useful: JAX dispatch is
+    asynchronous, so the call returns once compilation has finished and the
+    work is enqueued, and the reported "SPS" divided total frames by a number
+    that excludes almost all of the execution.  Blocking is what makes the
+    number mean something, and splitting compile from execute is what makes it
+    comparable across configs and across hardware.
+
+    Args:
+        train_fn:     A ``jax.jit``-wrapped training function of one argument.
+        args:         The argument to trace, compile and run against.
+        total_frames: Environment frames the run consumes, for the SPS figures.
+
+    Returns:
+        ``(out, timing)`` where ``timing`` carries ``compile_s``, ``execute_s``,
+        ``total_s``, ``sps_execute`` and ``sps_total``.
+    """
+    t0 = time.time()
+    compiled = train_fn.lower(args).compile()
+    compile_s = time.time() - t0
+
+    t0 = time.time()
+    out = jax.block_until_ready(compiled(args))
+    execute_s = time.time() - t0
+
+    total_s = compile_s + execute_s
+    return out, {
+        "compile_s": compile_s,
+        "execute_s": execute_s,
+        "total_s": total_s,
+        "sps_execute": total_frames / max(execute_s, 1e-9),
+        "sps_total": total_frames / max(total_s, 1e-9),
+    }
+
+
+def format_timing(timing: dict[str, float]) -> str:
+    """Render :func:`compile_and_run`'s timing dict as a two-line log banner.
+
+    Args:
+        timing: The dict returned by :func:`compile_and_run`.
+
+    Returns:
+        A printable string.
+    """
+    return (
+        f"Compile: {timing['compile_s']:.1f}s  "
+        f"Execute: {timing['execute_s']:.1f}s  "
+        f"Total: {timing['total_s']:.1f}s\n"
+        f"SPS: {timing['sps_execute']:.0f} (execute)  "
+        f"{timing['sps_total']:.0f} (including compile)"
+    )
 
 
 def resolve_num_updates(config: dict[str, Any], mode: str) -> None:
