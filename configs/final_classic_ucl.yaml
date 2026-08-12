@@ -12,13 +12,20 @@
 # fairness-critical hyperparameter is denominated in env frames or update
 # cycles and is scaled to this hardware tier by resolve_scaled_hyperparams().
 #
-# Inherited values whose UCL reading differs from the QMUL one:
-#   lr_warmup_frames: 1.048576e8  = 200 update steps at this hardware
-#                                   (200 * 4096 * 128)
-#   dagger_beta_final: 0.344      0.9993^1525 at this hardware; auto-resolves
-#                                   per fpu
-#   dagger_buffer_cycles: 1.90735 ~1M samples on UCL = ~1.91 update cycles of
-#                                   history
+# Inherited values resolve differently here, because num_envs sets the frames
+# per update (512 * 128 = 65,536) that every env-frame budget divides by:
+#   lr_warmup_frames: 1.048576e8  -> lr_warmup_steps = 1600
+#   dagger_beta_final: 0.344      -> decay 0.9993005 over 1525 updates
+#   dagger_buffer_cycles: 1.90735 -> dagger_buffer_max = 125,000 samples
+#
+# The buffer is 125,000 samples, not the ~1M an earlier num_envs: 4096 gave.
+# Whether the recipe wants a fixed sample count or a fixed cycle count is an
+# open question for the author.  See the QMUL base for the lr_warmup_steps
+# units caveat, which applies to both files.
+#
+# These come from resolve_num_updates and resolve_scaled_hyperparams, not from
+# arithmetic done by hand, and are asserted by
+# test_final_configs_resolve_to_their_documented_quantities.
 # =============================================================================
 extends: final_classic_qmul.yaml
 

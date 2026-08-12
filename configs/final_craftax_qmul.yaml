@@ -10,6 +10,16 @@
 # fairness-critical hyperparameters are denominated in env frames or update
 # cycles, so they are AUTOMATICALLY scaled to this hardware tier by
 # resolve_scaled_hyperparams() — no manual derivation.
+#
+# Units caveat, applying to both files in the pair: lr_warmup_steps is handed
+# to optax as a *gradient*-step count, while decay_steps is
+# num_updates * update_epochs * num_minibatches.  Read as update steps a
+# warmup can look as though it outlasts the run when it does not.  The units
+# question is open for the author; see PERF_DAGGER_RESULTS_CRAFTAX.md.
+#
+# The derived quantities quoted below come from resolve_num_updates and
+# resolve_scaled_hyperparams, not from arithmetic done by hand, and are
+# asserted by test_final_configs_resolve_to_their_documented_quantities.
 # =============================================================================
 
 # ── Environment ──────────────────────────────────────────────────────────────
@@ -28,7 +38,9 @@ temperature: 0.3
 
 # ── Optimisation ─────────────────────────────────────────────────────────────
 lr: 5.0e-4
-lr_warmup_frames: 7.86432e7         # IDENTICAL to UCL; resolves to 1600 update steps on 384 envs
+# IDENTICAL to UCL as a frame budget.  On this file's 64 envs it resolves to
+# lr_warmup_steps = 9600 against 1,562,496 gradient steps.
+lr_warmup_frames: 7.86432e7         # -> lr_warmup_steps = 9600
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 64
@@ -40,8 +52,11 @@ offline_total_timesteps: 2.0e+8        # IDENTICAL to UCL
 
 # ── Online DAgger training ───────────────────────────────────────────────────
 online_total_timesteps: 2.0e+8         # IDENTICAL to UCL
-dagger_beta_final: 0.385            # IDENTICAL to UCL; resolves to 0.99990623 decay on 384 envs
-dagger_buffer_cycles: 0.76294       # IDENTICAL to UCL; resolves to ~37500 samples on 384 envs
+dagger_beta_final: 0.385            # resolves to decay 0.9999609 over 24,414 updates
+# 0.76294 cycles * 8192 fpu = 6,250 samples, not the ~37,500 an earlier
+# num_envs: 384 gave.  Whether the recipe wants a fixed sample count or a
+# fixed cycle count is an open question for the author.
+dagger_buffer_cycles: 0.76294       # -> dagger_buffer_max = 6,250 samples
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
 val_interval_frames: 1.0e+6

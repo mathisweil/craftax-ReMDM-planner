@@ -10,6 +10,16 @@
 # fairness-critical hyperparameters are denominated in env frames or update
 # cycles, so they are AUTOMATICALLY scaled to this hardware tier by
 # resolve_scaled_hyperparams() — no manual derivation.
+#
+# Units caveat, applying to both files in the pair: lr_warmup_steps is handed
+# to optax as a *gradient*-step count, while decay_steps is
+# num_updates * update_epochs * num_minibatches.  Read as update steps a
+# warmup can look as though it outlasts the run when it does not.  The units
+# question is open for the author; see PERF_DAGGER_RESULTS_CRAFTAX.md.
+#
+# The derived quantities quoted below come from resolve_num_updates and
+# resolve_scaled_hyperparams, not from arithmetic done by hand, and are
+# asserted by test_final_configs_resolve_to_their_documented_quantities.
 # =============================================================================
 
 # ── Transformer architecture ─────────────────────────────────────────────────
@@ -20,7 +30,10 @@ d_ff: 768
 obs_encoder_width: 768
 
 # ── Optimisation ─────────────────────────────────────────────────────────────
-lr_warmup_frames: 1.048576e8        # IDENTICAL to UCL; resolves to 8533 update steps on 96 envs
+# IDENTICAL to UCL as a frame budget.  On this file's 96 envs it resolves to
+# lr_warmup_steps = 8533 against 520,832 gradient steps: read as update steps
+# it would outlast num_updates = 8138, which is the units caveat above.
+lr_warmup_frames: 1.048576e8        # -> lr_warmup_steps = 8533
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 96                        # VRAM-tuned to ~6.5–7.5 GB; minibatch = 96*128/8 = 1536
@@ -29,8 +42,10 @@ update_epochs: 8
 
 # ── Online DAgger training ───────────────────────────────────────────────────
 online_total_timesteps: 1.0e+8
-dagger_beta_final: 0.344
-dagger_buffer_cycles: 1.90735
+dagger_beta_final: 0.344            # resolves to decay 0.9998689 over 8138 updates
+# 1.90735 cycles * 12,288 fpu = 23,438 samples.  Whether the recipe wants a
+# fixed sample count or a fixed cycle count is an open question for the author.
+dagger_buffer_cycles: 1.90735       # -> dagger_buffer_max = 23,438 samples
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
 val_interval_frames: 1.0e+6
