@@ -698,7 +698,7 @@ def run_online(config: dict[str, Any]) -> dict[str, Any]:
     if config.get("USE_WANDB"):
         init_wandb(
             config,
-            name=f"{config['ENV_NAME']}-OnlineDiffusion-DAgger-{int(config['ONLINE_TOTAL_TIMESTEPS'] // 1e6)}M",
+            name=f"{config['ENV_NAME']}-Online-Diffusion-DAgger-{int(config['ONLINE_TOTAL_TIMESTEPS'] // 1e6)}M",
             resume_run_id=config.get("RESUME_WANDB_RUN_ID"),
         )
 

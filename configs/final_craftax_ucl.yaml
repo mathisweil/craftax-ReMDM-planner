@@ -41,10 +41,10 @@ lr_warmup_frames: 7.86432e7         # -> lr_warmup_steps = 1371
 num_envs: 448
 
 # ── Offline training ─────────────────────────────────────────────────────────
-offline_total_timesteps: 3.0e+8        # IDENTICAL to QMUL
+offline_total_timesteps: 1.0e+8        # IDENTICAL to QMUL
 
 # ── Online DAgger training ───────────────────────────────────────────────────
-online_total_timesteps: 3.0e+8         # IDENTICAL to QMUL
+online_total_timesteps: 1.0e+8         # IDENTICAL to QMUL
 dagger_beta_final: 0.385            # resolves to decay 0.9998175 over 5231 updates
 # 0.76294 cycles * 57,344 fpu = 43,750 samples, not the ~200K an earlier
 # num_envs: 2048 gave.  Whether the recipe wants a fixed sample count or a
