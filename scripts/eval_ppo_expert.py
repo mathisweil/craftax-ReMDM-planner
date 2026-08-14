@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate a committed PPO expert checkpoint (C-006(b); E-004, F-005).
+"""Evaluate a committed PPO expert checkpoint.
 
 Mirrors the first-episode protocol of ``src/planners/inference.py``: N
 vectorised environments stepped for M steps, per-env return, episode length

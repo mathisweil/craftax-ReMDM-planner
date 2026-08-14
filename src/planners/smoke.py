@@ -226,8 +226,8 @@ def run_smoke(config: dict[str, Any]) -> None:
 def _smoke_inference_leg(out, config, num_actions, obs_shape) -> None:
     """Exercise the corrected inference-time sampler on the trained params.
 
-    FIX-2 (ADJUDICATION B-3) rebuilt ``sample_plan_inpainting`` on the
-    conforming ReMDM Algorithm 1 core; without this leg a smoke run would
+    ``sample_plan_inpainting`` is built on the conforming ReMDM
+    Algorithm 1 core; without this leg a smoke run would
     silently bypass the inference code path (it trains and validates via
     ``run_online`` only). Fails loudly on MASK leakage or a violated
     prefix lock.

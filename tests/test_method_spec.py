@@ -85,7 +85,7 @@ def test_cosine_schedule_closed_form():
 
 
 def test_schedule_registry_names_follow_mdlm_e1():
-    """The label "cosine" must denote MDLM eq (92) (ADJUDICATION B-6)."""
+    """The label "cosine" must denote MDLM eq (92), not eq (91)."""
     fn, deriv = SCHEDULE_MAP["cosine"]
     assert abs(float(fn(jnp.array(0.5))) - math.sqrt(2) / 2) < ATOL
     assert abs(float(deriv(jnp.array(0.5))) + (math.pi / 2) * math.sqrt(2) / 2) < ATOL
@@ -184,7 +184,7 @@ def test_loss_invalid_samples_contribute_zero():
 def test_loss_denominator_is_per_token_not_per_masked():
     """E[loss] at pinned t=0.5 (cosine) = w(0.5) * log V * (1 - alpha),
     which distinguishes the per-token denominator (1/H) from the
-    pre-FIX-1 per-masked-count denominator, whose expectation is
+    per-masked-count denominator, whose expectation is
     w(0.5) * log V (3.41x larger here).
 
     Source: MDLM eq (8)/(10); Shi eq (4) (no division by the realised
@@ -271,8 +271,8 @@ def test_prefix_lock_survives_loop_mode_chain():
     mode and the conf strategy active, and the output contains no MASK.
 
     Source: planning-as-inpainting (Diffuser Sec 3.3: conditioned values
-    are fixed throughout denoising) on top of ReMDM Alg 1 / Sec 4.2 loop
-    (FIX-2). Uses a uniform-logits stub model.
+    are fixed throughout denoising) on top of ReMDM Alg 1 / Sec 4.2 loop.
+    Uses a uniform-logits stub model.
     """
     B, H, V = 3, 8, 5
     fn, _ = SCHEDULE_MAP["cosine"]

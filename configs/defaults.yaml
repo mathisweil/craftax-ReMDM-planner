@@ -23,7 +23,7 @@
 # Units caveat: lr_warmup_steps is handed to optax as a *gradient*-step count,
 # while decay_steps is num_updates * update_epochs * num_minibatches. Read as
 # update steps a warmup can look as though it outlasts the run when it does
-# not. Open for the author; see PERF_DAGGER_RESULTS_CRAFTAX.md.
+# not. Open question for the author.
 # =============================================================================
 
 # ── Environment ──────────────────────────────────────────────────────────────

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Exact parameter counts for committed model configs (C-006(c); E-011, D13, F-056).
+"""Exact parameter counts for committed model configs.
 
 Instantiates each config through the repo's own build path (build_model +
 init_params) and prints name, architecture fields and the exact parameter
 count. With --verify-checkpoint, additionally restores an Orbax checkpoint
-via load_checkpoint and asserts its parameter count equals the config's
-(the D16 known-number gate).
+via load_checkpoint and asserts its parameter count equals the config's.
 
 Usage:
   uv run python scripts/count_params.py
@@ -81,7 +80,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--configs", nargs="+", default=DEFAULT_CONFIGS)
     ap.add_argument("--verify-checkpoint", type=str, default=None,
-                    help="Orbax checkpoint dir to restore and count (D16 gate).")
+                    help="Orbax checkpoint dir to restore and count against the config.")
     ap.add_argument("--config", type=str, default=None,
                     help="Config matching --verify-checkpoint.")
     a = ap.parse_args()
@@ -110,9 +109,9 @@ def main() -> None:
         print(f"\ncheckpoint {a.verify_checkpoint}: {n_ckpt:,d} params")
         print(f"config     {a.config}: {r['params']:,d} params")
         if n_ckpt == r["params"]:
-            print("D16 GATE: PASS (checkpoint parameter count equals config count)")
+            print("PARAM COUNT GATE: PASS (checkpoint parameter count equals config count)")
         else:
-            print("D16 GATE: FAIL (counts differ)")
+            print("PARAM COUNT GATE: FAIL (counts differ)")
             raise SystemExit(1)
 
 

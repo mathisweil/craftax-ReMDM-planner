@@ -111,9 +111,8 @@ def sample_plan(
 
     Implements ReMDM Algorithm 1 (Wang et al.): per-token Bernoulli
     unmasking via the approximate posterior, remasking w.p. sigma from the
-    Section 4.1 schedules, optional Section 4.2 loop mode. Shared
-    pseudocode lines 8-12 (METHOD_PARITY 2.1); the minihack twin is
-    src/diffusion/sampling.py:remdm_sample.
+    Section 4.1 schedules, optional Section 4.2 loop mode. The
+    minihack twin is src/diffusion/sampling.py:remdm_sample.
 
     When ``history``/``hist_len`` are given, positions ``0..hist_len[b]-1``
     are locked to ``history`` (Diffuser-style inpainting): never remasked,
@@ -256,11 +255,10 @@ def sample_plan_inpainting(
     full ReMDM Algorithm 1 sampler with the configured Section 4.1
     remasking schedule.
 
-    FIX-2 (ADJUDICATION B-3): this previously hardcoded
-    ``remask_prob = 0.15 * (1 - ratio)`` — ignoring ``remask_strategy``,
-    ``eta`` and the loop parameters — and re-decided committed tokens
-    every step, violating SUBS carry-over. It now shares the conforming
-    sampler core.
+    Shares the conforming ReMDM sampler core: the configured
+    ``remask_strategy``, ``eta`` and loop parameters govern remasking,
+    and committed tokens are carried over per SUBS rather than
+    re-decided at every step.
 
     Returns:
         ``[B, plan_horizon]`` int32 completed action plan.

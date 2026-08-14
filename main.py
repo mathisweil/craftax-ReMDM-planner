@@ -90,7 +90,7 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--output", type=str, default=None,
-        help="Optional JSON path for machine-readable inference results (C-006).",
+        help="Optional JSON path for machine-readable inference results.",
     )
 
     p.add_argument(
