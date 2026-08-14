@@ -230,10 +230,6 @@ texture_cache*.pbz2
 # Macbook specific
 .DS_Store
 
-#Claude specific
-.claude/
-CLAUDE.md
-
 # Chekpoints
 checkpoints/
 checkpoints_*/
