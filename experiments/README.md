@@ -8,7 +8,7 @@ These scripts are **standalone research code** — they import from `src/` but d
 ## `rl_finetuning/` — RL Fine-Tuning Ablation Suite
 
 Diagnoses why RL fine-tuning of the diffusion model collapses and which interventions fix it.
-Implements **25 ablations** across four groups, plus a comprehensive diagnostic and analysis pipeline.
+Implements **25 ablations**: a baseline plus four groups (A: Regularisation, B: Training Signal, C: Architecture, D: Data Quality), with a comprehensive diagnostic and analysis pipeline.
 
 ### Directory structure
 
