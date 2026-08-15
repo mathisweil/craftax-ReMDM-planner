@@ -59,18 +59,9 @@ def test_unknown_override_key_is_an_error():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "traceability §8.6: the craftax ablation suite merges unknown "
-        "config keys silently (run_ablations.py:102-146); the canonical "
-        "chain semantics (spec-ablations §1.1) require KeyError, as the "
-        "minihack suite already implements"
-    ),
-)
 def test_ablation_suite_rejects_unknown_config_keys(tmp_path):
     """An unknown key in an ablation config must raise KeyError
-    (spec-ablations §1.1: 'unknown key = KeyError')."""
+    (spec-ablations §1.1: 'unknown key = KeyError'; was defect §8.6)."""
     from experiments.rl_finetuning.run_ablations import _load_ablation_config
 
     bogus = tmp_path / "bogus.yaml"

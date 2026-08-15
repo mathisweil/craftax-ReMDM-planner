@@ -122,6 +122,14 @@ def _load_ablation_config(path: str | None) -> dict:
         return raw
 
     merged = dict(_load_yaml(str(_DEFAULT_ABLATIONS_CONFIG)))
+    # A typo is an error, not a silent no-op (spec-ablations §1.1;
+    # the minihack suite has validated since inception - was §8.6).
+    unknown = sorted(set(raw) - set(merged))
+    if unknown:
+        raise KeyError(
+            f"Unknown config key(s) {unknown} in {resolved.name}. "
+            f"Valid keys are defined in {_DEFAULT_ABLATIONS_CONFIG.name}."
+        )
     merged.update(raw)
     logger.info(
         "Ablation config: %s -> %s",
