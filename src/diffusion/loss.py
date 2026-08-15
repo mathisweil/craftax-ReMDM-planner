@@ -37,6 +37,7 @@ def compute_loss(
     advantages: jnp.ndarray | None = None,
     t_min: float | jax.Array = _EPS,
     t_max: float | jax.Array = 1.0,
+    return_intermediates: bool = False,
 ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
     """Continuous-time ELBO loss on masked positions only.
 
@@ -55,6 +56,11 @@ def compute_loss(
         advantages:        Optional [B] per-sample weights.
         t_min:             Lower bound for uniform t sampling (default: _EPS).
         t_max:             Upper bound for uniform t sampling (default: 1.0).
+        return_intermediates: Also return the forward pass under
+                           ``info["intermediates"]`` (``logits``, ``z_t``,
+                           ``t``, ``drop_rng``) so a caller can add a
+                           penalty term at the same noised sample instead
+                           of drawing its own.
 
     Returns:
         (loss, info_dict).
@@ -132,4 +138,11 @@ def compute_loss(
     if advantages is not None:
         info["adv_mean"] = jnp.mean(advantages)
         info["adv_std"] = jnp.std(advantages)
+    if return_intermediates:
+        info["intermediates"] = {
+            "logits": logits,
+            "z_t": z_t,
+            "t": t,
+            "drop_rng": drop_rng,
+        }
     return loss, info

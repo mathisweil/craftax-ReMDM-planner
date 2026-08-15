@@ -17,7 +17,6 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
-from src.diffusion.forward import forward_process
 from src.diffusion.loss import compute_loss
 from src.diffusion.schedules import ScheduleFn
 
@@ -85,7 +84,47 @@ def _core_loss(
     Returns:
         Scalar loss value.
     """
-    loss, _ = compute_loss(
+    loss, _ = _core_loss_with_forward(
+        ctx, params, rng, acts, obs, valid, advantages, t_min, t_max
+    )
+    return loss
+
+
+def _core_loss_with_forward(
+    ctx: LossContext,
+    params: Any,
+    rng: jax.Array,
+    acts: jnp.ndarray,
+    obs: jnp.ndarray,
+    valid: jnp.ndarray,
+    advantages: jnp.ndarray | None,
+    t_min: float | jax.Array = _EPS,
+    t_max: float | jax.Array = 1.0,
+) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
+    """``_core_loss`` that also returns the ELBO's forward pass.
+
+    Penalty terms (KL, entropy, trust region) are defined at the same
+    noised sample as the ELBO, so they reuse ``logits``/``z_t``/``t``
+    from here instead of drawing an independent ``t`` and running a
+    second gradient-tracked forward - the minihack twin shares the pass
+    the same way (PARITY 'Ablation-suite mechanics').
+
+    Args:
+        ctx:        Shared loss context.
+        params:     Current model parameters.
+        rng:        PRNG key.
+        acts:       ``[B, H]`` int32 action sequences.
+        obs:        ``[B, obs_dim]`` float32 observations.
+        valid:      ``[B]`` validity mask.
+        advantages: Optional ``[B]`` advantage weights.
+        t_min:      Lower bound for uniform t sampling.
+        t_max:      Upper bound for uniform t sampling.
+
+    Returns:
+        ``(loss, intermediates)`` where intermediates holds ``logits``,
+        ``z_t``, ``t`` and ``drop_rng``.
+    """
+    loss, info = compute_loss(
         ctx.apply_fn,
         params,
         rng,
@@ -100,43 +139,43 @@ def _core_loss(
         advantages=advantages,
         t_min=t_min,
         t_max=t_max,
+        return_intermediates=True,
     )
-    return loss
+    return loss, info["intermediates"]
 
 
 def _kl_penalty(
     ctx: LossContext,
-    params: Any,
-    rng: jax.Array,
-    acts: jnp.ndarray,
-    obs: jnp.ndarray,
+    intermediates: dict[str, jnp.ndarray],
     valid: jnp.ndarray,
+    obs: jnp.ndarray,
 ) -> jnp.ndarray:
     """KL divergence KL(current || pretrained) on masked positions.
 
+    Evaluated at the ELBO's own noised sample (``z_t``, ``t``): the
+    current-model logits come from the shared forward pass, so only the
+    frozen reference model is run again.
+
     Args:
-        ctx:    Loss context (ref_params must be set).
-        params: Current model parameters.
-        rng:    PRNG key.
-        acts:   ``[B, H]`` int32 action sequences.
-        obs:    ``[B, obs_dim]`` float32 observations.
-        valid:  ``[B]`` validity mask.
+        ctx:           Loss context (ref_params must be set).
+        intermediates: Forward pass from ``_core_loss_with_forward``.
+        valid:         ``[B]`` validity mask.
+        obs:           ``[B, obs_dim]`` float32 observations.
 
     Returns:
         Scalar mean KL on masked positions.
     """
-    B = acts.shape[0]
-    rng, t_rng, mask_rng, drop_rng = jax.random.split(rng, 4)
-    t = jax.random.uniform(t_rng, (B,), minval=_EPS, maxval=1.0)
-    alpha_t = ctx.schedule_fn(t)
-    z_t = forward_process(mask_rng, acts, alpha_t, ctx.num_actions)
-
+    z_t, t = intermediates["z_t"], intermediates["t"]
     is_masked = (z_t == ctx.num_actions).astype(jnp.float32)
     valid_m = is_masked * valid[:, None].astype(jnp.float32)
 
-    cur_logits = ctx.apply_fn(params, obs, z_t, t, drop_rng)
+    cur_logits = intermediates["logits"]
     ref_logits = ctx.apply_fn(
-        jax.lax.stop_gradient(ctx.ref_params), obs, z_t, t, drop_rng
+        jax.lax.stop_gradient(ctx.ref_params),
+        obs,
+        z_t,
+        t,
+        intermediates["drop_rng"],
     )
     cur_log = jax.nn.log_softmax(cur_logits, axis=-1)
     ref_log = jax.nn.log_softmax(ref_logits, axis=-1)
@@ -149,36 +188,26 @@ def _kl_penalty(
 
 def _entropy_bonus(
     ctx: LossContext,
-    params: Any,
-    rng: jax.Array,
-    acts: jnp.ndarray,
-    obs: jnp.ndarray,
+    intermediates: dict[str, jnp.ndarray],
     valid: jnp.ndarray,
 ) -> jnp.ndarray:
     """Mean entropy of p_theta over masked positions.
 
+    Evaluated at the ELBO's own noised sample, reusing its logits.
+
     Args:
-        ctx:    Loss context.
-        params: Current model parameters.
-        rng:    PRNG key.
-        acts:   ``[B, H]`` int32 action sequences.
-        obs:    ``[B, obs_dim]`` float32 observations.
-        valid:  ``[B]`` validity mask.
+        ctx:           Loss context.
+        intermediates: Forward pass from ``_core_loss_with_forward``.
+        valid:         ``[B]`` validity mask.
 
     Returns:
         Scalar mean entropy.
     """
-    B = acts.shape[0]
-    rng, t_rng, mask_rng, drop_rng = jax.random.split(rng, 4)
-    t = jax.random.uniform(t_rng, (B,), minval=_EPS, maxval=1.0)
-    alpha_t = ctx.schedule_fn(t)
-    z_t = forward_process(mask_rng, acts, alpha_t, ctx.num_actions)
-
+    z_t = intermediates["z_t"]
     is_masked = (z_t == ctx.num_actions).astype(jnp.float32)
     valid_m = is_masked * valid[:, None].astype(jnp.float32)
 
-    logits = ctx.apply_fn(params, obs, z_t, t, drop_rng)  # [B, H, V]
-    log_probs = jax.nn.log_softmax(logits, axis=-1)
+    log_probs = jax.nn.log_softmax(intermediates["logits"], axis=-1)
     probs = jnp.exp(log_probs)
     entropy = -jnp.sum(probs * log_probs, axis=-1)  # [B, H]
 
@@ -247,9 +276,10 @@ def make_loss_kl_penalty(ctx: LossContext) -> LossFn:
     kl_coef = ctx.config.get("KL_COEF", 0.1)
 
     def loss_fn(params, acts, obs, valid, rng, advantages):
-        rng, kl_rng = jax.random.split(rng)
-        rl = _core_loss(ctx, params, rng, acts, obs, valid, advantages)
-        kl = _kl_penalty(ctx, params, kl_rng, acts, obs, valid)
+        rl, intermediates = _core_loss_with_forward(
+            ctx, params, rng, acts, obs, valid, advantages
+        )
+        kl = _kl_penalty(ctx, intermediates, valid, obs)
         return rl + kl_coef * kl
 
     return loss_fn
@@ -297,9 +327,10 @@ def make_loss_trust_region_kl(ctx: LossContext) -> LossFn:
     threshold = ctx.config.get("TRUST_REGION_KL", 0.05)
 
     def loss_fn(params, acts, obs, valid, rng, advantages):
-        rng, kl_rng = jax.random.split(rng)
-        rl = _core_loss(ctx, params, rng, acts, obs, valid, advantages)
-        kl = _kl_penalty(ctx, params, kl_rng, acts, obs, valid)
+        rl, intermediates = _core_loss_with_forward(
+            ctx, params, rng, acts, obs, valid, advantages
+        )
+        kl = _kl_penalty(ctx, intermediates, valid, obs)
         # Large quadratic penalty when KL exceeds threshold (barrier method)
         violation = jnp.maximum(kl - threshold, 0.0)
         return rl + 1e4 * violation**2
@@ -485,9 +516,10 @@ def make_loss_entropy_bonus(ctx: LossContext) -> LossFn:
     entropy_coef = ctx.config.get("ENTROPY_COEF", 0.01)
 
     def loss_fn(params, acts, obs, valid, rng, advantages):
-        rng, ent_rng = jax.random.split(rng)
-        rl = _core_loss(ctx, params, rng, acts, obs, valid, advantages)
-        entropy = _entropy_bonus(ctx, params, ent_rng, acts, obs, valid)
+        rl, intermediates = _core_loss_with_forward(
+            ctx, params, rng, acts, obs, valid, advantages
+        )
+        entropy = _entropy_bonus(ctx, intermediates, valid)
         return rl - entropy_coef * entropy
 
     return loss_fn

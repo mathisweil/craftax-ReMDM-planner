@@ -269,22 +269,64 @@ def test_kl_penalty_adds_coef_times_the_closed_form_kl():
 
 def test_kl_penalty_is_zero_when_current_equals_pretrained():
     """KL(p||p) = 0: with params == ref the penalty vanishes, so the
-    kl_penalty loss equals its own RL term (replicated with the
-    factory's deterministic RNG split)."""
+    kl_penalty loss equals its own RL term. The penalty shares the
+    ELBO's forward pass, so the RL term is the plain core loss at the
+    same RNG."""
     from experiments.rl_finetuning.ablations.losses import _core_loss
 
     ctx = _logit_ctx(_Q_LOGITS, {"KL_COEF": 0.1}, horizon=_KL_H)
     acts, _, valid = _batch(horizon=_KL_H)
     obs = jnp.zeros((B, OBS))
     rng = jax.random.PRNGKey(SEED)
-    core_rng, _ = jax.random.split(rng)
     got = float(
         make_loss_kl_penalty(ctx)(_Q_LOGITS, acts, obs, valid, rng, jnp.ones(B))
     )
-    want = float(
-        _core_loss(ctx, _Q_LOGITS, core_rng, acts, obs, valid, jnp.ones(B))
-    )
+    want = float(_core_loss(ctx, _Q_LOGITS, rng, acts, obs, valid, jnp.ones(B)))
     assert got == pytest.approx(want, abs=1e-6)
+
+
+def test_penalty_terms_share_the_elbo_forward_pass():
+    """The KL and entropy penalties are evaluated at the ELBO's own
+    noised sample, not at an independently drawn t (PARITY
+    'Ablation-suite mechanics'; the minihack twin shares the pass).
+
+    Counting model calls is the direct evidence: kl_penalty runs the
+    current model once (shared with the ELBO) plus the frozen
+    reference once, and entropy_bonus runs it once in total. An
+    independent draw would add a second current-model forward.
+    """
+    acts, _, valid = _batch(horizon=_KL_H)
+    obs = jnp.zeros((B, OBS))
+    rng = jax.random.PRNGKey(SEED)
+    seen: list[jax.Array] = []
+
+    def counting_ctx(config):
+        def apply_fn(params, obs_, z, t, key):
+            seen.append(t)
+            return jnp.broadcast_to(
+                params, (obs_.shape[0], _KL_H, params.shape[-1])
+            )
+
+        return LossContext(
+            apply_fn=apply_fn,
+            ref_params=jnp.asarray(_Q_LOGITS),
+            schedule_fn=LINEAR[0],
+            schedule_deriv_fn=LINEAR[1],
+            num_actions=_Q_LOGITS.shape[-1],
+            config=config,
+        )
+
+    make_loss_kl_penalty(counting_ctx({"KL_COEF": 0.1}))(
+        _P_LOGITS, acts, obs, valid, rng, jnp.ones(B)
+    )
+    assert len(seen) == 2, "kl_penalty must run current + reference once each"
+    assert jnp.allclose(seen[0], seen[1]), "both forwards must use the ELBO's t"
+
+    seen.clear()
+    make_loss_entropy_bonus(counting_ctx({"ENTROPY_COEF": 0.01}))(
+        _P_LOGITS, acts, obs, valid, rng, jnp.ones(B)
+    )
+    assert len(seen) == 1, "entropy_bonus must reuse the ELBO's logits"
 
 
 def test_trust_region_barrier_is_zero_below_and_quadratic_above():
@@ -302,14 +344,13 @@ def test_trust_region_barrier_is_zero_below_and_quadratic_above():
     acts, _, valid = _batch(horizon=_KL_H)
     obs = jnp.zeros((B, OBS))
     rng = jax.random.PRNGKey(SEED)
-    core_rng, _ = jax.random.split(rng)
 
     def barrier(cur_logits):
         ctx = _logit_ctx(_Q_LOGITS, {"TRUST_REGION_KL": 0.05}, horizon=_KL_H)
         total = float(
             make_loss_trust_region_kl(ctx)(cur_logits, acts, obs, valid, rng, jnp.ones(B))
         )
-        rl = float(_core_loss(ctx, cur_logits, core_rng, acts, obs, valid, jnp.ones(B)))
+        rl = float(_core_loss(ctx, cur_logits, rng, acts, obs, valid, jnp.ones(B)))
         return total - rl
 
     assert barrier(_Q_LOGITS) == pytest.approx(0.0, abs=1e-6)
