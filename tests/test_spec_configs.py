@@ -71,57 +71,6 @@ def test_ablation_suite_rejects_unknown_config_keys(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Dead config key layer_ablation_top_n (defect §8.7)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "traceability §8.7: layer_ablation_top_n is a dead key - the "
-        "registry's top-n comes from the factory closure, so the config "
-        "value has no effect (step 9 either wires the key or removes it; "
-        "delete this test if the key is removed)"
-    ),
-)
-def test_layer_ablation_top_n_key_controls_the_trainable_depth():
-    """Setting layer_ablation_top_n must change which transformer
-    blocks a layer-ablation optimizer trains (the key is documented in
-    the suite config; spec-ablations §2 layer_ablation row).
-
-    Method: apply layer_ablation_top1's optimizer to all-ones gradients
-    under LAYER_ABLATION_TOP_N = 1 vs 3 and compare the sets of
-    parameters that receive a non-zero update.
-    """
-    import jax.numpy as jnp
-
-    from experiments.rl_finetuning.ablations.registry import REGISTRY
-    from src.planners.model import build_model, init_params
-
-    config = {**TINY_ARCH, "N_LAYERS": 4, "WEIGHT_DECAY": 0.0}
-    model = build_model({**config, "PLAN_HORIZON": PLAN_HORIZON}, NUM_ACTIONS)
-    params = init_params(model, jax.random.PRNGKey(SEED), OBS_DIM, PLAN_HORIZON)
-    grads = jax.tree.map(jnp.ones_like, params)
-
-    def trainable_paths(top_n_value: int) -> frozenset[str]:
-        tx = REGISTRY["layer_ablation_top1"].optimizer_factory(
-            {**config, "LAYER_ABLATION_TOP_N": top_n_value}, params
-        )
-        state = tx.init(params)
-        updates, _ = tx.update(grads, state, params)
-        flat = jax.tree_util.tree_flatten_with_path(updates)[0]
-        return frozenset(
-            "/".join(str(k.key) for k in path)
-            for path, leaf in flat
-            if bool(jnp.any(leaf != 0))
-        )
-
-    assert trainable_paths(1) != trainable_paths(3), (
-        "layer_ablation_top_n had no effect on the trainable set"
-    )
-
-
-# ---------------------------------------------------------------------------
 # Checkpoint/config coupling (spec-config §6.1)
 # ---------------------------------------------------------------------------
 

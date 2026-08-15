@@ -119,10 +119,6 @@ entropy_coef: 0.01
 # Advantage clipping (PPO-style): clip ratios to [1-eps, 1+eps].
 adv_clip_eps: 0.2
 
-# ── Group C: Architecture / Parameter Isolation ───────────────────────────────
-# Layer ablation: how many top transformer layers to unfreeze.
-layer_ablation_top_n: 1       # used for layer_ablation_top1; overridden per spec
-
 # ── Group D: Reward / Data Quality ───────────────────────────────────────────
 # Reward filtering: only train on windows with return > percentile.
 reward_filter_percentile: 75
@@ -140,7 +136,6 @@ reward_model_train_steps: 50  # steps to train reward model per iteration
 use_wandb: false
 wandb_project: craftax-ReMDM-planner-ablations
 wandb_entity: myopic-planner
-save_checkpoints: false       # save final params for each ablation
 
 # ── Multi-seed ────────────────────────────────────────────────────────────────
 num_seeds: 1                  # run each ablation num_seeds times, report mean±std

@@ -803,8 +803,8 @@ def main(argv: list[str] | None = None) -> None:
             results_path,
         )
 
-    # (params not saved here to keep the results JSON small;
-    #  enable via save_checkpoints in the ablations config if needed)
+    # (params not saved here to keep the results JSON small; per-ablation
+    # checkpoint persistence is a pending parity item - see PARITY.md)
 
     logger.info("Running action distribution analysis...")
     rng, ad_rng = jax.random.split(rng)
