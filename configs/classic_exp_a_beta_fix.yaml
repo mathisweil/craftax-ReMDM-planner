@@ -6,19 +6,19 @@
 # =============================================================================
 
 # ── Optimisation ─────────────────────────────────────────────────────────────
-lr_warmup_steps: 200
+lr_warmup_frames: 1048576           # 2 updates x 128 grad steps = 256 (was lr_warmup_steps: 200)
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 4096
 num_minibatches: 16
 
 # ── Online DAgger training ───────────────────────────────────────────────────
-online_num_updates: 1500            # val plateaus by step 800
-dagger_beta_decay: 0.9993           # beta > 0.5 at step 990, > 0.1 at step 3290
-dagger_buffer_max: 1000000
+online_total_timesteps: 786432000   # 1500 updates x 524,288 fpu; val plateaus by step 800
+dagger_beta_final: 0.3498091105923036  # = 0.9993^1500; beta > 0.5 at step 990
+dagger_buffer_cycles: 1.9073486328125  # x 524,288 fpu = 1,000,000 samples
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
-val_interval: 30
+val_interval_frames: 15728640       # 30 updates x 524,288 fpu
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 seed: 42
@@ -34,13 +34,3 @@ n_heads: 4
 n_layers: 4
 d_ff: 512
 obs_encoder_width: 512
-
-# These PRIMARY env-frame keys override their LEGACY counterparts whenever
-# they are non-null. Held at null so this file's own settings stay
-# authoritative: lr_warmup_steps=200, online_num_updates=1500,
-# dagger_beta_decay=0.9993, dagger_buffer_max=1000000, val_interval=30
-lr_warmup_frames: null
-online_total_timesteps: null
-dagger_beta_final: null
-dagger_buffer_cycles: null
-val_interval_frames: null

@@ -1,7 +1,7 @@
 """Value-level pins for the canonical scientific recipe (step 8).
 
 Sources: research/spec-method.md §7 (method parameters), research/
-spec-config.md §2/§4/§5.2 (PRIMARY/LEGACY resolution, documented
+spec-config.md §2/§4/§5.2 (env-frame resolution, documented
 resolved quantities, Full-Craftax 11-key delta), research/traceability.md
 §3 (budget arithmetic). Every expected value is transcribed from those
 pinned loci or derived in the docstring — never read back from the

@@ -11,10 +11,10 @@
 #
 #   * Presets that predate this recipe pin the values they used to inherit,
 #     under a "Baseline pins" heading. Those pins are load-bearing.
-#   * Several keys below come in a PRIMARY / LEGACY pair. The PRIMARY,
-#     env-frame form silently wins whenever it is non-null, and five of them
-#     are non-null here. A preset that sets only the LEGACY form must pin the
-#     PRIMARY one to null or it will be ignored.
+#   * Fairness-critical schedule keys (budgets, warmup, beta target, buffer
+#     retention, validation cadence) are denominated in env frames or update
+#     cycles and rescaled to the actual rollout width at load time by
+#     resolve_num_updates / resolve_scaled_hyperparams.
 #
 # Derived quantities quoted below come from resolve_num_updates and
 # resolve_scaled_hyperparams, not from arithmetic done by hand, and are
@@ -62,16 +62,16 @@ top_p: 0.95
 # ── Optimisation ─────────────────────────────────────────────────────────────
 lr: 3.0e-4
 max_grad_norm: 1.0
-# lr_warmup_frames is the env-frame-denominated source of truth (invariant
-# under num_envs changes).  When set, it overrides lr_warmup_steps via:
-#   lr_warmup_steps = (lr_warmup_frames // fpu) * update_epochs
+# lr_warmup_frames is the env-frame-denominated warmup budget (invariant
+# under num_envs changes), converted to the gradient-step count optax
+# consumes via:
+#   LR_WARMUP_STEPS = (lr_warmup_frames // fpu) * update_epochs
 #                     * num_minibatches (* dagger_train_passes online)
-# i.e. gradient steps, the unit optax consumes. Canonical value
-# 1,638,400 frames (author decision 2026-08-15: the corrected effective
-# warmup; the earlier nominal 1.048576e8 exceeded the whole budget).
-# Resolves to 8512 gradient steps on QMUL's 96 envs, 1600 on UCL's 512.
-lr_warmup_frames: 1.6384e6          # PRIMARY: env-frame warmup budget
-lr_warmup_steps: 0                  # LEGACY: linear warm-up before cosine LR decay (0 = disabled)
+# Canonical value 1,638,400 frames (author decision 2026-08-15: the
+# corrected effective warmup; the earlier nominal 1.048576e8 exceeded the
+# whole budget). Resolves to 8512 gradient steps on QMUL's 96 envs, 1600
+# on UCL's 512. Set to 0 to disable warmup.
+lr_warmup_frames: 1.6384e6          # env-frame warmup budget
 
 # ── Rollout (shared by offline + online) ─────────────────────────────────────
 num_envs: 1024                      # overridden per cluster: 96 QMUL, 512 UCL
@@ -83,29 +83,25 @@ num_repeats: 1                      # independent training seeds (vmapped)
 # ── Offline training (--mode offline) ────────────────────────────────────────
 # num_updates is derived as offline_total_timesteps // (num_envs * num_steps),
 # so the env-frame budget is hardware-portable across num_envs changes.
-offline_total_timesteps: 1.0e+8     # PRIMARY: env-frame budget
-offline_num_updates: null           # LEGACY: used only when offline_total_timesteps is unset
+offline_total_timesteps: 1.0e+8     # env-frame budget
 collect_temperature: 1.0            # softmax temperature on PPO logits during data collection
 return_weight_cap: 5.0              # clip ceiling for per-window return weights
 
 # ── Online DAgger training (--mode online) ───────────────────────────────────
 # num_updates is derived as online_total_timesteps // (num_envs * num_steps).
-online_total_timesteps: 1.0e+8      # PRIMARY: env-frame budget
-online_num_updates: 1000            # LEGACY: used only when online_total_timesteps is unset
+online_total_timesteps: 1.0e+8      # env-frame budget
 dagger_beta_init: 1.0               # initial expert mixing probability beta_1
-# dagger_beta_final is the env-frame-invariant source of truth: the target
-# mixing ratio at the end of training.  When set, it overrides
-# dagger_beta_decay via:  decay = (beta_final / beta_init) ** (1 / num_updates)
+# dagger_beta_final is the env-frame-invariant target mixing ratio at the
+# end of training; the per-update decay is derived via:
+#   decay = (beta_final / beta_init) ** (1 / num_updates)
 # Resolves to decay 0.9998689 over QMUL's 8138 updates, 0.9993005 over UCL's 1525.
-dagger_beta_final: 0.344            # PRIMARY: target final beta
-dagger_beta_decay: 0.95             # LEGACY: per-update decay  beta_i = beta_init * decay^i
+dagger_beta_final: 0.344            # target final beta
 # dagger_buffer_cycles measures buffer capacity in *update cycles of history*
-# (1 cycle = num_envs * num_steps frames), invariant under num_envs.  When
-# set, it overrides dagger_buffer_max via:  buffer_max = cycles * fpu
-# Resolves to 23,438 samples on QMUL, 125,000 on UCL. Whether the recipe wants
-# a fixed sample count or a fixed cycle count is an open question for the author.
-dagger_buffer_cycles: 1.90735       # PRIMARY: buffer capacity in update cycles
-dagger_buffer_max: 100000           # LEGACY: max samples in DAgger replay buffer
+# (1 cycle = num_envs * num_steps frames), invariant under num_envs:
+#   buffer_max = round(cycles * fpu)
+# Cycle-denominated by author decision (2026-08-15): retention stays
+# hardware-invariant. Resolves to 23,438 samples on QMUL, 125,000 on UCL.
+dagger_buffer_cycles: 1.90735       # buffer capacity in update cycles
 # B1: passes per update over the aggregated buffer.  Each pass redraws a
 # fresh sample of size samples_per_update from D, so total samples seen
 # per update ≈ n_passes * samples_per_update.  null = 1 pass, which
@@ -119,10 +115,9 @@ dagger_train_passes: null
 dagger_expert_deterministic: true
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
-# val_interval_frames is the env-frame-invariant source of truth.  When set,
-# it overrides val_interval via:  val_interval = val_interval_frames // fpu
-val_interval_frames: 1.0e+6         # PRIMARY: env-frames between validations
-val_interval: 50                    # LEGACY: update steps between validation rollouts
+# val_interval_frames is the env-frame-invariant validation cadence; the
+# update-step interval is derived via:  VAL_INTERVAL = val_interval_frames // fpu
+val_interval_frames: 1.0e+6         # env-frames between validations
 val_diffusion_steps: 50             # denoising steps during validation
 val_replan_every: 4                 # env steps executed per diffusion plan
 val_steps: 256                      # total env steps per validation rollout

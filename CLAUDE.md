@@ -6,7 +6,7 @@ JAX/Flax ReMDM planner on Craftax; supervision by a pre-trained PPO expert (`Cra
 
 - Exactly two config layers: a `--config` preset merges onto `configs/defaults.yaml`; presets never inherit from presets. `--override KEY=VALUE` keys are validated against `defaults.yaml`.
 - `configs/defaults.yaml` IS the final Craftax Classic recipe, not a neutral baseline. Presets are delta-only; restating a defaults value silently pins it (enforced by `tests/test_config.py`).
-- PRIMARY/LEGACY key pairs: the PRIMARY (env-frame, rescaled at load by `resolve_scaled_hyperparams()`) wins when non-null; a preset setting only a LEGACY key must pin its PRIMARY to `null` ("Baseline pins"). Read README.md §Configuration before touching any YAML.
+- Schedule keys (budgets, warmup, beta target, buffer retention, val cadence) are declared in env frames / update cycles; `resolve_num_updates()` and `resolve_scaled_hyperparams()` derive the update-step forms at load. Never set a derived form. Read README.md §Configuration before touching any YAML.
 - Cluster siblings `final_classic_{qmul,ucl}.yaml` / `final_craftax_{qmul,ucl}.yaml` may differ only in `num_envs` and `seed` (test-enforced); Full-Craftax recipe changes go in both files. Never edit `final_*` or ablation machine configs to fit local hardware.
 - The ablation suite has its own config precedence chain and no `--override`; read experiments/README.md before touching `experiments/rl_finetuning/configs/`.
 

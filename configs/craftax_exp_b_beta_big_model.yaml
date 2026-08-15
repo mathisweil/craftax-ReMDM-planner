@@ -14,14 +14,14 @@ temperature: 0.3
 
 # ── Optimisation ─────────────────────────────────────────────────────────────
 lr: 5.0e-4
-lr_warmup_steps: 300
+lr_warmup_frames: 286720            # 5 updates x 64 grad steps = 320 (was lr_warmup_steps: 300)
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 448                      # halved from 4096: larger obs per env
 
 # ── Online DAgger training ───────────────────────────────────────────────────
-dagger_beta_decay: 0.9993
-dagger_buffer_max: 200000           # 8268 obs -> ~6.6 GB at 200k
+dagger_beta_final: 0.2950745524539679  # = 0.9993^1743 (1e8 budget at 448 envs)
+dagger_buffer_cycles: 3.4877232142857144  # x 57,344 fpu = 200,000 samples (8268 obs -> ~6.6 GB)
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
 val_diffusion_steps: 25             # match diffusion_steps
@@ -35,11 +35,3 @@ seed: 42
 # experiment predates that recipe and is defined against the original
 # baseline, so it pins the values it used to inherit. They are load-bearing:
 # removing them silently redefines this experiment.
-
-# These PRIMARY env-frame keys override their LEGACY counterparts whenever
-# they are non-null. Held at null so this file's own settings stay
-# authoritative: lr_warmup_steps=300, dagger_beta_decay=0.9993,
-# dagger_buffer_max=200000
-lr_warmup_frames: null
-dagger_beta_final: null
-dagger_buffer_cycles: null

@@ -335,13 +335,12 @@ def run_offline_diffusion(config):
     """
     config = {k.upper(): v for k, v in config.items()}
 
-    # OFFLINE_TOTAL_TIMESTEPS (env frames) is the hardware-portable source of
-    # truth: invariant under num_envs changes, so the same config trains the
-    # same amount of environment experience on any GPU.  OFFLINE_NUM_UPDATES
-    # is kept as a legacy fallback for configs that prefer the update form.
+    # OFFLINE_TOTAL_TIMESTEPS (env frames) is the hardware-portable budget:
+    # invariant under num_envs changes, so the same config trains the same
+    # amount of environment experience on any GPU.
     resolve_num_updates(config, "offline")
     # Translate env-frame-denominated hyperparameters (LR_WARMUP_FRAMES,
-    # VAL_INTERVAL_FRAMES) into their update-step legacy keys.
+    # VAL_INTERVAL_FRAMES) into the update-step forms the runner consumes.
     resolve_scaled_hyperparams(config, "offline")
     print_config_snapshot(config, "offline")
 

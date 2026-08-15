@@ -9,18 +9,18 @@
 env_name: "Craftax-Symbolic-v1"
 
 # ── Optimisation ─────────────────────────────────────────────────────────────
-lr_warmup_steps: 200
+lr_warmup_frames: 786432            # 3 updates x 64 grad steps = 192 (was lr_warmup_steps: 200)
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 2048                      # halved from 4096: larger obs per env
 
 # ── Online DAgger training ───────────────────────────────────────────────────
-online_num_updates: 2000            # harder task, more room to learn
-dagger_beta_decay: 0.9993
-dagger_buffer_max: 200000           # 8268 obs -> ~6.6 GB at 200k
+online_total_timesteps: 524288000   # 2000 updates x 262,144 fpu; harder task, more room to learn
+dagger_beta_final: 0.2464761046379074  # = 0.9993^2000
+dagger_buffer_cycles: 0.762939453125  # x 262,144 fpu = 200,000 samples (8268 obs -> ~6.6 GB)
 
 # ── Validation rollouts ──────────────────────────────────────────────────────
-val_interval: 30
+val_interval_frames: 7864320        # 30 updates x 262,144 fpu
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 seed: 42
@@ -36,13 +36,3 @@ n_heads: 4
 n_layers: 4
 d_ff: 512
 obs_encoder_width: 512
-
-# These PRIMARY env-frame keys override their LEGACY counterparts whenever
-# they are non-null. Held at null so this file's own settings stay
-# authoritative: lr_warmup_steps=200, online_num_updates=2000,
-# dagger_beta_decay=0.9993, dagger_buffer_max=200000, val_interval=30
-lr_warmup_frames: null
-online_total_timesteps: null
-dagger_beta_final: null
-dagger_buffer_cycles: null
-val_interval_frames: null

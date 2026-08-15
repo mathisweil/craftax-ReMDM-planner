@@ -680,15 +680,14 @@ def run_online(config: dict[str, Any]) -> dict[str, Any]:
     """
     config = {k.upper(): v for k, v in config.items()}
 
-    # ONLINE_TOTAL_TIMESTEPS (env frames) is the hardware-portable source of
-    # truth: invariant under num_envs changes, so the same config trains the
-    # same amount of environment experience on any GPU.  ONLINE_NUM_UPDATES is
-    # kept as a legacy fallback for configs that prefer the update form.
+    # ONLINE_TOTAL_TIMESTEPS (env frames) is the hardware-portable budget:
+    # invariant under num_envs changes, so the same config trains the same
+    # amount of environment experience on any GPU.
     resolve_num_updates(config, "online")
     # Translate env-frame-denominated hyperparameters (LR_WARMUP_FRAMES,
     # VAL_INTERVAL_FRAMES, DAGGER_BETA_FINAL, DAGGER_BUFFER_CYCLES) into
-    # their update-step legacy keys.  Must run AFTER resolve_num_updates
-    # because DAGGER_BETA_FINAL needs NUM_UPDATES.
+    # the update-step forms the runner consumes.  Must run AFTER
+    # resolve_num_updates because DAGGER_BETA_FINAL needs NUM_UPDATES.
     resolve_scaled_hyperparams(config, "online")
     print_config_snapshot(config, "online")
 

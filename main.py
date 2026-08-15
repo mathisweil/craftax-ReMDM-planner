@@ -330,9 +330,7 @@ def _resolve_resume(config: dict[str, Any]) -> None:
 
     if resume_step >= num_updates:
         bump_key = (
-            "offline_total_timesteps (or offline_num_updates)"
-            if mode == "offline"
-            else "online_total_timesteps (or online_num_updates)"
+            "offline_total_timesteps" if mode == "offline" else "online_total_timesteps"
         )
         raise ValueError(
             f"resume_step ({resume_step}) >= num_updates ({num_updates}). "

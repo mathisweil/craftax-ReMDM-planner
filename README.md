@@ -108,7 +108,7 @@ Trained from scratch. Per iteration: a mixed policy (expert vs learner, ratio `b
 ```bash
 python main.py --mode online --ppo-checkpoint /path/to/ppo_checkpoint
 python main.py --mode online --ppo-checkpoint /path/to/ppo_checkpoint \
-    --override online_num_updates=1000
+    --override online_total_timesteps=100000000
 
 # Optional: warm-start from a pre-trained offline checkpoint
 python main.py --mode online --ppo-checkpoint /path/to/ppo_checkpoint \
@@ -138,7 +138,7 @@ python main.py --mode offline --ppo-checkpoint /path/to/ppo_checkpoint \
 # Online. --resume-step / --resume-wandb-run-id override the metadata sidecar.
 python main.py --mode online --ppo-checkpoint /path/to/ppo_checkpoint \
     --resume /path/to/completed_online_checkpoint \
-    --override online_num_updates=2000
+    --override online_total_timesteps=200000000
 ```
 
 The DAgger replay buffer is not persisted; it refills within a few iterations. The cosine LR schedule spans the full `num_updates`, with the step counter offset so the LR resumes exactly where it stopped. With a metadata sidecar, `resume_step` and `resume_wandb_run_id` are auto-detected; without one, pass `--resume-step`.
@@ -218,7 +218,7 @@ Precedence, lowest to highest: `configs/defaults.yaml` < `--config` file < `--ov
 
 **Presets hold only deltas, never restate a value they would inherit.** A key belongs in a preset only if its value differs from `defaults.yaml`. Restating one is not harmless duplication: it silently pins the preset when the recipe later moves. `tests/test_config.py` enforces this.
 
-> **PRIMARY keys override LEGACY ones.** Six settings come in a pair: an env-frame **PRIMARY** form (`lr_warmup_frames`, `offline_total_timesteps`, `online_total_timesteps`, `dagger_beta_final`, `dagger_buffer_cycles`, `val_interval_frames`) and an update-count **LEGACY** form (`lr_warmup_steps`, `offline_num_updates`, `online_num_updates`, `dagger_beta_decay`, `dagger_buffer_max`, `val_interval`). Whenever the PRIMARY is non-null it wins. **A preset that sets only the LEGACY form must pin the PRIMARY one to `null`, or its setting is silently ignored.** The `exp_*` presets and `smoke.yaml` do exactly that, under a `Baseline pins` heading; those pins are load-bearing.
+> **Schedule keys are denominated in env frames, not update steps.** Six settings — `lr_warmup_frames`, `offline_total_timesteps`, `online_total_timesteps`, `dagger_beta_final`, `dagger_buffer_cycles`, `val_interval_frames` — declare the *hardware-invariant* quantity; `resolve_num_updates()` and `resolve_scaled_hyperparams()` derive the update-step forms the runners consume (`num_updates`, `LR_WARMUP_STEPS`, `DAGGER_BETA_DECAY`, `DAGGER_BUFFER_MAX`, `VAL_INTERVAL`) from them at load. Set the frame-denominated key; the derived ones are outputs, not inputs.
 
 ```bash
 python main.py --mode offline --ppo-checkpoint <ppo> \
@@ -240,7 +240,7 @@ python main.py --mode offline --ppo-checkpoint <ppo> --no-jit --override num_env
 
 Within each family the two cluster configs differ only in `num_envs` and `seed`. Nothing in the loader enforces that: the guard is `test_cluster_siblings_differ_only_in_num_envs_and_seed`. **A Full Craftax hyperparameter change must be made in both `final_craftax_*` files**, since with no inheritance those 11 keys are duplicated verbatim in each; a Classic one belongs in `defaults.yaml`.
 
-Fairness-critical values are env-frame denominated (the **PRIMARY** keys above) and rescaled by `resolve_scaled_hyperparams()` at load, so one recipe runs on any hardware tier: the Classic recipe resolves to 8138 updates on QMUL's 96 envs and 1525 on UCL's 512. Key hyperparameters are documented inline in `configs/defaults.yaml`; the [appendix](#key-hyperparameters) tabulates them. Ablation-suite hyperparameters live in `experiments/rl_finetuning/configs/`, loaded by `run_ablations.py`, not `main.py`.
+Fairness-critical values are env-frame denominated (the six keys above) and rescaled by `resolve_scaled_hyperparams()` at load, so one recipe runs on any hardware tier: the Classic recipe resolves to 8138 updates on QMUL's 96 envs and 1525 on UCL's 512. Key hyperparameters are documented inline in `configs/defaults.yaml`; the [appendix](#key-hyperparameters) tabulates them. Ablation-suite hyperparameters live in `experiments/rl_finetuning/configs/`, loaded by `run_ablations.py`, not `main.py`.
 
 ## Checkpoints
 
@@ -359,21 +359,18 @@ Controlled by the `remask_strategy` key. All strategies operate on top of the th
 
 | Parameter | Default | Description |
 |---|---|---|
-| `offline_total_timesteps` | 1e8 | **PRIMARY** env-frame budget. Derives `num_updates` as `offline_total_timesteps // (num_envs * num_steps)`. |
-| `offline_num_updates` | `null` | **LEGACY** outer update count; used only when `offline_total_timesteps` is unset. |
+| `offline_total_timesteps` | 1e8 | Env-frame budget. Derives `num_updates` as `offline_total_timesteps // (num_envs * num_steps)`. |
 | `num_envs` | 1024 | Parallel environments |
 | `num_steps` | 64 | Environment steps collected per update |
 | `num_minibatches` | 8 | Gradient minibatches per epoch |
 | `update_epochs` | 4 | SGD epochs per update step |
 | `num_repeats` | 1 | Independent training seeds (vmapped) |
 | `lr` | 3e-4 | Adam learning rate (cosine-decayed to 10% over all gradient steps) |
-| `lr_warmup_frames` | `null` | **PRIMARY** env-frame warm-up budget. Derives `lr_warmup_steps`. |
-| `lr_warmup_steps` | 0 | **LEGACY** linear warm-up steps (0 = disabled). |
+| `lr_warmup_frames` | 1.6384e6 | Env-frame linear warm-up budget (0 = disabled). Derives `LR_WARMUP_STEPS` in gradient steps. |
 | `max_grad_norm` | 1.0 | Global gradient clipping norm |
 | `return_weight_cap` | 5.0 | Clip ceiling for per-window return weights (lower clip fixed at 0.1) |
 | `collect_temperature` | 1.0 | Softmax temperature on PPO logits during live data collection |
-| `val_interval_frames` | `null` | **PRIMARY** env-frames between validation rollouts. |
-| `val_interval` | 50 | **LEGACY** validation frequency in update steps. |
+| `val_interval_frames` | 1e6 | Env-frames between validation rollouts. Derives `VAL_INTERVAL` in update steps. |
 | `val_diffusion_steps` | 50 | Denoising steps during validation rollouts |
 | `val_replan_every` | 4 | Env steps executed per diffusion plan during validation |
 | `val_steps` | 128 | Total env steps per validation rollout |
@@ -382,13 +379,10 @@ Controlled by the `remask_strategy` key. All strategies operate on top of the th
 
 | Parameter | Default | Description |
 |---|---|---|
-| `online_total_timesteps` | `null` | **PRIMARY** env-frame budget. Derives `num_updates`. |
-| `online_num_updates` | 1000 | **LEGACY** outer DAgger iterations. |
+| `online_total_timesteps` | 1e8 | Env-frame budget. Derives `num_updates`. |
 | `dagger_beta_init` | 1.0 | Initial expert mixing probability `beta_1` |
-| `dagger_beta_final` | `null` | **PRIMARY** target final mixing ratio; overrides `dagger_beta_decay`. |
-| `dagger_beta_decay` | 0.95 | **LEGACY** per-update decay `beta_i = beta_init * decay^i` |
-| `dagger_buffer_cycles` | `null` | **PRIMARY** buffer capacity in update cycles of history. |
-| `dagger_buffer_max` | 100000 | **LEGACY** max samples in the DAgger replay buffer |
+| `dagger_beta_final` | 0.344 | Target final mixing ratio. Derives the per-update decay `beta_i = beta_init * decay^i`. |
+| `dagger_buffer_cycles` | 1.90735 | Replay-buffer capacity in update cycles of history. Derives `DAGGER_BUFFER_MAX` in samples. |
 | `dagger_train_passes` | `null` | Passes per update over the buffer; `null` = 1 (matches offline BC per-update gradient work) |
 | `dagger_expert_deterministic` | `true` | Argmax expert (fixed `s -> a*` map) vs categorical sampling |
 
@@ -469,8 +463,8 @@ A CPU-only suite (about two minutes). Tiny synthetic data and a shrunken model t
 | Offline data | `--mode offline` rolls out PPO live. `--mode collect` saves an `.npz` for inspection only — re-feeding it to `--mode offline` is unsupported; pass `--ppo-checkpoint`.                                                                                     |
 | Episode-boundary masking | A window at `(e, t)` is valid only if `dones[e, t+1:t+H-1]` are all `False`.                                                                                                                                                                               |
 | Return weighting | Valid windows are weighted by cumulative reward, normalised by the batch mean, clipped to `[0.1, return_weight_cap]`, and applied as per-sample multipliers before loss reduction.                                                                         |
-| LR schedule | Cosine decay `lr -> lr * 0.1` over all gradient steps. `lr_warmup_frames` (PRIMARY) or `lr_warmup_steps` (LEGACY) prepends linear warm-up.                                                                                                                 |
-| Env-frame invariance | PRIMARY keys are converted to update-step form by `resolve_scaled_hyperparams()` using `num_envs * num_steps`, so one config runs on any hardware tier.                                                                                                    |
+| LR schedule | Cosine decay `lr -> lr * 0.1` over all gradient steps. `lr_warmup_frames` prepends linear warm-up, converted to gradient steps as `(frames // fpu) * update_epochs * num_minibatches (* dagger_train_passes online)`.                                       |
+| Env-frame invariance | The six frame-denominated keys are converted to update-step form by `resolve_scaled_hyperparams()` using `fpu = num_envs * num_steps`, so one config runs on any hardware tier.                                                                            |
 | DAgger sizing | `dagger_sizing()` in `src/planners/common.py` is the single source of truth for `samples_per_update`, buffer capacity and `n_train_passes`.                                                                                                                |
 | Loss weight clipping | The MDLM SUBS weight `-alpha'(t) / (1 - alpha_t)` is clipped to 1000 for stability as `alpha_t -> 1`.                                                                                                                                                      |
 | Validation rollouts | Every `val_interval` updates, using inference sampling parameters with `val_diffusion_steps`, `val_replan_every` and `val_steps`.                                                                                                                          |

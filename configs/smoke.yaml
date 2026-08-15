@@ -27,7 +27,6 @@ update_epochs: 1
 
 # ── Budget ───────────────────────────────────────────────────────────────────
 online_total_timesteps: 384         # // (8 * 8) -> 6 updates
-online_num_updates: null
 
 # ── Transformer architecture ─────────────────────────────────────────────────
 d_model: 32
@@ -43,20 +42,18 @@ diffusion_steps: 2
 use_loop: false                     # single-phase sampler: one scan to compile
 
 # ── Validation ───────────────────────────────────────────────────────────────
-val_interval: 3
-val_interval_frames: null           # PRIMARY key would override val_interval
+val_interval_frames: 192            # // (8 * 8 fpu) -> every 3 updates
 val_diffusion_steps: 2
 val_replan_every: 1
 val_steps: 2                        # // val_replan_every -> 2 cycles
 
 # ── DAgger ───────────────────────────────────────────────────────────────────
-dagger_buffer_max: 64               # >= samples_per_update (8)
-dagger_buffer_cycles: null          # PRIMARY key would override buffer_max
-dagger_beta_final: null             # PRIMARY key would override beta_decay
+dagger_buffer_cycles: 1.0           # x 64 fpu = 64 samples >= samples_per_update (8)
+dagger_beta_final: 0.7350918906249999  # = 0.95^6: the historical 0.95/update decay over 6 updates
 dagger_train_passes: 1
 
 # ── Optimisation ─────────────────────────────────────────────────────────────
-lr_warmup_frames: null              # PRIMARY key would override warmup_steps
+lr_warmup_frames: 0                 # warmup disabled
 
 # ── Expert ───────────────────────────────────────────────────────────────────
 # Left unset so run_smoke generates a randomly initialised expert and the mode

@@ -99,5 +99,5 @@ def test_checkpoint_restore_with_mismatched_config_fails_loudly(tmp_path):
         )
 
 
-# (The smoke preset's PRIMARY-key null pins are already covered by
+# (The smoke preset's frame-denominated sizing keys are already covered by
 # test_smoke_src.py::test_smoke_budget_resolves_to_a_short_run.)

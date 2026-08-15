@@ -801,12 +801,15 @@ def test_smoke_config_overlays_defaults() -> None:
     assert num_steps % plan_horizon == 0
     samples_per_update = num_envs * (num_steps - plan_horizon + 1)
     assert samples_per_update % num_minibatches == 0
-    assert samples_per_update <= merged["DAGGER_BUFFER_MAX"]
+    # dagger_buffer_max is derived from the cycle-denominated key at load.
+    buffer_max = round(merged["DAGGER_BUFFER_CYCLES"] * num_envs * num_steps)
+    assert samples_per_update <= buffer_max
 
 
 def test_smoke_budget_resolves_to_a_short_run() -> None:
-    """Shrinking the frame budget alone would not shrink the run: check the
-    derived update count and the keys that would silently override it."""
+    """Every smoke-sizing key must survive resolution: the frame-denominated
+    keys are rescaled to the smoke rollout width, so a stale one silently
+    restores a full-size run."""
     from conftest import load_config
 
     from src.planners.common import resolve_num_updates, resolve_scaled_hyperparams
@@ -819,7 +822,8 @@ def test_smoke_budget_resolves_to_a_short_run() -> None:
     assert config["VAL_INTERVAL"] <= config["NUM_UPDATES"], (
         "no validation rollout would run"
     )
-    # PRIMARY env-frame keys silently override the update-step values above.
-    for primary in ("VAL_INTERVAL_FRAMES", "DAGGER_BUFFER_CYCLES",
-                    "DAGGER_BETA_FINAL", "LR_WARMUP_FRAMES"):
-        assert config[primary] is None, f"{primary} would override the smoke sizing"
+    samples_per_update = config["NUM_ENVS"] * (
+        config["NUM_STEPS"] - config["PLAN_HORIZON"] + 1
+    )
+    assert config["DAGGER_BUFFER_MAX"] >= samples_per_update
+    assert config["LR_WARMUP_STEPS"] == 0, "warmup would eat the whole smoke run"

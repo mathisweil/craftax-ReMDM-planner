@@ -81,23 +81,20 @@ def format_timing(timing: dict[str, float]) -> str:
 
 
 def resolve_num_updates(config: dict[str, Any], mode: str) -> None:
-    """Resolve ``NUM_UPDATES`` from env-frame-denominated config keys.
+    """Resolve ``NUM_UPDATES`` from the mode's env-frame budget.
 
     Mutates ``config`` in place.  After this call the runners can read
     ``NUM_UPDATES`` (and ``OFFLINE_TOTAL_TIMESTEPS`` /
-    ``ONLINE_TOTAL_TIMESTEPS`` depending on mode) without worrying about
-    whether the user specified the env-frame or update-count form.
-
-    Resolution priority:
+    ``ONLINE_TOTAL_TIMESTEPS`` depending on mode):
 
     ===========  ============================================================
-    Mode         Priority (highest first)
+    Mode         Budget key
     ===========  ============================================================
-    ``offline``  ``OFFLINE_TOTAL_TIMESTEPS``  >  ``OFFLINE_NUM_UPDATES``
-    ``online``   ``ONLINE_TOTAL_TIMESTEPS``   >  ``ONLINE_NUM_UPDATES``
+    ``offline``  ``OFFLINE_TOTAL_TIMESTEPS``
+    ``online``   ``ONLINE_TOTAL_TIMESTEPS``
     ===========  ============================================================
 
-    Env-frame keys are preferred because they are invariant under
+    Budgets are denominated in env frames because that is invariant under
     ``num_envs`` changes — the same value yields the same total environment
     experience regardless of hardware sizing, which makes cross-hardware
     fairness studies (e.g. UCL 4096-env vs QMUL 96-env) trivially fair
@@ -112,32 +109,27 @@ def resolve_num_updates(config: dict[str, Any], mode: str) -> None:
         mode:   Either ``"offline"`` or ``"online"``.
 
     Raises:
-        ValueError: If neither the env-frame nor the update-count form is
-                    set for the given mode, or if ``mode`` is unknown.
+        ValueError: If the mode's budget key is unset, or if ``mode`` is
+                    unknown.
     """
     frames_per_update = int(config["NUM_STEPS"]) * int(config["NUM_ENVS"])
 
     if mode == "offline":
-        ts_key, nu_key = "OFFLINE_TOTAL_TIMESTEPS", "OFFLINE_NUM_UPDATES"
+        ts_key = "OFFLINE_TOTAL_TIMESTEPS"
     elif mode == "online":
-        ts_key, nu_key = "ONLINE_TOTAL_TIMESTEPS", "ONLINE_NUM_UPDATES"
+        ts_key = "ONLINE_TOTAL_TIMESTEPS"
     else:
         raise ValueError(f"Unknown mode: {mode!r}; expected 'offline' or 'online'.")
 
     ts = config.get(ts_key)
-    nu = config.get(nu_key)
+    if ts is None:
+        raise ValueError(
+            f"{mode.capitalize()} mode requires {ts_key.lower()!r} "
+            "(the env-frame budget) to be set."
+        )
     # float() first to accept YAML scientific notation parsed as string
     # (PyYAML 1.1 only auto-coerces "3.0e+8", not "3e8" or "3.0e8").
-    if ts is not None:
-        num_updates = max(1, int(float(ts)) // frames_per_update)
-    elif nu:
-        num_updates = int(float(nu))
-    else:
-        raise ValueError(
-            f"{mode.capitalize()} mode requires either "
-            f"{ts_key.lower()!r} (env frames, preferred) or "
-            f"{nu_key.lower()!r} to be set."
-        )
+    num_updates = max(1, int(float(ts)) // frames_per_update)
 
     config["NUM_UPDATES"] = num_updates
     # Re-snap so downstream consumers (run names, SPS, checkpoint IDs)
@@ -148,17 +140,12 @@ def resolve_num_updates(config: dict[str, Any], mode: str) -> None:
 def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
     """Resolve env-frame-denominated hyperparameters into update-step form.
 
-    Mutates ``config`` in place.  PRIMARY (env-frame) keys override LEGACY
-    (update-step) keys when set, mirroring the
-    :func:`resolve_num_updates` pattern.  When the PRIMARY key is ``None``
-    the LEGACY value passes through unchanged, preserving full
-    backward compatibility with configs that predate this resolver.
-
-    Resolution table
-    ================
+    Mutates ``config`` in place, deriving the update-step quantities the
+    runners consume from the env-frame / update-cycle quantities the
+    configs declare:
 
     +-----------------------------+------------------------+----------+
-    | PRIMARY (env-frame)         | LEGACY (update-step)   | Mode     |
+    | Declared (env-frame)        | Derived (update-step)  | Mode     |
     +=============================+========================+==========+
     | ``LR_WARMUP_FRAMES``        | ``LR_WARMUP_STEPS``    | both     |
     +-----------------------------+------------------------+----------+
@@ -173,9 +160,9 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
     -------------------
     Env-frame values are invariant under ``num_envs`` changes, so the
     same config trains the same effective experiment on any GPU.  The
-    update-step legacy keys had to be hand-derived per hardware tier,
-    which was both error-prone and obscured the conceptual quantity
-    (e.g. *final beta*, not *per-update decay constant*).
+    update-step forms had to be hand-derived per hardware tier, which was
+    both error-prone and obscured the conceptual quantity (e.g. *final
+    beta*, not *per-update decay constant*).
 
     The conversion for ``DAGGER_BETA_FINAL`` requires ``NUM_UPDATES``,
     so this function MUST be called after :func:`resolve_num_updates`
@@ -190,7 +177,8 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
 
     Raises:
         ValueError: If ``DAGGER_BETA_FINAL`` is set in online mode but
-                    ``NUM_UPDATES`` has not been resolved yet.
+                    ``NUM_UPDATES`` has not been resolved yet, or if the
+                    resolved warmup meets or exceeds the budget.
     """
     fpu = int(config["NUM_STEPS"]) * int(config["NUM_ENVS"])
 
@@ -458,7 +446,9 @@ def print_config_snapshot(config: dict[str, Any], mode: str) -> None:
         )
         print(f"    {'total_grad_steps':<24} = {total_grad_steps:,}")
 
-    val_int = int(config.get("VAL_INTERVAL", 0))  # display-only; fallback 0 != defaults.yaml (50)
+    # Display-only fallback: VAL_INTERVAL is always derived from
+    # VAL_INTERVAL_FRAMES by resolve_scaled_hyperparams before this runs.
+    val_int = int(config.get("VAL_INTERVAL", 0))
     print("  -- Validation --")
     print(
         f"    val_interval        = {val_int} updates  (~{val_int * fpu / 1e6:.2f}M frames)"
