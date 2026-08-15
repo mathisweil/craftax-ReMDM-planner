@@ -718,7 +718,7 @@ def make_run_ablation(
     floor = config.get("RETURN_WEIGHT_FLOOR", 0.1)
     cap = config.get("RETURN_WEIGHT_CAP", 5.0)
     win_thresh = config.get("WIN_THRESHOLD", 0.5)
-    ema_decay = config.get("RUNNING_STATS_EMA_DECAY", 0.99)
+    running_stats_ema_decay = config.get("RUNNING_STATS_EMA_DECAY", 0.99)
 
     # Mixed replay
     replay_buffer_size = config.get("MIXED_REPLAY_BUFFER_SIZE", 10000)
@@ -731,8 +731,10 @@ def make_run_ablation(
     rm_depth = config.get("REWARD_MODEL_DEPTH", 2)
     rm_lr = config.get("REWARD_MODEL_LR", 1e-3)
 
-    # EMA decay for eval model
-    ema_decay = config.get("EMA_DECAY", 0.999)
+    # EMA decay for eval model weights (distinct from the running-stats
+    # advantage decay above; the old shared name shadowed the configured
+    # RUNNING_STATS_EMA_DECAY - traceability §8.4)
+    eval_ema_decay = config.get("EMA_DECAY", 0.999)
 
     # LoRA setup
     is_lora = spec.name == "lora"
@@ -1013,7 +1015,7 @@ def make_run_ablation(
                 wins_only=use_wins_only,
                 win_thresh=win_thresh,
                 use_running_stats=use_running_stats,
-                ema_decay=ema_decay,
+                ema_decay=running_stats_ema_decay,
                 running_mean=carry.running_mean,
                 running_std=carry.running_std,
             )
@@ -1048,7 +1050,7 @@ def make_run_ablation(
                     wins_only=False,
                     win_thresh=win_thresh,
                     use_running_stats=False,
-                    ema_decay=ema_decay,
+                    ema_decay=running_stats_ema_decay,
                     running_mean=jnp.array(0.0),
                     running_std=jnp.array(1.0),
                 )
@@ -1097,7 +1099,7 @@ def make_run_ablation(
 
             # -- EMA update --
             ema_params_new = jax.tree.map(
-                lambda ema, p: ema_decay * ema + (1.0 - ema_decay) * p,
+                lambda ema, p: eval_ema_decay * ema + (1.0 - eval_ema_decay) * p,
                 carry.ema_params,
                 state.params,
             )

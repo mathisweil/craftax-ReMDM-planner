@@ -624,29 +624,26 @@ def test_reward_model_learns_a_linear_return_map():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "traceability §8.4: training.py:721 reads RUNNING_STATS_EMA_DECAY "
-        "and training.py:735 shadows the same variable with EMA_DECAY, so "
-        "the running-stats advantage EMA runs at the eval-weights decay "
-        "(0.999), not the configured 0.99"
-    ),
-)
 def test_running_stats_uses_the_configured_decay():
     """The running_stats training closure must consume
-    RUNNING_STATS_EMA_DECAY (spec-ablations §1.6: 0.99), not the
-    eval-EMA decay. Reuses the step-7 reproduction: build the shipped
-    make_run_ablation closure with the two decays set to distinct
-    sentinels and read the ema_decay cell it captured.
+    RUNNING_STATS_EMA_DECAY (spec-ablations §1.6: 0.99) for the
+    advantage EMA and EMA_DECAY for the eval weights (was defect §8.4:
+    one shadowed variable served both). Reuses the step-7 reproduction:
+    build the shipped make_run_ablation closure with distinct sentinel
+    decays and read the captured cells.
     """
+    from conftest import load_config
+
     from experiments.rl_finetuning.ablations.training import make_run_ablation
     from src.planners.model import make_apply_fns
 
     config = {
+        **load_config("configs/defaults.yaml"),
+        **load_config("experiments/rl_finetuning/configs/ablations_default.yaml"),
         **TINY, "NUM_ACTIONS": V, "MAX_ITER": 1, "NUM_ENVS": 2,
-        "NUM_STEPS": 8, "BATCH_SIZE": 3, "EVAL_EVERY": 1, "USE_WANDB": False,
-        "SEED": 0, "RUNNING_STATS_EMA_DECAY": 0.111, "EMA_DECAY": 0.999,
+        "NUM_STEPS": 8, "BATCH_SIZE": 3, "EVAL_EVERY": 1, "EVAL_STEPS": 1,
+        "EVAL_REPLAN": 1, "USE_WANDB": False, "SEED": 0,
+        "RUNNING_STATS_EMA_DECAY": 0.111, "EMA_DECAY": 0.999,
     }
     model = build_model(config, V)
     params = init_params(model, jax.random.PRNGKey(0), OBS, H)
@@ -658,8 +655,9 @@ def test_running_stats_uses_the_configured_decay():
         num_actions=V, obs_dim=OBS,
     )
     cells = dict(zip(run.__code__.co_freevars, run.__closure__ or (), strict=False))
-    assert "ema_decay" in cells, "closure extraction failed"
-    assert cells["ema_decay"].cell_contents == pytest.approx(0.111)
+    assert "running_stats_ema_decay" in cells, "closure extraction failed"
+    assert cells["running_stats_ema_decay"].cell_contents == pytest.approx(0.111)
+    assert cells["eval_ema_decay"].cell_contents == pytest.approx(0.999)
 
 
 # ---------------------------------------------------------------------------
