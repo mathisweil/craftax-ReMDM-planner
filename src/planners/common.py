@@ -204,6 +204,27 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
     if val_frames is not None:
         config["VAL_INTERVAL"] = max(1, int(float(val_frames)) // fpu)
 
+    # Short-budget guard (step-7 finding N1): optax's warmup-cosine
+    # schedule needs warmup < total gradient steps; without this check a
+    # too-small budget only crashes later, deep inside optax, with
+    # `decay_steps <= 0`. Applies whenever the budget is already resolved.
+    warmup_steps = int(config.get("LR_WARMUP_STEPS") or 0)
+    num_updates = config.get("NUM_UPDATES")
+    if warmup_steps > 0 and num_updates is not None:
+        grad_steps_per_update = int(config["UPDATE_EPOCHS"]) * int(
+            config["NUM_MINIBATCHES"]
+        )
+        if mode == "online":
+            grad_steps_per_update *= int(config.get("DAGGER_TRAIN_PASSES") or 1)
+        total_grad_steps = int(num_updates) * grad_steps_per_update
+        if warmup_steps >= total_grad_steps:
+            raise ValueError(
+                f"LR warmup ({warmup_steps} gradient steps) meets or exceeds "
+                f"the training budget ({total_grad_steps} gradient steps = "
+                f"{int(num_updates)} updates x {grad_steps_per_update}); "
+                "increase the *_total_timesteps budget or reduce the warmup."
+            )
+
     if mode != "online":
         return
 

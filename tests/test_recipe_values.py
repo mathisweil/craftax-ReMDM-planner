@@ -265,15 +265,6 @@ def test_warmup_step_count_covers_the_configured_frames(preset):
     assert abs(frames_covered - float(config["LR_WARMUP_FRAMES"])) < fpu
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "step-7 finding N1 (verification/2026-08-15-executable-baseline.md): "
-        "a budget below the warmup floor crashes inside optax "
-        "(decay_steps <= 0) instead of failing fast with a clear message; "
-        "step 9 adds a guard alongside the §8.11 unit fix"
-    ),
-)
 def test_short_budget_fails_fast_when_warmup_exceeds_it():
     """A budget smaller than the warmup must be rejected with an
     informative error at config resolution, not crash deep in optax.
