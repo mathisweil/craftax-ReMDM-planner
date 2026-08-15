@@ -361,6 +361,37 @@ def _compute_advantages(
     return adv, out_mean, out_std
 
 
+def action_diversity_mask(acts: jax.Array) -> jax.Array:
+    """Boolean keep-mask: True for windows with >1 distinct action.
+
+    spec-ablations §2 action_diversity: discard degenerate all-same-
+    action plans.
+
+    Args:
+        acts: ``[N, H]`` action windows.
+
+    Returns:
+        ``[N]`` boolean mask.
+    """
+    return jax.vmap(lambda a: jnp.any(a != a[0]))(acts)
+
+
+def reward_filter_mask(returns: jax.Array, percentile: float) -> jax.Array:
+    """Boolean keep-mask: True for returns strictly above the percentile.
+
+    spec-ablations §2 reward_filtering (step-9 amendment): strictly
+    above the batch percentile, the same boundary in both repos.
+
+    Args:
+        returns: ``[N]`` window returns.
+        percentile: Percentile in [0, 100].
+
+    Returns:
+        ``[N]`` boolean mask.
+    """
+    return returns > jnp.percentile(returns, percentile)
+
+
 def _effective_batch_size(advantages: jax.Array) -> jax.Array:
     """Compute effective batch size: (sum w)^2 / sum w^2.
 
@@ -961,15 +992,13 @@ def make_run_ablation(
 
             # -- Action diversity filter --
             if use_action_diversity:
-                is_diverse = jax.vmap(lambda a: jnp.any(a != a[0]))(flat_acts)
-                mask = is_diverse & flat_valid
+                mask = action_diversity_mask(flat_acts) & flat_valid
             else:
                 mask = flat_valid
 
             # -- Reward filtering --
             if use_reward_filtering:
-                thresh = jnp.percentile(flat_returns, reward_filter_pct)
-                mask = mask & (flat_returns > thresh)
+                mask = mask & reward_filter_mask(flat_returns, reward_filter_pct)
 
             # Apply mask to validity
             flat_valid = mask

@@ -436,6 +436,36 @@ def test_t_curriculum_anneals_high_noise_to_low_noise(variant):
 
 
 # ---------------------------------------------------------------------------
+# reward_filtering / action_diversity (spec-ablations §2, step-9 seams)
+# ---------------------------------------------------------------------------
+
+
+def test_reward_filter_keeps_strictly_above_the_percentile():
+    """reward_filtering keeps windows with return STRICTLY above the
+    batch percentile (spec-ablations §2, step-9 amendment: same
+    boundary in both repos).
+
+    Derivation: returns 1..8, 75th percentile (linear interpolation) =
+    6.25 -> keep {7, 8}. All-equal returns: percentile == value, so
+    strict > keeps nothing.
+    """
+    from experiments.rl_finetuning.ablations.training import reward_filter_mask
+
+    keep = np.asarray(reward_filter_mask(jnp.arange(1.0, 9.0), 75))
+    assert keep.tolist() == [False] * 6 + [True, True]
+    assert not np.asarray(reward_filter_mask(jnp.full(5, 2.0), 75)).any()
+
+
+def test_action_diversity_discards_degenerate_plans():
+    """action_diversity keeps only windows with more than one distinct
+    action (spec-ablations §2)."""
+    from experiments.rl_finetuning.ablations.training import action_diversity_mask
+
+    acts = jnp.array([[1, 1, 1, 1], [1, 2, 1, 1], [0, 0, 0, 0]])
+    assert np.asarray(action_diversity_mask(acts)).tolist() == [False, True, False]
+
+
+# ---------------------------------------------------------------------------
 # llrd (Sun 2019: eta_{k-1} = xi * eta_k, top-down from the head)
 # ---------------------------------------------------------------------------
 
