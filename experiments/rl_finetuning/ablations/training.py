@@ -376,20 +376,33 @@ def action_diversity_mask(acts: jax.Array) -> jax.Array:
     return jax.vmap(lambda a: jnp.any(a != a[0]))(acts)
 
 
-def reward_filter_mask(returns: jax.Array, percentile: float) -> jax.Array:
+def reward_filter_mask(
+    returns: jax.Array, percentile: float, valid: jax.Array | None = None
+) -> jax.Array:
     """Boolean keep-mask: True for returns strictly above the percentile.
 
     spec-ablations §2 reward_filtering (step-9 amendment): strictly
-    above the batch percentile, the same boundary in both repos.
+    above the batch percentile, the same boundary in both repos. The
+    percentile is taken over the *valid* windows only - an invalid
+    window has no return, so letting one shift the threshold is a
+    defect, not a variant (the minihack twin removes invalid rows
+    before filtering, which has the same effect).
 
     Args:
         returns: ``[N]`` window returns.
         percentile: Percentile in [0, 100].
+        valid: Optional ``[N]`` validity mask. ``None`` treats every
+               row as valid.
 
     Returns:
-        ``[N]`` boolean mask.
+        ``[N]`` boolean mask (never True for an invalid row).
     """
-    return returns > jnp.percentile(returns, percentile)
+    if valid is None:
+        return returns > jnp.percentile(returns, percentile)
+    # Static shapes: blank invalid rows to NaN rather than dropping them.
+    masked = jnp.where(valid, returns, jnp.nan)
+    threshold = jnp.nanpercentile(masked, percentile)
+    return valid & (returns > threshold)
 
 
 def _effective_batch_size(advantages: jax.Array) -> jax.Array:
@@ -1002,7 +1015,7 @@ def make_run_ablation(
 
             # -- Reward filtering --
             if use_reward_filtering:
-                mask = mask & reward_filter_mask(flat_returns, reward_filter_pct)
+                mask = reward_filter_mask(flat_returns, reward_filter_pct, mask)
 
             # Apply mask to validity
             flat_valid = mask

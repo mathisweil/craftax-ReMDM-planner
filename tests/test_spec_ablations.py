@@ -456,6 +456,27 @@ def test_reward_filter_keeps_strictly_above_the_percentile():
     assert not np.asarray(reward_filter_mask(jnp.full(5, 2.0), 75)).any()
 
 
+def test_reward_filter_percentile_ignores_invalid_windows():
+    """The threshold comes from the valid windows only; an invalid
+    window has no return and must not move it (PARITY 'Ablation-suite
+    mechanics', filter row handling - the minihack twin removes the
+    rows outright, which is the same rule).
+
+    Derivation: valid returns 1..8 (75th percentile 6.25 -> keep
+    {7, 8}); four invalid rows carrying 100.0 would raise the
+    percentile to 82.75 and keep nothing.
+    """
+    from experiments.rl_finetuning.ablations.training import reward_filter_mask
+
+    returns = jnp.concatenate([jnp.arange(1.0, 9.0), jnp.full(4, 100.0)])
+    valid = jnp.array([True] * 8 + [False] * 4)
+
+    keep = np.asarray(reward_filter_mask(returns, 75, valid))
+    assert keep.tolist() == [False] * 6 + [True, True] + [False] * 4
+    # Without the validity mask the same batch keeps nothing.
+    assert not np.asarray(reward_filter_mask(returns, 75))[:8].any()
+
+
 def test_action_diversity_discards_degenerate_plans():
     """action_diversity keeps only windows with more than one distinct
     action (spec-ablations §2)."""
