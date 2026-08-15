@@ -86,12 +86,10 @@ def test_released_offline_metadata_is_recipe_consistent():
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "step-7 finding N3, RETAINED in step 9: the released offline "
-        "checkpoint's step dir (1000000000) predates the frame-"
-        "denominated convention (would be 99,942,400 today). The unit is "
-        "now documented in README §Checkpoints; renaming the published "
-        "HF artefact is a needs-author-input publishing decision "
-        "(step-9 report)."
+        "step-7 finding N3, decision recorded (2026-08-15 §4a: migrate "
+        "the step dir to 99,942,400): execution is blocked from this "
+        "machine - the stored HF token is read-only. Flips once the "
+        "rename lands with a write token (step-10 report)."
     ),
 )
 def test_released_offline_step_dir_uses_the_frame_denominated_unit():
