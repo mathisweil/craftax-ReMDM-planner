@@ -166,35 +166,32 @@ def test_baseline_loss_is_linear_in_the_advantages():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "traceability §8.5: make_loss_bc_wins discards the advantages "
-        "argument (losses.py:338-339) and no caller pre-filters, so the "
-        "win mask never reaches the loss - bc_wins trains a uniform ELBO "
-        "on all windows"
-    ),
-)
-def test_bc_wins_loss_is_zero_on_an_all_losing_batch():
+def test_bc_wins_averages_uniformly_over_winning_windows():
     """Canonical bc_wins ('Uniform ELBO on win windows', win = return >
-    win_threshold, spec-ablations §2): a batch with no winning window
-    carries no training signal, so the loss must be 0.
+    win_threshold, spec-ablations §2; was defect §8.5): a batch with no
+    winning window carries no training signal (loss exactly 0), and an
+    all-winning batch reduces to the plain uniform ELBO.
 
-    The win mask [0,0,0,0] is produced by the pipeline's own
-    _compute_advantages(wins_only=True) on an all-losing batch
-    (returns below win_thresh=0.5), exactly as in the training loop.
+    The win masks are produced by the pipeline's own
+    _compute_advantages(wins_only=True), exactly as in the training loop.
     """
     ctx = _uniform_ctx()
     loss_fn = make_loss_bc_wins(ctx)
     acts, obs, valid = _batch()
-    win_mask, _, _ = _compute_advantages(
-        jnp.array([0.0, 0.1, 0.2, 0.3]), 0.1, 5.0, wins_only=True,
-        win_thresh=0.5, use_running_stats=False, ema_decay=0.99,
-        running_mean=jnp.zeros(()), running_std=jnp.ones(()),
-    )
-    assert np.allclose(np.asarray(win_mask), 0.0)
-    loss = float(loss_fn(None, acts, obs, valid, jax.random.PRNGKey(SEED), win_mask))
-    assert loss == 0.0
+    rng = jax.random.PRNGKey(SEED)
+
+    def mask(returns):
+        m, _, _ = _compute_advantages(
+            jnp.array(returns), 0.1, 5.0, wins_only=True, win_thresh=0.5,
+            use_running_stats=False, ema_decay=0.99,
+            running_mean=jnp.zeros(()), running_std=jnp.ones(()),
+        )
+        return m
+
+    assert float(loss_fn(None, acts, obs, valid, rng, mask([0.0, 0.1, 0.2, 0.3]))) == 0.0
+    all_wins = float(loss_fn(None, acts, obs, valid, rng, mask([1.0, 2.0, 3.0, 4.0])))
+    uniform = float(make_loss_baseline(ctx)(None, acts, obs, valid, rng, jnp.ones(B)))
+    assert all_wins == pytest.approx(uniform, abs=0.0)
 
 
 # ---------------------------------------------------------------------------

@@ -320,10 +320,13 @@ def make_loss_mixed_replay(ctx: LossContext) -> LossFn:
 
 
 def make_loss_bc_wins(ctx: LossContext) -> LossFn:
-    """Uniform ELBO on all samples, ignoring advantages (BC on wins).
+    """Uniform ELBO over the winning windows only (BC on wins).
 
-    The caller is expected to pre-filter to winning windows.
-    This loss itself ignores advantages entirely.
+    The training loop passes the binary win mask (return > win_threshold,
+    from ``_compute_advantages(wins_only=True)``) as ``advantages``.
+    Rescaling the mask by ``B / n_wins`` turns ``compute_loss``'s batch
+    mean into a uniform mean over the winning windows; a batch with no
+    winning window contributes exactly zero loss.
 
     Hypothesis: if BC on wins helps, the issue is the return weighting,
     not the data distribution.
@@ -332,11 +335,16 @@ def make_loss_bc_wins(ctx: LossContext) -> LossFn:
         ctx: Shared loss context.
 
     Returns:
-        ``LossFn`` with advantages zeroed out.
+        ``LossFn`` averaging uniformly over winning windows.
     """
 
     def loss_fn(params, acts, obs, valid, rng, advantages):
-        return _core_loss(ctx, params, rng, acts, obs, valid, advantages=None)
+        win_mask = (advantages > 0).astype(jnp.float32)
+        n_wins = win_mask.sum()
+        scale = jnp.where(
+            n_wins > 0, win_mask.shape[0] / jnp.maximum(n_wins, 1.0), 0.0
+        )
+        return _core_loss(ctx, params, rng, acts, obs, valid, win_mask * scale)
 
     return loss_fn
 
