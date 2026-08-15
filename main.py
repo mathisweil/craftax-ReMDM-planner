@@ -16,6 +16,7 @@ import jax
 import numpy as np
 import yaml
 
+from src.config import cast_override, deep_merge, parse_overrides, validate_keys
 from src.planners.collect import run_collect
 from src.planners.common import resolve_num_updates, resolve_scaled_hyperparams
 from src.planners.model import load_checkpoint_metadata, resolve_checkpoint_path
@@ -51,7 +52,7 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
 
     p.add_argument(
         "--config", default=default_cfg_path,
-        help="Experiment config, merged (top-level keys) onto configs/defaults.yaml",
+        help="Experiment config, deep-merged onto configs/defaults.yaml",
     )
     p.add_argument(
         "--mode", required=True,
@@ -107,78 +108,6 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
 
 
 # =============================================================================
-# Overrides
-# =============================================================================
-
-def _parse_overrides(pairs: list[str]) -> dict[str, str]:
-    overrides: dict[str, str] = {}
-    for item in pairs:
-        if "=" not in item:
-            raise ValueError(f"--override expects KEY=VALUE, got '{item}'")
-        key, value = item.split("=", 1)
-        overrides[key] = value
-    return overrides
-
-
-def _validate_keys(keys, allowed: set[str], source: str) -> None:
-    """Reject unknown config keys instead of silently ignoring them."""
-    unknown = sorted(set(keys) - allowed)
-    if unknown:
-        raise ValueError(
-            f"Unknown config key(s) {unknown} in {source}. "
-            "Valid keys are defined in configs/defaults.yaml."
-        )
-
-
-def _cast_override(key: str, raw: str, current) -> object:
-    """Cast a CLI override string to the type of the current config value."""
-    if isinstance(current, str):
-        return raw
-
-    try:
-        value = yaml.safe_load(raw)
-    except yaml.YAMLError:
-        value = raw
-
-    if current is None or value is None:
-        return value
-
-    # YAML 1.1 reads '1e-4' as a string; accept scientific notation for
-    # numeric keys.
-    if (
-        isinstance(current, (int, float))
-        and not isinstance(current, bool)
-        and isinstance(value, str)
-    ):
-        try:
-            value = float(value)
-        except ValueError:
-            pass
-
-    if isinstance(current, bool):
-        if not isinstance(value, bool):
-            raise ValueError(f"'{key}' expects a boolean, got '{raw}'")
-        return value
-    if isinstance(current, int):
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"'{key}' expects an integer, got '{raw}'")
-        if isinstance(value, float):
-            if not value.is_integer():
-                raise ValueError(f"'{key}' expects an integer, got '{raw}'")
-            value = int(value)
-        return value
-    if isinstance(current, float):
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"'{key}' expects a number, got '{raw}'")
-        return float(value)
-    if isinstance(current, list):
-        if not isinstance(value, list):
-            raise ValueError(f"'{key}' expects a list, got '{raw}'")
-        return value
-    return value
-
-
-# =============================================================================
 # Config
 # =============================================================================
 
@@ -206,13 +135,13 @@ def build_config() -> dict[str, Any]:
     if overlay_path is not None:
         with open(overlay_path) as f:
             overlay = yaml.safe_load(f) or {}
-        _validate_keys(overlay, allowed, str(overlay_path))
-        yaml_cfg.update(overlay)
+        validate_keys(overlay, allowed, str(overlay_path))
+        deep_merge(yaml_cfg, overlay)
 
-    overrides = _parse_overrides(args.override)
-    _validate_keys(overrides, allowed, "--override")
+    overrides = parse_overrides(args.override)
+    validate_keys(overrides, allowed, "--override")
     for key, raw in overrides.items():
-        yaml_cfg[key] = _cast_override(key, raw, yaml_cfg.get(key))
+        yaml_cfg[key] = cast_override(key, raw, yaml_cfg.get(key))
 
     config: dict[str, Any] = {k.upper(): v for k, v in yaml_cfg.items()}
 

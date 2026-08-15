@@ -15,7 +15,7 @@ import orbax.checkpoint as ocp
 import pytest
 from conftest import NUM_ACTIONS, OBS_DIM, PLAN_HORIZON, SEED, TINY_ARCH
 
-from main import _cast_override, _validate_keys
+from src.config import cast_override, validate_keys
 
 # ---------------------------------------------------------------------------
 # --override typing (spec-config §1.2: values cast to the key's type,
@@ -26,32 +26,31 @@ from main import _cast_override, _validate_keys
 def test_override_values_cast_to_the_key_type():
     """Casting table per spec-config §1.2 (README.md:213).
 
-    The sibling repo implements the same table but raises TypeError
-    where this repo raises ValueError (PARITY 'Config-loader
-    semantics'); each twin asserts its own documented exception type.
+    Both repos implement the same table with the same error types
+    (PARITY 'Config-loader semantics', aligned at step 10).
     """
-    assert _cast_override("k", "0.3", 0.5) == 0.3
-    assert _cast_override("k", "1e-4", 0.5) == pytest.approx(1e-4)
-    assert _cast_override("k", "7", 3) == 7
-    assert _cast_override("k", "7.0", 3) == 7
-    assert _cast_override("k", "false", True) is False
-    assert _cast_override("k", "text", "old") == "text"
-    assert _cast_override("k", "null", 3) is None
-    assert _cast_override("k", "3", None) == 3
+    assert cast_override("k", "0.3", 0.5) == 0.3
+    assert cast_override("k", "1e-4", 0.5) == pytest.approx(1e-4)
+    assert cast_override("k", "7", 3) == 7
+    assert cast_override("k", "7.0", 3) == 7
+    assert cast_override("k", "false", True) is False
+    assert cast_override("k", "text", "old") == "text"
+    assert cast_override("k", "null", 3) is None
+    assert cast_override("k", "3", None) == 3
 
-    with pytest.raises(ValueError):
-        _cast_override("k", "not_a_number", 3)
-    with pytest.raises(ValueError):
-        _cast_override("k", "2.5", 3)  # non-integral float for an int key
-    with pytest.raises(ValueError):
-        _cast_override("k", "maybe", True)
+    with pytest.raises(TypeError):
+        cast_override("k", "not_a_number", 3)
+    with pytest.raises(TypeError):
+        cast_override("k", "2.5", 3)  # non-integral float for an int key
+    with pytest.raises(TypeError):
+        cast_override("k", "maybe", True)
 
 
 def test_unknown_override_key_is_an_error():
     """Unknown --override keys raise instead of silently no-oping
     (spec-config §1.2)."""
-    with pytest.raises(ValueError, match="Unknown config key"):
-        _validate_keys(["not_a_real_key"], {"a", "b"}, "--override")
+    with pytest.raises(KeyError, match="Unknown config key"):
+        validate_keys(["not_a_real_key"], {"a", "b"}, "--override")
 
 
 # ---------------------------------------------------------------------------
