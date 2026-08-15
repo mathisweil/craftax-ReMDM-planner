@@ -51,7 +51,7 @@ def _build_parser(default_cfg_path: str) -> argparse.ArgumentParser:
 
     p.add_argument(
         "--config", default=default_cfg_path,
-        help="Experiment config, deep-merged onto configs/defaults.yaml",
+        help="Experiment config, merged (top-level keys) onto configs/defaults.yaml",
     )
     p.add_argument(
         "--mode", required=True,

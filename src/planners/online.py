@@ -486,11 +486,11 @@ def make_train_online_dagger(config: dict[str, Any]):
 
             # multi-pass training over the aggregated buffer.  Each
             # pass redraws a fresh sample of size ``samples_per_update``
-            # from the filled portion of the buffer; with the default
-            # ``n_train_passes`` ≈ ⌊|D|/B⌋ one update covers ~|D|
-            # examples once the buffer is full, restoring DAgger's
-            # "train on all of D" requirement without inflating gather
-            # memory beyond a single per-pass batch.
+            # from the filled portion of the buffer; the default is a
+            # single pass, matching offline BC's per-update gradient
+            # work exactly (see ``dagger_sizing``); raise
+            # ``DAGGER_TRAIN_PASSES`` to trade that fairness for more
+            # per-update buffer coverage.
             def _pass(pass_state, _):
                 state, rng = pass_state
                 rng, sample_rng = jax.random.split(rng)

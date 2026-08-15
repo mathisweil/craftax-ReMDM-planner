@@ -85,7 +85,7 @@ Two independent training methods; neither depends on the other. An offline BC ch
 ```bash
 cd Craftax_Baselines
 python ppo_rnn.py --env_name Craftax-Classic-Symbolic-v1 \
-    --total_timesteps 500000000 --save_policy --use_wandb
+    --total_timesteps 1000000000 --save_policy --use_wandb
 cd ..
 ```
 
@@ -218,7 +218,7 @@ Precedence, lowest to highest: `configs/defaults.yaml` < `--config` file < `--ov
 
 **Presets hold only deltas, never restate a value they would inherit.** A key belongs in a preset only if its value differs from `defaults.yaml`. Restating one is not harmless duplication: it silently pins the preset when the recipe later moves. `tests/test_config.py` enforces this.
 
-> **PRIMARY keys override LEGACY ones.** Five settings come in a pair: an env-frame **PRIMARY** form (`lr_warmup_frames`, `online_total_timesteps`, `dagger_beta_final`, `dagger_buffer_cycles`, `val_interval_frames`) and an update-count **LEGACY** form (`lr_warmup_steps`, `online_num_updates`, `dagger_beta_decay`, `dagger_buffer_max`, `val_interval`). Whenever the PRIMARY is non-null it wins, and all five are non-null in `defaults.yaml`. **A preset that sets only the LEGACY form must pin the PRIMARY one to `null`, or its setting is silently ignored.** The `exp_*` presets and `smoke.yaml` do exactly that, under a `Baseline pins` heading; those pins are load-bearing.
+> **PRIMARY keys override LEGACY ones.** Six settings come in a pair: an env-frame **PRIMARY** form (`lr_warmup_frames`, `offline_total_timesteps`, `online_total_timesteps`, `dagger_beta_final`, `dagger_buffer_cycles`, `val_interval_frames`) and an update-count **LEGACY** form (`lr_warmup_steps`, `offline_num_updates`, `online_num_updates`, `dagger_beta_decay`, `dagger_buffer_max`, `val_interval`). Whenever the PRIMARY is non-null it wins. **A preset that sets only the LEGACY form must pin the PRIMARY one to `null`, or its setting is silently ignored.** The `exp_*` presets and `smoke.yaml` do exactly that, under a `Baseline pins` heading; those pins are load-bearing.
 
 ```bash
 python main.py --mode offline --ppo-checkpoint <ppo> \
@@ -254,15 +254,15 @@ Historical note: the released Classic offline checkpoint's step subdirectory rea
 
 | Checkpoint directory | Environment | Role | Trained for |
 |---|---|---|---|
-| `checkpoints/offline/Craftax-Classic-Symbolic-v1-OfflineDiffusion-BC-100M` | Craftax Classic | Offline BC planner | 1e8 env frames |
-| `checkpoints/offline/Craftax-Symbolic-v1-OfflineDiffusion-BC-100M` | Full Craftax | Offline BC planner | 1e8 env frames |
-| `checkpoints/online/Craftax-Classic-Symbolic-v1-OnlineDiffusion-DAgger-100M` | Craftax Classic | Online DAgger planner | 1e8 env frames |
-| `checkpoints/online/Craftax-Symbolic-v1-OnlineDiffusion-DAgger-100M` | Full Craftax | Online DAgger planner | 1e8 env frames |
+| `checkpoints/offline/Craftax-Classic-Symbolic-v1-Offline-Diffusion-BC-100M` | Craftax Classic | Offline BC planner | 1e8 env frames |
+| `checkpoints/online/Craftax-Classic-Symbolic-v1-Online-Diffusion-DAgger-100M` | Craftax Classic | Online DAgger planner | 1e8 env frames |
 | `checkpoints/ppo_agents/Craftax-Classic-Symbolic-v1-PPO_RNN-1000M` | Craftax Classic | PPO-RNN expert | 1e9 env frames |
 | `checkpoints/ppo_agents/Craftax-Symbolic-v1-PPO_RNN-1000M` | Full Craftax | PPO-RNN expert | 1e9 env frames |
 
+Full-Craftax diffusion planner checkpoints are not yet released (no full-Craftax training run has completed; the recipe budget is an open author decision — see the workspace step-9 report).
+
 ```bash
-# All six (~470 MB); narrow the --include glob for a single checkpoint.
+# All four (~470 MB); narrow the --include glob for a single checkpoint.
 uv run hf download mathisweil/remdm-craftax-checkpoints --include "checkpoints/**" --local-dir .
 ```
 
@@ -314,7 +314,7 @@ Controlled by the `remask_strategy` key. All strategies operate on top of the th
 |---|---|---|
 | `rescale` | `sigma = eta * sigma_max` | Scales maximum remasking probability proportionally |
 | `cap` | `sigma = min(eta, sigma_max)` | Caps remasking at a fixed rate |
-| `conf` | `sigma = eta * sigma_max * (1 - confidence)` | High-confidence tokens are remasked less |
+| `conf` | `sigma = softmax(-psi) * eta * sigma_max` over committed tokens | Low-confidence tokens are remasked preferentially (psi = decode probability at last unmask) |
 
 ## Key hyperparameters
 
@@ -454,7 +454,7 @@ Stack (identical for training and inference): `env -> LogWrapper -> AutoResetEnv
 uv run pytest
 ```
 
-141 smoke tests, ~55 s, CPU-only. Tiny synthetic data and a shrunken model throughout — no real checkpoints, datasets or network calls, and nothing written outside `tmp_path`. The suite asserts that things **run**, not that results are correct.
+A CPU-only suite (about two minutes). Tiny synthetic data and a shrunken model throughout — no real checkpoints, datasets or network calls, and nothing written outside `tmp_path`. The suite asserts that things **run**, not that results are correct.
 
 | File | Covers |
 |---|---|
