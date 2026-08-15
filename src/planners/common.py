@@ -248,6 +248,54 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
         config["DAGGER_BUFFER_MAX"] = max(1, int(round(float(buffer_cycles) * fpu)))
 
 
+def extract_sliding_windows(
+    obs_t: jax.Array,
+    acts_t: jax.Array,
+    dones_after: jax.Array,
+    plan_horizon: int,
+    rewards_t: jax.Array | None = None,
+) -> tuple[jax.Array, ...]:
+    """Sliding-window extraction shared by the offline and online runners.
+
+    Window ``t`` covers actions ``t .. t+H-1``; it is valid iff no
+    episode boundary falls strictly inside the action sequence, i.e.
+    ``dones_after[t .. t+H-2]`` are all False, where ``dones_after[i]``
+    marks a reset AFTER action ``i``. A boundary on the *last* action is
+    allowed - the window's action sequence is still a coherent
+    trajectory. The offline runner's pre-step done convention converts
+    to this one by dropping the first row (``done[i+1]`` marks the reset
+    after action ``i``); the last row of ``dones_after`` is never read.
+
+    Args:
+        obs_t:        ``[T, E, D]`` observations at each step.
+        acts_t:       ``[T, E]`` actions.
+        dones_after:  ``[T, E]`` post-action episode boundaries.
+        plan_horizon: Window length H.
+        rewards_t:    Optional ``[T, E]`` rewards; when given, per-window
+                      H-step reward sums are returned as well.
+
+    Returns:
+        ``(obs_w [W,E,D], acts_w [W,E,H], valid_w [W,E])``, plus
+        ``returns_w [W,E]`` when ``rewards_t`` is given; ``W = T-H+1``.
+    """
+    num_windows = obs_t.shape[0] - plan_horizon + 1
+    num_envs = acts_t.shape[1]
+
+    def _window(t_idx: jax.Array) -> tuple[jax.Array, ...]:
+        obs_w = obs_t[t_idx]
+        acts = jax.lax.dynamic_slice(acts_t, (t_idx, 0), (plan_horizon, num_envs))
+        dones = jax.lax.dynamic_slice(
+            dones_after, (t_idx, 0), (plan_horizon - 1, num_envs)
+        )
+        valid = ~jnp.any(dones, axis=0)
+        if rewards_t is None:
+            return obs_w, jnp.swapaxes(acts, 0, 1), valid
+        rew = jax.lax.dynamic_slice(rewards_t, (t_idx, 0), (plan_horizon, num_envs))
+        return obs_w, jnp.swapaxes(acts, 0, 1), valid, jnp.sum(rew, axis=0)
+
+    return jax.vmap(_window)(jnp.arange(num_windows))
+
+
 def dagger_sizing(config: dict[str, Any], num_updates: int) -> dict[str, int]:
     """Derive the DAgger loop sizes.
 

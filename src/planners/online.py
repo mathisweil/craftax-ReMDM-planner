@@ -29,6 +29,7 @@ from src.diffusion.schedules import SCHEDULE_MAP
 from .common import (
     compile_and_run,
     dagger_sizing,
+    extract_sliding_windows,
     format_timing,
     make_grad_step,
     make_validate,
@@ -67,6 +68,32 @@ class DAggerCarry(NamedTuple):
     buf_fill: int
     best_params: Any  # copy of params with highest val return
     best_val_return: jnp.ndarray  # scalar, -inf initially
+
+
+def expert_action(
+    pi_logits: jax.Array, deterministic: bool, rng: jax.Array
+) -> jax.Array:
+    """Expert label for the visited state (spec-training §1.5).
+
+    Deterministic argmax keeps the expert mapping s -> a* fixed,
+    removing label noise from the aggregated dataset; the sampled
+    variant draws from the expert policy.
+    """
+    if deterministic:
+        return jnp.argmax(pi_logits, axis=-1)
+    return jax.random.categorical(rng, pi_logits)
+
+
+def mixed_execution_mask(
+    rng: jax.Array, beta: jax.Array, num_envs: int
+) -> jax.Array:
+    """Per-step Bernoulli(beta) expert/learner gate.
+
+    DAgger Alg 3.1 instantiation (spec-training §1.2): each env
+    executes the expert action with probability beta, else the
+    learner's planned action.
+    """
+    return jax.random.bernoulli(rng, beta, shape=(num_envs,))
 
 
 def make_train_online_dagger(config: dict[str, Any]):
@@ -347,28 +374,15 @@ def make_train_online_dagger(config: dict[str, Any]):
                     # Expert action with the correct done flag so the
                     # PPO RNN hidden state resets on episode boundaries.
                     pi, new_hs = ppo.get_pi(o, p_done, hs)
-                    if expert_deterministic:
-                        # argmax keeps the expert mapping s -> a
-                        # deterministic, removing label noise from D.
-                        expert_act = jnp.argmax(
-                            pi.logits,
-                            axis=-1,
-                        ).squeeze(0)
-                    else:
-                        expert_act = jax.random.categorical(
-                            ppo_rng,
-                            pi.logits,
-                        ).squeeze(0)
+                    expert_act = expert_action(
+                        pi.logits, expert_deterministic, ppo_rng
+                    ).squeeze(0)
 
                     # Learner action from the plan
                     learner_act = learner_plan[:, step_i]
 
                     # Mixed execution: prob beta -> expert, else learner
-                    use_expert = jax.random.bernoulli(
-                        mix_rng,
-                        beta,
-                        shape=(num_envs,),
-                    )
+                    use_expert = mixed_execution_mask(mix_rng, beta, num_envs)
                     exec_act = jnp.where(
                         use_expert,
                         expert_act,
@@ -444,28 +458,11 @@ def make_train_online_dagger(config: dict[str, Any]):
             acts_t = traj_expert_acts.reshape(T, num_envs)  # [T, E]
             dones_t = traj_dones.reshape(T, num_envs)  # [T, E]
 
-            # sliding-window extraction matching offline.py.
-            # Window (t, e) is valid iff actions [t..t+H-1] all came from
-            # one episode, i.e. dones[t..t+H-2] are all False.  An episode
-            # boundary on the *last* action is allowed — the window's
-            # action sequence is still a coherent trajectory.
-            def _window(t_idx):
-                obs_w = obs_t[t_idx]  # [E, D]
-                acts_w = jax.lax.dynamic_slice(
-                    acts_t,
-                    (t_idx, 0),
-                    (plan_horizon, num_envs),
-                )  # [H, E]
-                dones_w = jax.lax.dynamic_slice(
-                    dones_t,
-                    (t_idx, 0),
-                    (plan_horizon - 1, num_envs),
-                )  # [H-1, E]
-                valid = ~jnp.any(dones_w, axis=0)  # [E]
-                return obs_w, jnp.swapaxes(acts_w, 0, 1), valid
-
-            obs_w, act_w, valid_w = jax.vmap(_window)(
-                jnp.arange(valid_per_rollout),
+            # sliding-window extraction (shared helper, same semantics
+            # as offline.py): window (t, e) is valid iff dones_t[t..t+H-2]
+            # are all False; dones_t already marks post-action resets.
+            obs_w, act_w, valid_w = extract_sliding_windows(
+                obs_t, acts_t, dones_t, plan_horizon
             )
             # obs_w:   [W, E, D]
             # act_w:   [W, E, H]

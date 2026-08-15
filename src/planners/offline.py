@@ -15,6 +15,7 @@ from src.diffusion.schedules import SCHEDULE_MAP
 
 from .common import (
     compile_and_run,
+    extract_sliding_windows,
     format_timing,
     make_grad_step,
     make_validate,
@@ -220,31 +221,17 @@ def make_train_offline_diffusion(config: dict[str, Any]):
                 num_steps,
             )
 
-            # --- Diffusion window extraction ---
-            def _window(t_idx):
-                obs_t = traj.obs[t_idx]
-                acts = jax.lax.dynamic_slice(
-                    traj.action, (t_idx, 0), (plan_horizon, num_envs)
-                )
-                # traj.done[t] marks a reset *before* step t, so traj.done[t_idx]
-                # only tells us obs_t is an episode-start — it does NOT invalidate the
-                # window. We check done flags strictly *inside* the action sequence.
-                dones = jax.lax.dynamic_slice(
-                    traj.done,
-                    (t_idx + 1, 0),
-                    (plan_horizon - 1, num_envs),
-                )
-                valid = ~jnp.any(dones, axis=0)
-
-                rew_seq = jax.lax.dynamic_slice(
-                    traj.reward, (t_idx, 0), (plan_horizon, num_envs)
-                )
-                window_return = jnp.sum(rew_seq, axis=0)  # [num_envs]
-
-                return obs_t, jnp.swapaxes(acts, 0, 1), valid, window_return
-
-            obs_w, act_w, valid_w, returns_w = jax.vmap(_window)(
-                jnp.arange(valid_per_rollout)
+            # --- Diffusion window extraction (shared helper) ---
+            # traj.done[t] marks a reset *before* step t, so the reset
+            # AFTER action t is traj.done[t + 1]: shift by one row (the
+            # padded final row is never read by the helper).
+            dones_after = jnp.concatenate(
+                [traj.done[1:], jnp.zeros((1, num_envs), dtype=traj.done.dtype)],
+                axis=0,
+            )
+            obs_w, act_w, valid_w, returns_w = extract_sliding_windows(
+                traj.obs, traj.action, dones_after, plan_horizon,
+                rewards_t=traj.reward,
             )
 
             flat_obs = obs_w.reshape(-1, obs_dim)
