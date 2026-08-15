@@ -347,12 +347,12 @@ Controlled by the `remask_strategy` key. All strategies operate on top of the th
 
 | Parameter | Default | Description |
 |---|---|---|
-| `d_model` | 256 | Hidden dimension |
-| `n_heads` | 4 | Attention heads |
-| `n_layers` | 4 | Transformer blocks |
-| `d_ff` | 512 | FFN inner dimension |
+| `d_model` | 384 | Hidden dimension |
+| `n_heads` | 8 | Attention heads |
+| `n_layers` | 6 | Transformer blocks |
+| `d_ff` | 768 | FFN inner dimension |
 | `obs_encoder_layers` | 2 | MLP layers in the observation encoder |
-| `obs_encoder_width` | 512 | Observation encoder hidden width |
+| `obs_encoder_width` | 768 | Observation encoder hidden width |
 | `dropout_rate` | 0.1 | Dropout rate (disabled at inference) |
 
 **Offline training**
@@ -361,9 +361,9 @@ Controlled by the `remask_strategy` key. All strategies operate on top of the th
 |---|---|---|
 | `offline_total_timesteps` | 1e8 | Env-frame budget. Derives `num_updates` as `offline_total_timesteps // (num_envs * num_steps)`. |
 | `num_envs` | 1024 | Parallel environments |
-| `num_steps` | 64 | Environment steps collected per update |
+| `num_steps` | 128 | Environment steps collected per update |
 | `num_minibatches` | 8 | Gradient minibatches per epoch |
-| `update_epochs` | 4 | SGD epochs per update step |
+| `update_epochs` | 8 | SGD epochs per update step |
 | `num_repeats` | 1 | Independent training seeds (vmapped) |
 | `lr` | 3e-4 | Adam learning rate (cosine-decayed to 10% over all gradient steps) |
 | `lr_warmup_frames` | 1.6384e6 | Env-frame linear warm-up budget (0 = disabled). Derives `LR_WARMUP_STEPS` in gradient steps. |
@@ -373,7 +373,7 @@ Controlled by the `remask_strategy` key. All strategies operate on top of the th
 | `val_interval_frames` | 1e6 | Env-frames between validation rollouts. Derives `VAL_INTERVAL` in update steps. |
 | `val_diffusion_steps` | 50 | Denoising steps during validation rollouts |
 | `val_replan_every` | 4 | Env steps executed per diffusion plan during validation |
-| `val_steps` | 128 | Total env steps per validation rollout |
+| `val_steps` | 256 | Total env steps per validation rollout |
 
 **Online DAgger training**
 
@@ -407,7 +407,7 @@ Controlled by the `remask_strategy` key. All strategies operate on top of the th
 | `resume_step` | `null` | Per-run: `--resume-step` (auto-read from metadata) |
 | `seed` | `null` | RNG seed (random if null; per-run: `--seed`) |
 | `use_wandb` | `true` | Enable Weights & Biases logging |
-| `wandb_project` | `remdm-craftax` | W&B project name |
+| `wandb_project` | `craftax-ReMDM-planner` | W&B project name |
 | `wandb_entity` | (author's) | W&B entity |
 | `wandb_download_dir` | `null` | Download dir for W&B artifacts; null = `./artifacts/` |
 | `jax_compilation_cache_dir` | `null` | Persistent XLA compilation cache; null = off. See below |
