@@ -146,9 +146,31 @@ def test_fast_overlay_shrinks_only_its_own_keys() -> None:
 # ---------------------------------------------------------------------------
 
 
+# The Full-Craftax budget keys restate the defaults' 1e8, but the
+# documented derived quantities are 3e8-consistent and the last live
+# runs at these geometries used 2e8 - which budget is canonical is a
+# recorded needs-author-input decision (step-9 report; traceability §3
+# / §8.8). Until it lands, the two presets are expected delta-only
+# violations.
+_PENDING_BUDGET_DECISION = {"final_craftax_qmul.yaml", "final_craftax_ucl.yaml"}
+
+
 @pytest.mark.parametrize(
     "preset",
-    sorted(p.name for p in _CONFIGS.glob("*.yaml") if p.name not in _DELTA_EXEMPT),
+    [
+        pytest.param(
+            name,
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="§8.8 budget needs-author-input (step-9 report)",
+            ),
+        )
+        if name in _PENDING_BUDGET_DECISION
+        else name
+        for name in sorted(
+            p.name for p in _CONFIGS.glob("*.yaml") if p.name not in _DELTA_EXEMPT
+        )
+    ],
 )
 def test_preset_restates_no_inherited_value(preset) -> None:
     """A preset may only hold keys whose value differs from defaults.yaml.

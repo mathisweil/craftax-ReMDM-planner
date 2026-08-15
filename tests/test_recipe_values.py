@@ -171,10 +171,11 @@ def test_classic_beta_decay_resolves_to_documented(preset, n_documented, decay_d
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "traceability §8.8: final_craftax_* ship online_total_timesteps=1e8 "
-        "but the documented quantities (5231 / 36621 updates, decays "
-        "0.9998175 / 0.9999739) are consistent only with a 3e8 budget; "
-        "which is canonical is a step-9 decision"
+        "traceability §8.8, RETAINED in step 9 as needs-author-input: the "
+        "documented quantities (5231 / 36621 updates) are 3e8-consistent, "
+        "the shipped key is 1e8, and the last live runs at these "
+        "geometries used 2e8 - the canonical budget requires the author "
+        "(step-9 report)"
     ),
 )
 @pytest.mark.parametrize(
@@ -233,10 +234,12 @@ def test_budget_independent_quantities(preset, warmup_steps, buffer_max):
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "traceability §8.11 (author decision 2026-08-15): warmup is "
-        "environment-frame denominated, but the implemented conversion "
-        "frames//fpu is an update count consumed by optax as gradient "
-        "steps - warmup covers 1/64 of the intended frames"
+        "traceability §8.11, RETAINED in step 9 as needs-author-input: "
+        "the frame-denominated conversion (binding author decision) would "
+        "make lr_warmup_frames (1.048576e8) exceed the classic budgets "
+        "(re-snapped 9.99e7 frames), leaving final_classic_* unresolvable "
+        "- the warmup value/budget pairing requires the author "
+        "(step-9 report)"
     ),
 )
 @pytest.mark.parametrize("preset", _FINALS)
