@@ -751,10 +751,14 @@ def make_run_ablation(
     win_thresh = config.get("WIN_THRESHOLD", 0.5)
     running_stats_ema_decay = config.get("RUNNING_STATS_EMA_DECAY", 0.99)
 
-    # Mixed replay
+    # Mixed replay. Every window collected this iteration is pushed; the
+    # ring buffer's own capacity is the only cap (as in the minihack twin).
     replay_buffer_size = config.get("MIXED_REPLAY_BUFFER_SIZE", 10000)
     mixed_replay_ratio = config.get("MIXED_REPLAY_RATIO", 0.25)
-    n_replay_push = replay_buffer_size // 10  # new samples per iteration
+    n_windows_per_iter = int(config["NUM_ENVS"]) * (
+        int(config["NUM_STEPS"]) - int(config["PLAN_HORIZON"]) + 1
+    )
+    n_replay_push = min(replay_buffer_size, n_windows_per_iter)
 
     # Reward model
     rm_train_steps = config.get("REWARD_MODEL_TRAIN_STEPS", 50)
