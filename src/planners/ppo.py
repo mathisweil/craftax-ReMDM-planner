@@ -38,7 +38,17 @@ def load_ppo_params(
     else:
         abstract = abstract_init(lambda: network.init(rng, jnp.zeros((1, *obs_shape))))
 
-    params, step = restore_latest_params(path, abstract)
+    try:
+        params, step = restore_latest_params(path, abstract)
+    except ValueError as exc:
+        # Early, named failure instead of a ScopeParamShapeError deep in
+        # JIT tracing (step-7 finding N7: e.g. a Classic expert paired
+        # with the full-Craftax environment).
+        raise ValueError(
+            f"PPO expert checkpoint at '{path}' does not match the target "
+            f"environment geometry (obs shape {tuple(obs_shape)}, "
+            f"model_type {model_type!r}): {exc}"
+        ) from exc
     print(f"Loaded {model_type.upper()} checkpoint from '{path}' (step {step})")
     return params
 

@@ -32,22 +32,11 @@ _HF_OFFLINE = (
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "step-7 finding N7 (correctness defect per the step-7 §9 "
-        "classification): loading a PPO expert against a mismatched "
-        "observation dimensionality is not validated - the mismatch only "
-        "surfaces later as a flax ScopeParamShapeError deep inside JIT "
-        "tracing (step-7 reproduction: Classic expert obs 1345 vs full "
-        "Craftax 8268)"
-    ),
-)
 def test_ppo_expert_load_rejects_a_mismatched_obs_dimension(tmp_path):
     """Loading expert parameters whose observation dimensionality
     disagrees with the target environment must raise a clear ValueError
     naming the dimensions, before any JIT tracing (spec-config §6.1:
-    match the config to the checkpoint; step-7 N7).
+    match the config to the checkpoint; was step-7 finding N7).
 
     Method: save a tiny 'ppo' (MLP ActorCritic) checkpoint initialised
     at obs dim 8, then load it declaring obs dim 16.

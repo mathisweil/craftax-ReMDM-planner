@@ -132,12 +132,54 @@ def restore_latest(path: str, args: Any) -> tuple[Any, int]:
     return restored, step
 
 
+def _validate_restored_tree(restored: Any, abstract_tree: Any, path: str) -> None:
+    """Raise ValueError when a restored tree disagrees with its target.
+
+    Orbax's PyTree restore adopts the *saved* shapes even when an
+    abstract target is supplied, so an architecture mismatch between the
+    checkpoint and the model built from the config used to surface only
+    later, deep inside JIT tracing (step-8 finding S8-1; step-7 N7).
+    """
+
+    def _flat(tree: Any) -> dict[str, Any]:
+        return {
+            "/".join(str(k.key) if hasattr(k, "key") else str(k) for k in p): leaf
+            for p, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]
+        }
+
+    flat_restored, flat_abstract = _flat(restored), _flat(abstract_tree)
+    problems = [
+        f"{key}: missing from checkpoint"
+        for key in sorted(flat_abstract.keys() - flat_restored.keys())
+    ] + [
+        f"{key}: not expected by the model"
+        for key in sorted(flat_restored.keys() - flat_abstract.keys())
+    ]
+    for key in sorted(flat_abstract.keys() & flat_restored.keys()):
+        want, got = flat_abstract[key], flat_restored[key]
+        if tuple(got.shape) != tuple(want.shape):
+            problems.append(
+                f"{key}: checkpoint shape {tuple(got.shape)} vs model "
+                f"shape {tuple(want.shape)}"
+            )
+    if problems:
+        raise ValueError(
+            f"Checkpoint at '{path}' does not match the model built from "
+            "the config (match the config to the checkpoint, README "
+            "§Checkpoints): " + "; ".join(problems)
+        )
+
+
 def restore_latest_params(path: str, abstract_params_tree: Any) -> tuple[Any, int]:
     """Restore only the ``params`` entry from the latest checkpoint step.
 
     Ignores optimiser state and anything else in the checkpoint. The
     ``{"params": ...}`` wrapper must mirror the save side; do not change
     one without the other.
+
+    Raises:
+        ValueError: If the restored parameters do not match the shapes
+            of ``abstract_params_tree`` (checkpoint/config mismatch).
     """
     restored, step = restore_latest(
         path,
@@ -146,6 +188,7 @@ def restore_latest_params(path: str, abstract_params_tree: Any) -> tuple[Any, in
             partial_restore=True,
         ),
     )
+    _validate_restored_tree(restored["params"], abstract_params_tree, path)
     return restored["params"], step
 
 

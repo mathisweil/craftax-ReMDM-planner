@@ -75,21 +75,12 @@ def test_ablation_suite_rejects_unknown_config_keys(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "step-8 finding: load_checkpoint silently restores a checkpoint "
-        "whose architecture disagrees with the config (PyTree restore "
-        "without an abstract target adopts the saved shapes); traceability "
-        "§5 res. 19 recorded 'Orbax raises on mismatch', which does not "
-        "hold on this path - the failure surfaces only later at apply time"
-    ),
-)
 def test_checkpoint_restore_with_mismatched_config_fails_loudly(tmp_path):
     """Restoring a checkpoint under a config with a different
     architecture must raise, not silently load (spec-config §6.1 'the
     model is built from the config: match the config to the checkpoint';
-    traceability §5 res. 19: Orbax raises on mismatch, no pre-check).
+    was step-8 finding S8-1: the mismatch restored silently and failed
+    only at apply time).
     """
     from src.planners.model import build_model, init_params, load_checkpoint
 
@@ -102,9 +93,7 @@ def test_checkpoint_restore_with_mismatched_config_fails_loudly(tmp_path):
 
     arch_b = {**TINY_ARCH, "D_MODEL": TINY_ARCH["D_MODEL"] * 2, "PLAN_HORIZON": PLAN_HORIZON}
     model_b = build_model(arch_b, NUM_ACTIONS)
-    with pytest.raises(Exception):  # noqa: B017 - the canonical contract is
-        # only "fails rather than silently loads"; the concrete type is
-        # Orbax-internal and unpinned (traceability §5 res. 19)
+    with pytest.raises(ValueError, match="does not match the model"):
         load_checkpoint(
             model_b, jax.random.PRNGKey(SEED + 1), OBS_DIM, PLAN_HORIZON, str(ckpt)
         )
