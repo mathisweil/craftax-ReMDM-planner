@@ -11,7 +11,7 @@
 #
 # All fairness-critical hyperparameters are denominated in env frames or update
 # cycles, so resolve_scaled_hyperparams() rescales them to this rollout width
-# automatically. Resolves to num_updates = 8138, lr_warmup_steps = 8533,
+# automatically. Resolves to num_updates = 8138, lr_warmup_steps = 8512 gradient steps (133 updates x 64),
 # dagger_buffer_max = 23,438, beta decay 0.9998689.
 # =============================================================================
 

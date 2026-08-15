@@ -20,10 +20,10 @@
 # resolve_scaled_hyperparams, not from arithmetic done by hand, and are
 # asserted by test_final_configs_resolve_to_their_documented_quantities.
 #
-# Units caveat: lr_warmup_steps is handed to optax as a *gradient*-step count,
-# while decay_steps is num_updates * update_epochs * num_minibatches. Read as
-# update steps a warmup can look as though it outlasts the run when it does
-# not. Open question for the author.
+# Warmup units (author decision 2026-08-15, final): lr_warmup_frames is
+# env-frame denominated and converts to the gradient-step count optax
+# consumes via (frames // fpu) * update_epochs * num_minibatches
+# (* dagger_train_passes online).
 # =============================================================================
 
 # ── Environment ──────────────────────────────────────────────────────────────
@@ -64,9 +64,13 @@ lr: 3.0e-4
 max_grad_norm: 1.0
 # lr_warmup_frames is the env-frame-denominated source of truth (invariant
 # under num_envs changes).  When set, it overrides lr_warmup_steps via:
-#   lr_warmup_steps = lr_warmup_frames // (num_envs * num_steps)
-# Resolves to lr_warmup_steps 8533 on QMUL's 96 envs and 1600 on UCL's 512.
-lr_warmup_frames: 1.048576e8        # PRIMARY: env-frame warmup budget
+#   lr_warmup_steps = (lr_warmup_frames // fpu) * update_epochs
+#                     * num_minibatches (* dagger_train_passes online)
+# i.e. gradient steps, the unit optax consumes. Canonical value
+# 1,638,400 frames (author decision 2026-08-15: the corrected effective
+# warmup; the earlier nominal 1.048576e8 exceeded the whole budget).
+# Resolves to 8512 gradient steps on QMUL's 96 envs, 1600 on UCL's 512.
+lr_warmup_frames: 1.6384e6          # PRIMARY: env-frame warmup budget
 lr_warmup_steps: 0                  # LEGACY: linear warm-up before cosine LR decay (0 = disabled)
 
 # ── Rollout (shared by offline + online) ─────────────────────────────────────

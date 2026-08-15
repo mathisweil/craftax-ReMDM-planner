@@ -3,7 +3,7 @@
 # Env-frame-matched second seed of final_craftax_ucl.yaml.
 # -----------------------------------------------------------------------------
 # configs/defaults.yaml holds the Classic recipe. Full Craftax departs from it
-# in eleven places, listed below, and those eleven are DUPLICATED verbatim in
+# in eight places, listed below, and those eight are DUPLICATED verbatim in
 # final_craftax_ucl.yaml: with no inheritance between configs there is nowhere
 # else to put them. Only num_envs and seed genuinely differ between the two.
 #
@@ -11,15 +11,13 @@
 # guard is test_cluster_siblings_differ_only_in_num_envs_and_seed, which fails
 # if they drift.
 #
+# Budgets and warmup are the canonical 1e8-frame / 1,638,400-frame values
+# inherited from defaults.yaml (author decision 2026-08-15, final).
 # Fairness-critical hyperparameters are denominated in env frames or update
 # cycles, so resolve_scaled_hyperparams() rescales them to this rollout width
-# automatically. Resolves to num_updates = 36,621, lr_warmup_steps = 9600,
-# dagger_buffer_max = 6,250, beta decay 0.9999739.
-#
-# Units caveat: lr_warmup_steps is handed to optax as a *gradient*-step count,
-# while decay_steps is num_updates * update_epochs * num_minibatches. Read as
-# update steps a warmup can look as though it outlasts the run when it does
-# not. Open question for the author.
+# automatically. Resolves to num_updates = 12,207, lr_warmup_steps = 12,800
+# gradient steps (200 updates x 64), dagger_buffer_max = 6,250, beta decay
+# 0.9999218, 781,248 total gradient steps.
 # =============================================================================
 
 # ── Environment ──────────────────────────────────────────────────────────────
@@ -31,22 +29,14 @@ temperature: 0.3
 
 # ── Optimisation ─────────────────────────────────────────────────────────────
 lr: 5.0e-4
-# IDENTICAL to UCL as a frame budget.  On this file's 64 envs it resolves to
-# lr_warmup_steps = 9600 against 2,343,744 gradient steps.
-lr_warmup_frames: 7.86432e7         # -> lr_warmup_steps = 9600
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 64
 
-# ── Offline training ─────────────────────────────────────────────────────────
-offline_total_timesteps: 1.0e+8        # IDENTICAL to UCL
-
 # ── Online DAgger training ───────────────────────────────────────────────────
-online_total_timesteps: 1.0e+8         # IDENTICAL to UCL
-dagger_beta_final: 0.385            # resolves to decay 0.9999739 over 36,621 updates
-# 0.76294 cycles * 8192 fpu = 6,250 samples, not the ~37,500 an earlier
-# num_envs: 384 gave.  Whether the recipe wants a fixed sample count or a
-# fixed cycle count is an open question for the author.
+dagger_beta_final: 0.385            # resolves to decay 0.9999218 over 12,207 updates
+# Cycle-denominated by author decision (2026-08-15): retention stays
+# hardware-invariant. 0.76294 cycles * 8192 fpu = 6,250 samples.
 dagger_buffer_cycles: 0.76294       # -> dagger_buffer_max = 6,250 samples
 
 # ── Validation rollouts ──────────────────────────────────────────────────────

@@ -194,11 +194,24 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
     """
     fpu = int(config["NUM_STEPS"]) * int(config["NUM_ENVS"])
 
+    def _grad_steps_per_update() -> int:
+        gspu = int(config["UPDATE_EPOCHS"]) * int(config["NUM_MINIBATCHES"])
+        if mode == "online":
+            gspu *= int(config.get("DAGGER_TRAIN_PASSES") or 1)
+        return gspu
+
     # float() first to accept YAML scientific notation parsed as string
     # (PyYAML 1.1 only auto-coerces "3.0e+8", not "3e8" or "3.0e8").
     warmup_frames = config.get("LR_WARMUP_FRAMES")
     if warmup_frames is not None:
-        config["LR_WARMUP_STEPS"] = int(float(warmup_frames)) // fpu
+        # Frame-denominated warmup (author decision 2026-08-15, final):
+        # optax consumes warmup in *gradient* steps, so frames convert
+        # through the effective geometry - one optimiser update spans
+        # fpu frames and performs update_epochs * num_minibatches
+        # (* dagger_train_passes online) gradient steps.
+        config["LR_WARMUP_STEPS"] = (
+            int(float(warmup_frames)) // fpu
+        ) * _grad_steps_per_update()
 
     val_frames = config.get("VAL_INTERVAL_FRAMES")
     if val_frames is not None:
@@ -211,11 +224,7 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
     warmup_steps = int(config.get("LR_WARMUP_STEPS") or 0)
     num_updates = config.get("NUM_UPDATES")
     if warmup_steps > 0 and num_updates is not None:
-        grad_steps_per_update = int(config["UPDATE_EPOCHS"]) * int(
-            config["NUM_MINIBATCHES"]
-        )
-        if mode == "online":
-            grad_steps_per_update *= int(config.get("DAGGER_TRAIN_PASSES") or 1)
+        grad_steps_per_update = _grad_steps_per_update()
         total_grad_steps = int(num_updates) * grad_steps_per_update
         if warmup_steps >= total_grad_steps:
             raise ValueError(

@@ -57,16 +57,15 @@ def test_classic_recipe_method_values():
         assert config[key] == expected, f"{key}: {config[key]} != {expected}"
 
 
-# Full Craftax departs from Classic on 11 keys duplicated verbatim in
-# both cluster siblings (spec-config §5.2; final_craftax_ucl.yaml:6-9).
+# Full Craftax departs from Classic on 8 keys duplicated verbatim in
+# both cluster siblings (spec-config §5.2 as amended at step 10: the
+# restated 1e8 budgets and the stale warmup override were removed per
+# the 2026-08-15 author decisions).
 _FULL_CRAFTAX_DELTA = {
     "ENV_NAME": "Craftax-Symbolic-v1",
     "DIFFUSION_STEPS": 25,
     "TEMPERATURE": 0.3,
     "LR": 5e-4,
-    "LR_WARMUP_FRAMES": 7.86432e7,
-    "OFFLINE_TOTAL_TIMESTEPS": 1.0e8,
-    "ONLINE_TOTAL_TIMESTEPS": 1.0e8,
     "DAGGER_BETA_FINAL": 0.385,
     "DAGGER_BUFFER_CYCLES": 0.76294,
     "VAL_DIFFUSION_STEPS": 25,
@@ -76,7 +75,7 @@ _FULL_CRAFTAX_DELTA = {
 
 @pytest.mark.parametrize("preset", ["final_craftax_ucl", "final_craftax_qmul"])
 def test_full_craftax_recipe_deltas(preset):
-    """The Full-Craftax recipe's 11 documented departure keys carry the
+    """The Full-Craftax recipe's 8 documented departure keys carry the
     spec-config §5.2 values in both cluster siblings."""
     raw = {
         k.upper(): v
@@ -168,30 +167,22 @@ def test_classic_beta_decay_resolves_to_documented(preset, n_documented, decay_d
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "traceability §8.8, RETAINED in step 9 as needs-author-input: the "
-        "documented quantities (5231 / 36621 updates) are 3e8-consistent, "
-        "the shipped key is 1e8, and the last live runs at these "
-        "geometries used 2e8 - the canonical budget requires the author "
-        "(step-9 report)"
-    ),
-)
 @pytest.mark.parametrize(
     ("preset", "n_documented", "decay_documented"),
     [
-        ("final_craftax_ucl", 5231, 0.9998175),
-        ("final_craftax_qmul", 36_621, 0.9999739),
+        ("final_craftax_ucl", 1743, 0.9994525),
+        ("final_craftax_qmul", 12_207, 0.9999218),
     ],
 )
 def test_full_craftax_beta_decay_resolves_to_documented(
     preset, n_documented, decay_documented
 ):
-    """Canonical (documented) Full-Craftax resolutions per spec-config §4.
+    """Canonical Full-Craftax resolutions from the 1e8-frame budget
+    (author decision 2026-08-15, final; was the §8.8 retained xfail).
 
-    Hand derivation: 0.385^(1/5231) = exp(-0.954512/5231) = 0.99981754;
-    0.385^(1/36621) = exp(-0.954512/36621) = 0.99997394.
+    Hand derivation: 1e8 // 57344 = 1743, 1e8 // 8192 = 12,207;
+    0.385^(1/1743) = exp(-0.954512/1743) = 0.99945247;
+    0.385^(1/12207) = exp(-0.954512/12207) = 0.99992181.
     """
     config = _resolved(preset)
     assert int(config["NUM_UPDATES"]) == n_documented
@@ -204,22 +195,21 @@ def test_full_craftax_beta_decay_resolves_to_documented(
     ("preset", "warmup_steps", "buffer_max"),
     [
         ("final_classic_ucl", 1600, 125_000),
-        ("final_classic_qmul", 8533, 23_438),
-        ("final_craftax_ucl", 1371, 43_750),
-        ("final_craftax_qmul", 9600, 6_250),
+        ("final_classic_qmul", 8512, 23_438),
+        ("final_craftax_ucl", 1792, 43_750),
+        ("final_craftax_qmul", 12_800, 6_250),
     ],
 )
 def test_budget_independent_quantities(preset, warmup_steps, buffer_max):
     """Warmup-step and buffer resolutions (budget-independent).
 
-    Source: spec-config §4 documented quantities. Hand derivations:
-    warmup = floor(lr_warmup_frames / fpu): 1.048576e8/65536 = 1600,
-    1.048576e8/12288 = 8533.3 -> 8533; 7.86432e7/57344 = 1371.4 -> 1371;
-    7.86432e7/8192 = 9600. buffer = round(cycles * fpu):
+    Source: the 2026-08-15 final author decisions (lr_warmup_frames =
+    1,638,400, frame-denominated through the geometry) and spec-config
+    §2 cycles. Hand derivations: warmup = (1_638_400 // fpu) * 64:
+    //65536 = 25 -> 1600; //12288 = 133 -> 8512; //57344 = 28 -> 1792;
+    //8192 = 200 -> 12800. buffer = round(cycles * fpu):
     1.90735*65536 = 125000.1 -> 125000; 1.90735*12288 = 23437.5 -> 23438;
     0.76294*57344 = 43750.0 -> 43750; 0.76294*8192 = 6250.0 -> 6250.
-    (The *unit* of the warmup count is defective — see the xfail below —
-    but these are the documented resolutions of the shipped formula.)
     """
     config = _resolved(preset)
     assert int(config["LR_WARMUP_STEPS"]) == warmup_steps
@@ -231,17 +221,6 @@ def test_budget_independent_quantities(preset, warmup_steps, buffer_max):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "traceability §8.11, RETAINED in step 9 as needs-author-input: "
-        "the frame-denominated conversion (binding author decision) would "
-        "make lr_warmup_frames (1.048576e8) exceed the classic budgets "
-        "(re-snapped 9.99e7 frames), leaving final_classic_* unresolvable "
-        "- the warmup value/budget pairing requires the author "
-        "(step-9 report)"
-    ),
-)
 @pytest.mark.parametrize("preset", _FINALS)
 def test_warmup_step_count_covers_the_configured_frames(preset):
     """The resolved warmup count, read in the unit optax consumes it
@@ -254,8 +233,9 @@ def test_warmup_step_count_covers_the_configured_frames(preset):
     steps, so frames per gradient step = fpu / geometry, and a
     frame-faithful warmup count satisfies
     |steps * fpu / geometry - lr_warmup_frames| < fpu (one update of
-    slack, rounding-agnostic). The shipped frames//fpu count is 64x too
-    small for every final config.
+    slack, rounding-agnostic). Canonical since the 2026-08-15 author
+    decision (lr_warmup_frames = 1,638,400; was the §8.11 retained
+    xfail).
     """
     config = _resolved(preset)
     fpu = int(config["NUM_ENVS"]) * int(config["NUM_STEPS"])

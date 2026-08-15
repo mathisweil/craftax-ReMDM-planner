@@ -4,7 +4,7 @@
 # Craftax DAgger checkpoint used by the RL fine-tuning ablation suite.
 # -----------------------------------------------------------------------------
 # configs/defaults.yaml holds the Classic recipe. Full Craftax departs from it
-# in eleven places, listed below, and those eleven are DUPLICATED verbatim in
+# in eight places, listed below, and those eight are DUPLICATED verbatim in
 # final_craftax_qmul.yaml: with no inheritance between configs there is nowhere
 # else to put them. Only num_envs and seed genuinely differ between the two.
 #
@@ -12,15 +12,13 @@
 # guard is test_cluster_siblings_differ_only_in_num_envs_and_seed, which fails
 # if they drift.
 #
+# Budgets and warmup are the canonical 1e8-frame / 1,638,400-frame values
+# inherited from defaults.yaml (author decision 2026-08-15, final).
 # Fairness-critical hyperparameters are denominated in env frames or update
 # cycles, so resolve_scaled_hyperparams() rescales them to this rollout width
-# automatically. Resolves to num_updates = 5231, lr_warmup_steps = 1371,
-# dagger_buffer_max = 43,750, beta decay 0.9998175.
-#
-# Units caveat: lr_warmup_steps is handed to optax as a *gradient*-step count,
-# while decay_steps is num_updates * update_epochs * num_minibatches. Read as
-# update steps a warmup can look as though it outlasts the run when it does
-# not. Open question for the author.
+# automatically. Resolves to num_updates = 1743, lr_warmup_steps = 1792
+# gradient steps (28 updates x 64), dagger_buffer_max = 43,750, beta decay
+# 0.9994525, 111,552 total gradient steps.
 # =============================================================================
 
 # ── Environment ──────────────────────────────────────────────────────────────
@@ -32,23 +30,14 @@ temperature: 0.3
 
 # ── Optimisation ─────────────────────────────────────────────────────────────
 lr: 5.0e-4
-# IDENTICAL to QMUL as a frame budget.  On this file's 448 envs it resolves to
-# lr_warmup_steps = 1371 against 334,784 gradient steps, i.e. update 21 of
-# 5231: far earlier than reading it as update steps would suggest.
-lr_warmup_frames: 7.86432e7         # -> lr_warmup_steps = 1371
 
 # ── Rollout ──────────────────────────────────────────────────────────────────
 num_envs: 448
 
-# ── Offline training ─────────────────────────────────────────────────────────
-offline_total_timesteps: 1.0e+8        # IDENTICAL to QMUL
-
 # ── Online DAgger training ───────────────────────────────────────────────────
-online_total_timesteps: 1.0e+8         # IDENTICAL to QMUL
-dagger_beta_final: 0.385            # resolves to decay 0.9998175 over 5231 updates
-# 0.76294 cycles * 57,344 fpu = 43,750 samples, not the ~200K an earlier
-# num_envs: 2048 gave.  Whether the recipe wants a fixed sample count or a
-# fixed cycle count is an open question for the author.
+dagger_beta_final: 0.385            # resolves to decay 0.9994525 over 1743 updates
+# Cycle-denominated by author decision (2026-08-15): retention stays
+# hardware-invariant. 0.76294 cycles * 57,344 fpu = 43,750 samples.
 dagger_buffer_cycles: 0.76294       # -> dagger_buffer_max = 43,750 samples
 
 # ── Validation rollouts ──────────────────────────────────────────────────────

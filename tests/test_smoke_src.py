@@ -339,6 +339,7 @@ def test_resolve_scaled_hyperparams(real_config) -> None:
 
     config = {
         **real_config, "NUM_ENVS": 8, "NUM_STEPS": 4,
+        "UPDATE_EPOCHS": 2, "NUM_MINIBATCHES": 3,
         "ONLINE_TOTAL_TIMESTEPS": 320, "LR_WARMUP_FRAMES": 64,
         "VAL_INTERVAL_FRAMES": 320, "DAGGER_BETA_FINAL": 0.1,
         "DAGGER_BUFFER_CYCLES": 2,
@@ -346,7 +347,9 @@ def test_resolve_scaled_hyperparams(real_config) -> None:
     resolve_num_updates(config, "online")
     resolve_scaled_hyperparams(config, "online")
 
-    assert config["LR_WARMUP_STEPS"] == 2
+    # 64 frames // 32 fpu = 2 updates x (2 epochs * 3 minibatches) = 12
+    # gradient steps (frame-denominated warmup, author decision 2026-08-15)
+    assert config["LR_WARMUP_STEPS"] == 12
     assert config["VAL_INTERVAL"] == 10
     assert config["DAGGER_BUFFER_MAX"] == 64
     assert 0.0 < config["DAGGER_BETA_DECAY"] < 1.0
@@ -378,11 +381,18 @@ def test_dagger_sizing_defaults_to_one_train_pass(real_config) -> None:
     assert dagger_sizing({**config, "DAGGER_TRAIN_PASSES": 4}, 10)["n_train_passes"] == 4
 
 
-# Derived quantities the four shipped final configs' comments now quote.
-# Every one comes from resolve_num_updates + resolve_scaled_hyperparams, not
-# from arithmetic done by hand. The comments went stale once already: they
-# described a num_envs the files no longer set, overstating the DAgger buffer
-# by 4.6x and 8x and naming an update count off by 1.8x.
+# Derived quantities the four shipped final configs' comments quote,
+# HAND-DERIVED from the canonical 1e8-frame budget and 1,638,400-frame
+# warmup (author decisions 2026-08-15, final; the earlier version of this
+# table read the values back from the resolvers - flagged SELF-ORACLE by
+# the step-8 audit). Arithmetic, per config (fpu = num_envs * 128;
+# geometry = update_epochs 8 * num_minibatches 8 = 64):
+#   NUM_UPDATES = 1e8 // fpu; LR_WARMUP_STEPS = (1_638_400 // fpu) * 64;
+#   DAGGER_BUFFER_MAX = round(0.76294 or 1.90735 cycles * fpu).
+#   classic_ucl  (fpu 65_536): 1525;  25*64 = 1600;  round(1.90735*65536) = 125_000
+#   classic_qmul (fpu 12_288): 8138; 133*64 = 8512;  round(1.90735*12288) = 23_438
+#   craftax_ucl  (fpu 57_344): 1743;  28*64 = 1792;  round(0.76294*57344) = 43_750
+#   craftax_qmul (fpu  8_192): 12_207; 200*64 = 12_800; round(0.76294*8192) = 6_250
 FINAL_CONFIG_DERIVATIONS = {
     "configs/final_classic_ucl.yaml": {
         "NUM_ENVS": 512,
@@ -392,43 +402,27 @@ FINAL_CONFIG_DERIVATIONS = {
     },
     "configs/final_craftax_ucl.yaml": {
         "NUM_ENVS": 448,
-        "NUM_UPDATES": 5231,
-        "LR_WARMUP_STEPS": 1371,
+        "NUM_UPDATES": 1743,
+        "LR_WARMUP_STEPS": 1792,
         "DAGGER_BUFFER_MAX": 43_750,
     },
     "configs/final_classic_qmul.yaml": {
         "NUM_ENVS": 96,
         "NUM_UPDATES": 8138,
-        "LR_WARMUP_STEPS": 8533,
+        "LR_WARMUP_STEPS": 8512,
         "DAGGER_BUFFER_MAX": 23_438,
     },
     "configs/final_craftax_qmul.yaml": {
         "NUM_ENVS": 64,
-        "NUM_UPDATES": 36_621,
-        "LR_WARMUP_STEPS": 9600,
+        "NUM_UPDATES": 12_207,
+        "LR_WARMUP_STEPS": 12_800,
         "DAGGER_BUFFER_MAX": 6_250,
     },
 }
 
 
 @pytest.mark.parametrize(
-    "config_path",
-    [
-        pytest.param(
-            path,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "§8.8 budget needs-author-input (step-9 report): the "
-                    "documented 5231/36621 updates are 3e8-consistent while "
-                    "the shipped key is 1e8 and the last live runs used 2e8"
-                ),
-            ),
-        )
-        if "final_craftax" in path
-        else path
-        for path in sorted(FINAL_CONFIG_DERIVATIONS)
-    ],
+    "config_path", sorted(FINAL_CONFIG_DERIVATIONS)
 )
 def test_final_configs_resolve_to_their_documented_quantities(config_path: str) -> None:
     from src.planners.common import resolve_num_updates, resolve_scaled_hyperparams
@@ -446,23 +440,24 @@ def test_final_configs_resolve_to_their_documented_quantities(config_path: str) 
 
 @pytest.mark.parametrize("config_path", sorted(FINAL_CONFIG_DERIVATIONS))
 def test_lr_warmup_is_shorter_than_the_cosine_horizon(config_path: str) -> None:
-    """optax rejects warmup_steps >= decay_steps, and the runners pass
-    decay_steps = num_updates * update_epochs * num_minibatches while passing
-    lr_warmup_steps unconverted. Two of these configs set a warmup that
-    outlasts the run when read as update steps, so this guards the units the
-    runners actually use rather than the ones the names suggest."""
+    """The resolved warmup is a gradient-step count (author decision
+    2026-08-15: frames convert through the effective geometry), so it
+    must sit strictly below decay_steps = num_updates * update_epochs *
+    num_minibatches, and the frames it spans must reproduce
+    lr_warmup_frames to within one optimiser update of slack."""
     from src.planners.common import resolve_num_updates, resolve_scaled_hyperparams
 
     config = {**load_config("configs/defaults.yaml"), **load_config(config_path)}
     resolve_num_updates(config, "online")
     resolve_scaled_hyperparams(config, "online")
 
-    grad_steps = (
-        int(config["NUM_UPDATES"])
-        * int(config["UPDATE_EPOCHS"])
-        * int(config["NUM_MINIBATCHES"])
-    )
-    assert int(config["LR_WARMUP_STEPS"]) < grad_steps
+    geometry = int(config["UPDATE_EPOCHS"]) * int(config["NUM_MINIBATCHES"])
+    grad_steps = int(config["NUM_UPDATES"]) * geometry
+    warmup = int(config["LR_WARMUP_STEPS"])
+    assert warmup < grad_steps
+    fpu = int(config["NUM_ENVS"]) * int(config["NUM_STEPS"])
+    frames_covered = warmup * fpu / geometry
+    assert abs(frames_covered - float(config["LR_WARMUP_FRAMES"])) < fpu
 
 
 def test_snapshot_minibatch_matches_what_the_runners_use(real_config, capsys) -> None:
