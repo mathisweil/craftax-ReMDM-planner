@@ -6,7 +6,7 @@
 # the two clusters lives here, which is the rollout width and the seed.
 #
 # Nothing enforces that this file and final_classic_ucl.yaml stay in step: the
-# guard is test_ucl_and_qmul_siblings_differ_only_in_num_envs_and_seed. A
+# guard is test_cluster_siblings_differ_only_in_num_envs_and_seed. A
 # hyperparameter change meant for both belongs in defaults.yaml, not here.
 #
 # All fairness-critical hyperparameters are denominated in env frames or update

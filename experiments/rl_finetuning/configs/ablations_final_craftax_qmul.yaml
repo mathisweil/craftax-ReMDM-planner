@@ -1,6 +1,6 @@
 # =============================================================================
 # RL Fine-Tuning Ablation Suite — Full Craftax, QMUL hardware
-# Matches checkpoint produced by: configs/final_craftax_full_qmul.yaml
+# Matches checkpoints produced by: configs/final_craftax_qmul.yaml
 #   (d_model=384, n_heads=8, n_layers=6, d_ff=768, plan_horizon=32, seed 43)
 # Target hardware: QMUL H200 8 GB partition
 # That shape is the ablations_default.yaml architecture, so it is inherited

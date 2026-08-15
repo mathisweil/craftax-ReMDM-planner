@@ -9,7 +9,7 @@
 # else to put them. Only num_envs and seed genuinely differ between the two.
 #
 # So: a Full Craftax hyperparameter change must be made in BOTH files. The
-# guard is test_craftax_siblings_differ_only_in_num_envs_and_seed, which fails
+# guard is test_cluster_siblings_differ_only_in_num_envs_and_seed, which fails
 # if they drift.
 #
 # Fairness-critical hyperparameters are denominated in env frames or update
