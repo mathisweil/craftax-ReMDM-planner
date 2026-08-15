@@ -732,39 +732,49 @@ def main(argv: list[str] | None = None) -> None:
         seed_times: list[float] = []
         first_seed_params: Any = None
 
-        for seed_idx in range(num_seeds):
-            abl_seed = (
-                seed + seed_idx
-            )  # literal seed set base+idx (default 0, 1, 2)
-            abl_rng = jax.random.PRNGKey(abl_seed)
-            seeds_used.append(abl_seed)
-            logger.info("Running %s (seed %d/%d)...", abl_name, seed_idx + 1, num_seeds)
+        # One failing ablation must not end the suite: results.json is
+        # documented as incrementally valid and mergeable at N of 25
+        # (experiments/README.md; spec-ablations §1.3/§1.5), so a crash
+        # is logged and the run moves on, as in the minihack twin.
+        try:
+            for seed_idx in range(num_seeds):
+                abl_seed = (
+                    seed + seed_idx
+                )  # literal seed set base+idx (default 0, 1, 2)
+                abl_rng = jax.random.PRNGKey(abl_seed)
+                seeds_used.append(abl_seed)
+                logger.info(
+                    "Running %s (seed %d/%d)...", abl_name, seed_idx + 1, num_seeds
+                )
 
-            _t0 = time.monotonic()
-            history, final_score, final_params = run_ablation(
-                spec=spec,
-                config=merged,
-                pretrained_params=pretrained_params,
-                apply_train=apply_train,
-                apply_eval=apply_eval,
-                env=env,
-                env_params=env_params,
-                ppo=ppo,
-                schedule_fn=schedule_fn,
-                schedule_deriv_fn=schedule_deriv_fn,
-                num_actions=num_actions,
-                obs_dim=obs_dim,
-                rng=abl_rng,
-                wandb_run=wandb_run,
-                output_dir=output_dir,
-            )
-            seed_times.append(
-                round(time.monotonic() - _t0, 1)
-            )  # per-seed wall clock
-            seed_scores.append(final_score)
-            seed_histories.append(history)
-            if seed_idx == 0:
-                first_seed_params = final_params
+                _t0 = time.monotonic()
+                history, final_score, final_params = run_ablation(
+                    spec=spec,
+                    config=merged,
+                    pretrained_params=pretrained_params,
+                    apply_train=apply_train,
+                    apply_eval=apply_eval,
+                    env=env,
+                    env_params=env_params,
+                    ppo=ppo,
+                    schedule_fn=schedule_fn,
+                    schedule_deriv_fn=schedule_deriv_fn,
+                    num_actions=num_actions,
+                    obs_dim=obs_dim,
+                    rng=abl_rng,
+                    wandb_run=wandb_run,
+                    output_dir=output_dir,
+                )
+                seed_times.append(
+                    round(time.monotonic() - _t0, 1)
+                )  # per-seed wall clock
+                seed_scores.append(final_score)
+                seed_histories.append(history)
+                if seed_idx == 0:
+                    first_seed_params = final_params
+        except Exception:
+            logger.exception("Ablation '%s' FAILED - skipping to next.", abl_name)
+            continue
 
         # Aggregate over seeds (use first seed's history for plots; report mean score)
         mean_score = float(np.mean(seed_scores))
