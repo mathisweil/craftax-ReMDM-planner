@@ -183,7 +183,7 @@ def run_inference(config: dict[str, Any]) -> None:
 
     if config.get("USE_WANDB", True):
         wandb.init(
-            project=config.get("WANDB_PROJECT", "remdm-craftax"),
+            project=config["WANDB_PROJECT"],  # config governs (spec-config §6.5)
             name=f"Eval-T{temperature}-P{top_p}",
             config=config,
             job_type="evaluation",

@@ -44,7 +44,7 @@ def init_wandb(
                        already exist.
     """
     kwargs: dict[str, Any] = {
-        "project": config.get("WANDB_PROJECT", "remdm-craftax"),
+        "project": config["WANDB_PROJECT"],  # config governs (spec-config §6.5)
         "entity": config.get("WANDB_ENTITY"),
         "config": config,
     }

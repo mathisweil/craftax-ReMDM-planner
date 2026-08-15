@@ -708,7 +708,7 @@ def main(argv: list[str] | None = None) -> None:
             import wandb
 
             wandb_run = wandb.init(
-                project=merged.get("WANDB_PROJECT", "remdm-craftax-ablations"),
+                project=merged["WANDB_PROJECT"],  # config governs (spec-config §6.5)
                 entity=merged.get("WANDB_ENTITY"),
                 name=run_id,
                 config={
