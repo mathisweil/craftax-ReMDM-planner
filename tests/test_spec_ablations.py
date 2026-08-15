@@ -701,58 +701,36 @@ def _all_modules() -> frozenset[str]:
 _HEAD = frozenset({"params/Dense_4"})
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "traceability §8.2: frozen_backbone trains the obs projection, "
-        "time-embedding Denses and the action embedding besides the head "
-        "(registry.py:98-107)"
-    ),
-)
-def test_frozen_backbone_trains_only_the_output_head():
-    """Docs: 'Only train the output head' (spec-ablations §2)."""
-    assert _trainable_modules("frozen_backbone") == _HEAD
+def test_frozen_backbone_trains_the_head_and_token_embeddings():
+    """Canonical set (spec-ablations §2, step-9 amendment): the action
+    head plus the token-interface embeddings (action embedding and the
+    time-embedding MLP); the backbone (obs encoder incl. projection,
+    transformer blocks, all LayerNorms) is frozen. Tiny-arch modules:
+    Dense_2/Dense_3 (t-emb), Dense_4 (head), Embed_0."""
+    assert _trainable_modules("frozen_backbone") == frozenset(
+        {"params/Dense_2", "params/Dense_3", "params/Dense_4", "params/Embed_0"}
+    )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "traceability §8.2: head_only leaves the time-embedding Denses "
-        "trainable besides the head (registry.py:110-122)"
-    ),
-)
 def test_head_only_trains_only_the_final_projection():
-    """Docs: 'Only train the final linear projection' (spec-ablations §2)."""
+    """Canonical set (spec-ablations §2, step-9 amendment): exactly the
+    final action projection."""
     assert _trainable_modules("head_only") == _HEAD
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "traceability §8.2: attention_only additionally trains the obs "
-        "projection, time-embedding Denses, action embedding and the head "
-        "(registry.py:125-131)"
-    ),
-)
 def test_attention_only_trains_only_the_attention_projections():
-    """Docs: 'Only train attention weights (Q/K/V/O)' (spec-ablations §2)."""
+    """Canonical set (spec-ablations §2, step-9 amendment): exactly the
+    per-block attention projections Q/K/V/O; norms and head frozen."""
     expected = frozenset(
         m for m in _all_modules() if "MultiHeadDotProductAttention_" in m
     )
     assert _trainable_modules("attention_only") == expected
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "traceability §8.1: ffn_only's bare Dense_0/Dense_1 fragments also "
-        "match the FFN Denses inside every TransformerBlock, freezing the "
-        "very layers it claims to train (registry.py:134-143)"
-    ),
-)
 def test_ffn_only_trains_only_the_ffn_layers():
-    """Docs: 'Only train FFN layers' (spec-ablations §2). The FFN is
-    the two Dense layers inside each TransformerBlock."""
+    """Canonical set (spec-ablations §2, step-9 amendment): exactly the
+    two FFN Dense layers inside each TransformerBlock; norms and head
+    frozen."""
     expected = frozenset(
         m
         for m in _all_modules()
@@ -761,21 +739,12 @@ def test_ffn_only_trains_only_the_ffn_layers():
     assert _trainable_modules("ffn_only") == expected
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "step-8 finding: the layer-ablation probes also train the obs "
-        "projection, time-embedding Denses and top-level LayerNorms "
-        "(registry.py:146-164 freezes only Dense_0/Dense_1/SinusoidalPosEmbed_/"
-        "Embed_ outside the kept blocks) - same family as §8.2 but not in "
-        "the register"
-    ),
-)
 @pytest.mark.parametrize("top_n", [1, 2])
 def test_layer_ablation_trains_only_the_top_blocks_and_head(top_n):
-    """Docs: 'Train only the top-k transformer block(s) (+ head)'
-    (spec-ablations §2 layer_ablation row). With N_LAYERS=2 the top-1
-    set is TransformerBlock_1 + head; top-2 adds TransformerBlock_0.
+    """Canonical set (spec-ablations §2, step-9 amendment): all
+    parameters of the top-n transformer blocks plus the action head.
+    With N_LAYERS=2 the top-1 set is TransformerBlock_1 + head; top-2
+    adds TransformerBlock_0.
     """
     kept = {f"params/TransformerBlock_{i}" for i in range(2 - top_n, 2)}
     expected = frozenset(

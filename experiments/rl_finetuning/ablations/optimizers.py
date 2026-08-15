@@ -198,6 +198,52 @@ def make_optimizer_frozen_paths(
     )
 
 
+def make_optimizer_selected(
+    config: dict, params: Any, select_fn: Callable[[tuple[str, ...]], bool]
+) -> optax.GradientTransformation:
+    """AdamW that trains exactly the parameters ``select_fn`` accepts.
+
+    ``select_fn`` receives the parameter path as a tuple of segment
+    strings (e.g. ``("params", "TransformerBlock_0", "Dense_1",
+    "kernel")``) and returns True for trainable parameters. Everything
+    else receives a zero update via ``optax.set_to_zero`` (the
+    multi_transform rationale in :func:`make_optimizer_frozen_paths`
+    applies here too). Segment-level selection avoids the bare-substring
+    collisions that froze the wrong modules in the group-C probes
+    (traceability §8.1/§8.2).
+
+    Args:
+        config:    UPPERCASE config dict.
+        params:    Parameter pytree.
+        select_fn: Predicate over path-segment tuples.
+
+    Returns:
+        Optax transformation training only the selected parameters.
+    """
+    max_grad_norm = config.get("MAX_GRAD_NORM", 1.0)
+    lr = config.get("LR", 3e-4)
+    weight_decay = config.get("WEIGHT_DECAY", 1e-4)
+
+    def _segments(path: tuple) -> tuple[str, ...]:
+        return tuple(str(k.key) if hasattr(k, "key") else str(k) for k in path)
+
+    label_tree = jax.tree_util.tree_map_with_path(
+        lambda path, _: "trainable" if select_fn(_segments(path)) else "frozen",
+        params,
+    )
+
+    return optax.chain(
+        optax.clip_by_global_norm(max_grad_norm),
+        optax.multi_transform(
+            {
+                "trainable": optax.adamw(lr, weight_decay=weight_decay, eps=1e-5),
+                "frozen": optax.set_to_zero(),
+            },
+            label_tree,
+        ),
+    )
+
+
 def _num_input_axes(path_str: str, ndim: int) -> int:
     """Number of leading kernel axes that index the input of a linear map.
 

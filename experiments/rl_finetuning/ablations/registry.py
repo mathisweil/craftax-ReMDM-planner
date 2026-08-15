@@ -31,8 +31,8 @@ from experiments.rl_finetuning.ablations.losses import (
     make_loss_trust_region_kl,
 )
 from experiments.rl_finetuning.ablations.optimizers import (
-    make_optimizer_frozen_paths,
     make_optimizer_llrd,
+    make_optimizer_selected,
     make_optimizer_standard,
 )
 
@@ -95,71 +95,99 @@ def _llrd_opt(config: dict, params: Any) -> Any:
     return make_optimizer_llrd(config, params)
 
 
+# Group-C canonical trainable sets (spec-ablations §2, step-9 amendment):
+#   head_only        = exactly the final action projection.
+#   frozen_backbone  = action head + token-interface embeddings (action
+#                      embedding, time-embedding MLP); the backbone (obs
+#                      encoder incl. its projection, transformer blocks
+#                      and all LayerNorms) is frozen.
+#   attention_only   = exactly the per-block attention projections
+#                      (Q/K/V/O); norms and head frozen.
+#   ffn_only         = exactly the per-block FFN Denses; norms and head
+#                      frozen.
+#   layer_top_n      = all parameters of the top-n transformer blocks
+#                      plus the action head.
+# Selection is segment-anchored (make_optimizer_selected); the previous
+# bare-substring fragments froze the wrong modules (traceability
+# §8.1/§8.2 and step-8 finding S8-2).
+#
+# In DenoisingTransformer (@nn.compact ordering) the top-level Dense
+# indices are: 0..OBS_ENCODER_LAYERS-1 encoder MLP, OBS_ENCODER_LAYERS
+# obs projection, +1/+2 time-embedding MLP, +3 action head.
+
+
+def _dense_index_map(config: dict) -> tuple[set[int], set[int], int]:
+    """(obs-encoder indices, time-embedding indices, head index)."""
+    oel = int(config.get("OBS_ENCODER_LAYERS", 2))
+    return set(range(oel + 1)), {oel + 1, oel + 2}, oel + 3
+
+
+def _top_level_dense_idx(segments: tuple[str, ...]) -> int | None:
+    """Index of a top-level Dense parameter path, else None."""
+    if len(segments) >= 2 and segments[1].startswith("Dense_"):
+        return int(segments[1].split("_")[1])
+    return None
+
+
 def _frozen_backbone_opt(config: dict, params: Any) -> Any:
-    # Freeze everything except the final Dense (action head)
-    # In Flax @nn.compact, the head is typically the last Dense with kernel shape [d_model, num_actions]
-    # We freeze by keeping everything that is NOT the head
-    # Since we can't reliably identify the head by name without running init, we freeze
-    # TransformerBlock and obs encoder params, leaving any remaining Dense (the head) trainable.
-    frozen = ["TransformerBlock_", "SinusoidalPosEmbed_"]
-    # Also freeze obs encoder dense layers (all Dense_* before transformer blocks)
-    frozen += ["Dense_0", "Dense_1", "LayerNorm_0", "LayerNorm_1"]
-    return make_optimizer_frozen_paths(config, params, frozen)
+    """Train the action head + token-interface embeddings only."""
+    _, temb, head = _dense_index_map(config)
+
+    def select(segments: tuple[str, ...]) -> bool:
+        idx = _top_level_dense_idx(segments)
+        if idx is not None:
+            return idx in temb or idx == head
+        return len(segments) >= 2 and segments[1].startswith("Embed_")
+
+    return make_optimizer_selected(config, params, select)
 
 
 def _head_only_opt(config: dict, params: Any) -> Any:
-    # Freeze: all transformer blocks, obs encoder, positional embeddings, action embeddings
-    frozen = [
-        "TransformerBlock_",
-        "SinusoidalPosEmbed_",
-        "Dense_0",
-        "Dense_1",
-        "Dense_2",
-        "LayerNorm_0",
-        "LayerNorm_1",
-        "Embed_",
-    ]
-    return make_optimizer_frozen_paths(config, params, frozen)
+    """Train exactly the final action projection."""
+    _, _, head = _dense_index_map(config)
+    return make_optimizer_selected(
+        config, params, lambda segments: _top_level_dense_idx(segments) == head
+    )
 
 
 def _attention_only_opt(config: dict, params: Any) -> Any:
-    # Freeze FFN layers (Dense_0, Dense_1 inside TransformerBlocks = FFN)
-    # Keep MultiHeadDotProductAttention trainable
-    frozen = ["TransformerBlock_/Dense_", "LayerNorm_"]
-    # Also freeze obs encoder
-    frozen += ["Dense_0", "Dense_1", "SinusoidalPosEmbed_"]
-    return make_optimizer_frozen_paths(config, params, frozen)
+    """Train exactly the attention projections (Q/K/V/O)."""
+    return make_optimizer_selected(
+        config,
+        params,
+        lambda segments: any(
+            s.startswith("MultiHeadDotProductAttention_") for s in segments
+        ),
+    )
 
 
 def _ffn_only_opt(config: dict, params: Any) -> Any:
-    # Freeze attention weights, keep FFN dense layers trainable
-    frozen = [
-        "MultiHeadDotProductAttention_",
-        "Dense_0",
-        "Dense_1",
-        "SinusoidalPosEmbed_",
-        "Embed_",
-    ]
-    return make_optimizer_frozen_paths(config, params, frozen)
+    """Train exactly the per-block FFN Dense layers."""
+
+    def select(segments: tuple[str, ...]) -> bool:
+        return (
+            len(segments) >= 3
+            and segments[1].startswith("TransformerBlock_")
+            and segments[2].startswith("Dense_")
+        )
+
+    return make_optimizer_selected(config, params, select)
 
 
 def _layer_ablation_top_n_opt(n: int) -> OptimizerFactory:
-    """Factory: freeze all transformer blocks except the top n + head."""
+    """Factory: train only the top-n transformer blocks + action head."""
 
     def _opt(config: dict, params: Any) -> Any:
-        n_layers = config.get("N_LAYERS", 4)
-        # Top n blocks have the highest indices
-        trainable_block_indices = list(range(n_layers - n, n_layers))
-        # Freeze all blocks NOT in trainable set
-        frozen = []
-        for i in range(n_layers):
-            if i not in trainable_block_indices:
-                frozen.append(f"TransformerBlock_{i}")
-        # Freeze obs encoder but keep head trainable
-        frozen += ["Dense_0", "Dense_1", "SinusoidalPosEmbed_", "Embed_"]
-        # Note: the final output Dense (head) is NOT frozen; it has a
-        # higher index than Dense_0/Dense_1 and is therefore not matched.
-        return make_optimizer_frozen_paths(config, params, frozen)
+        n_layers = int(config.get("N_LAYERS", 4))
+        kept = {f"TransformerBlock_{i}" for i in range(n_layers - n, n_layers)}
+        _, _, head = _dense_index_map(config)
+
+        def select(segments: tuple[str, ...]) -> bool:
+            if len(segments) >= 2 and segments[1] in kept:
+                return True
+            return _top_level_dense_idx(segments) == head
+
+        return make_optimizer_selected(config, params, select)
 
     return _opt
 
@@ -287,7 +315,10 @@ REGISTRY: dict[str, AblationSpec] = {
     "frozen_backbone": AblationSpec(
         name="frozen_backbone",
         group="C",
-        description="Baseline ELBO with all params frozen except the final output head",
+        description=(
+            "Baseline ELBO training the action head and token embeddings "
+            "(backbone frozen)"
+        ),
         hypothesis="If frozen backbone helps: deep gradient flow into backbone causes collapse",
         loss_factory=make_loss_frozen_backbone,
         optimizer_factory=_frozen_backbone_opt,
@@ -319,7 +350,7 @@ REGISTRY: dict[str, AblationSpec] = {
     "layer_ablation_top1": AblationSpec(
         name="layer_ablation_top1",
         group="C",
-        description="Baseline ELBO updating only the top-1 transformer block",
+        description="Baseline ELBO updating only the top-1 transformer block + head",
         hypothesis="Minimal unfrozen depth needed; collapse depth correlates with gradient flow depth",
         loss_factory=make_loss_param_isolation,
         optimizer_factory=_layer_ablation_top_n_opt(1),
@@ -327,7 +358,7 @@ REGISTRY: dict[str, AblationSpec] = {
     "layer_ablation_top2": AblationSpec(
         name="layer_ablation_top2",
         group="C",
-        description="Baseline ELBO updating only the top-2 transformer blocks",
+        description="Baseline ELBO updating only the top-2 transformer blocks + head",
         hypothesis="Minimal unfrozen depth needed; collapse depth correlates with gradient flow depth",
         loss_factory=make_loss_param_isolation,
         optimizer_factory=_layer_ablation_top_n_opt(2),
@@ -335,7 +366,7 @@ REGISTRY: dict[str, AblationSpec] = {
     "layer_ablation_top3": AblationSpec(
         name="layer_ablation_top3",
         group="C",
-        description="Baseline ELBO updating only the top-3 transformer blocks",
+        description="Baseline ELBO updating only the top-3 transformer blocks + head",
         hypothesis="Minimal unfrozen depth needed; collapse depth correlates with gradient flow depth",
         loss_factory=make_loss_param_isolation,
         optimizer_factory=_layer_ablation_top_n_opt(3),
