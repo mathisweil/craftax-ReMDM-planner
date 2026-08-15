@@ -248,6 +248,8 @@ With W&B on and `save_policy: true` (both defaults), training saves Orbax checkp
 
 **Pass the checkpoint directory, not the step subdirectory** — `CheckpointManager` resolves the latest step itself.
 
+Historical note: the released Classic offline checkpoint's step subdirectory reads `1000000000`, predating the current convention (the offline save step is the resolved env-frame budget — 99,942,400 for the Classic recipe at 512 envs); its `resume_metadata.json` records the actual 1e8-frame budget, and loading is unaffected because the latest step is resolved by name.
+
 `checkpoints/` is gitignored; released weights live on the Hub at [`mathisweil/remdm-craftax-checkpoints`](https://huggingface.co/mathisweil/remdm-craftax-checkpoints), mirroring the layout below.
 
 | Checkpoint directory | Environment | Role | Trained for |

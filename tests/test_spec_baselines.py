@@ -86,12 +86,12 @@ def test_released_offline_metadata_is_recipe_consistent():
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "step-7 finding N3 (artefact-level cleanup per the Mac review): "
-        "the released offline checkpoint's Orbax step directory is "
-        "1000000000, a residue predating the current frame-denominated "
-        "step convention (offline.py saves step = resolved "
-        "OFFLINE_TOTAL_TIMESTEPS = 99,942,400); its own metadata records "
-        "the 1e8-frame budget"
+        "step-7 finding N3, RETAINED in step 9: the released offline "
+        "checkpoint's step dir (1000000000) predates the frame-"
+        "denominated convention (would be 99,942,400 today). The unit is "
+        "now documented in README §Checkpoints; renaming the published "
+        "HF artefact is a needs-author-input publishing decision "
+        "(step-9 report)."
     ),
 )
 def test_released_offline_step_dir_uses_the_frame_denominated_unit():
