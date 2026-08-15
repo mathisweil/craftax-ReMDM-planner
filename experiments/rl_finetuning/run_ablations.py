@@ -50,6 +50,7 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 import jax
 import jax.numpy as jnp
 import numpy as np
+import orbax.checkpoint as ocp
 import orjson
 import yaml
 
@@ -730,7 +731,7 @@ def main(argv: list[str] | None = None) -> None:
         seed_histories: list[AblationHistory] = []
         seeds_used: list[int] = []
         seed_times: list[float] = []
-        first_seed_params: Any = None
+        last_seed_params: Any = None
 
         # One failing ablation must not end the suite: results.json is
         # documented as incrementally valid and mergeable at N of 25
@@ -770,8 +771,7 @@ def main(argv: list[str] | None = None) -> None:
                 )  # per-seed wall clock
                 seed_scores.append(final_score)
                 seed_histories.append(history)
-                if seed_idx == 0:
-                    first_seed_params = final_params
+                last_seed_params = final_params
         except Exception:
             logger.exception("Ablation '%s' FAILED - skipping to next.", abl_name)
             continue
@@ -796,7 +796,7 @@ def main(argv: list[str] | None = None) -> None:
             "seeds": seeds_used,
             "wall_clock_s": seed_times,  # per-seed wall clock
             "per_seed_finals": [_history_finals(h) for h in seed_histories],
-            "final_params": first_seed_params,  # in-memory only, not serialised
+            "final_params": last_seed_params,  # in-memory; also written below
         }
 
         # Written after every ablation so a crash mid-run doesn't lose
@@ -813,8 +813,18 @@ def main(argv: list[str] | None = None) -> None:
             results_path,
         )
 
-    # (params not saved here to keep the results JSON small; per-ablation
-    # checkpoint persistence is a pending parity item - see PARITY.md)
+        # Per-ablation model checkpoint (last seed), as in the minihack
+        # twin: experiments/README.md lists these as suite output, and
+        # without them a finished run cannot be re-analysed.
+        if last_seed_params is not None:
+            ckpt_path = output_dir / f"checkpoint_{abl_name}"
+            with ocp.CheckpointManager(
+                str(ckpt_path.resolve()),
+                options=ocp.CheckpointManagerOptions(max_to_keep=1),
+            ) as mgr:
+                mgr.save(0, args=ocp.args.StandardSave(last_seed_params))
+                mgr.wait_until_finished()
+            logger.info("Saved model checkpoint to %s", ckpt_path)
 
     logger.info("Running action distribution analysis...")
     rng, ad_rng = jax.random.split(rng)

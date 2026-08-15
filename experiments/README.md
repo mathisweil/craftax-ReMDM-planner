@@ -178,6 +178,7 @@ python experiments/rl_finetuning/run_ablations.py --list
 experiments/rl_finetuning/outputs/{run_id}/
 ├── results.json               # All histories + final scores (machine-readable; see schema below)
 ├── diagnosis.md               # Human-readable verdict + evidence + recommendations
+├── checkpoint_{name}/         # Per-ablation fine-tuned params, last seed (Orbax)
 ├── figures/
 │   ├── curves_{name}.png                  # Per-ablation training curves (2×3 grid)
 │   ├── final_score_comparison.png
