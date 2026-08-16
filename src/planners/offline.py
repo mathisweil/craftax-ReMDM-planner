@@ -137,6 +137,7 @@ def make_train_offline_diffusion(config: dict[str, Any]):
             config["RESUME_CHECKPOINT_PATH"],
             lr_schedule,
             config["MAX_GRAD_NORM"],
+            config["WEIGHT_DECAY"],
         )
         # Set the optimizer step counter so the LR schedule picks up at the
         # correct position.  The schedule is indexed by gradient step, which
@@ -174,7 +175,11 @@ def make_train_offline_diffusion(config: dict[str, Any]):
         else:
             params = init_params(net, init_rng, obs_dim, plan_horizon)
             state = create_train_state(
-                net, params, lr_schedule, config["MAX_GRAD_NORM"]
+                net,
+                params,
+                lr_schedule,
+                config["MAX_GRAD_NORM"],
+                config["WEIGHT_DECAY"],
             )
 
         obsv, env_state = env.reset(env_rng, env_params)

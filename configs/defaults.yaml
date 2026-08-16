@@ -62,6 +62,11 @@ top_p: 0.95
 # ── Optimisation ─────────────────────────────────────────────────────────────
 lr: 3.0e-4
 max_grad_norm: 1.0
+# Author decision 2026-08-16: core training standardises on AdamW with an
+# explicit zero decay in both repos. AdamW's decay is decoupled, so 0.0 is
+# Adam exactly - the value this recipe has always trained under. The
+# ablation suite keeps its own documented weight_decay (1e-4).
+weight_decay: 0.0
 # lr_warmup_frames is the env-frame-denominated warmup budget (invariant
 # under num_envs changes), converted to the gradient-step count optax
 # consumes via:

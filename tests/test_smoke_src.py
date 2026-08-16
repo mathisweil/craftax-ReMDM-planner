@@ -134,6 +134,49 @@ def test_compute_loss_is_finite(apply_fns, params, batch, schedules) -> None:
     assert all(_finite(v) for v in info.values())
 
 
+def test_adamw_at_zero_decay_matches_adam(model, apply_fns, params, batch, schedules) -> None:
+    """Core training moved from optax.adam to optax.adamw with an
+    explicit weight_decay=0.0 (author decision 2026-08-16). AdamW's
+    decay is decoupled and additive, so at 0.0 the two updates are the
+    same to the last bit - this is the equivalence guard for that
+    change.
+
+    Only the optimiser-state *structure* differs (adamw's chain carries
+    an extra EmptyState), which is why a checkpoint saved by the old
+    chain cannot be resumed into the new one.
+    """
+    import optax
+    from flax.training.train_state import TrainState
+
+    from src.planners.common import make_grad_step
+    from src.planners.model import create_train_state
+
+    _, apply_train = apply_fns
+    schedule_fn, schedule_deriv_fn = schedules
+    step_fn = make_grad_step(
+        apply_train, NUM_ACTIONS, schedule_fn, schedule_deriv_fn, 0.0, 0.0
+    )
+
+    adamw_state = create_train_state(model, params, 1e-3, 1.0, weight_decay=0.0)
+    adam_state = TrainState.create(
+        apply_fn=model.apply,
+        params=params,
+        tx=optax.chain(optax.clip_by_global_norm(1.0), optax.adam(1e-3, eps=1e-5)),
+    )
+
+    args = (batch["acts"], batch["obs"], batch["valid"],
+            jax.random.PRNGKey(SEED), batch["advantages"])
+    for _ in range(3):
+        adamw_state, _ = step_fn(adamw_state, *args)
+        adam_state, _ = step_fn(adam_state, *args)
+
+    for a, b in zip(
+        jax.tree_util.tree_leaves(adamw_state.params),
+        jax.tree_util.tree_leaves(adam_state.params),
+    ):
+        assert jnp.array_equal(a, b)
+
+
 def test_one_grad_step_runs_and_updates_params(
     model, apply_fns, params, batch, schedules, tiny_config,
 ) -> None:

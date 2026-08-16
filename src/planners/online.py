@@ -244,6 +244,7 @@ def make_train_online_dagger(config: dict[str, Any]):
             config["RESUME_CHECKPOINT_PATH"],
             lr_schedule,
             config["MAX_GRAD_NORM"],
+            config["WEIGHT_DECAY"],
         )
         target_opt_step = resume_step * n_train_passes * update_epochs * num_minibatches
         resume_state = resume_state.replace(step=target_opt_step)
@@ -283,6 +284,7 @@ def make_train_online_dagger(config: dict[str, Any]):
                 params,
                 lr_schedule,
                 config["MAX_GRAD_NORM"],
+                config["WEIGHT_DECAY"],
             )
         else:
             params = init_params(model, init_rng, obs_dim, plan_horizon)
@@ -291,6 +293,7 @@ def make_train_online_dagger(config: dict[str, Any]):
                 params,
                 lr_schedule,
                 config["MAX_GRAD_NORM"],
+                config["WEIGHT_DECAY"],
             )
 
         obs, env_state = env.reset(env_rng, env_params)
@@ -757,7 +760,9 @@ def run_online(config: dict[str, Any]) -> dict[str, Any]:
         )
         tx = optax.chain(
             optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
-            optax.adam(config["LR"], eps=1e-5),
+            optax.adamw(
+                config["LR"], eps=1e-5, weight_decay=config["WEIGHT_DECAY"]
+            ),
         )
         best_state = TrainState.create(
             apply_fn=lambda *a: None,

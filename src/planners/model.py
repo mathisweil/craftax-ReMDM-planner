@@ -236,6 +236,7 @@ def load_checkpoint_for_resume(
     path: str,
     lr_schedule: float | Callable[[int], float],
     max_grad_norm: float,
+    weight_decay: float = 0.0,
 ) -> TrainState:
     """Load a full ``TrainState`` (params + optimiser state) for resume.
 
@@ -254,6 +255,7 @@ def load_checkpoint_for_resume(
             init_params(model, rng, obs_dim, plan_horizon),
             lr_schedule,
             max_grad_norm,
+            weight_decay,
         )
     )
 
@@ -273,8 +275,15 @@ def create_train_state(
     params: Any,
     lr: float | Callable[[int], float],
     max_grad_norm: float,
+    weight_decay: float = 0.0,
 ) -> TrainState:
-    """Create a :class:`TrainState` with gradient clipping and Adam.
+    """Create a :class:`TrainState` with gradient clipping and AdamW.
+
+    Author decision 2026-08-16: both repos' core training uses AdamW
+    with an explicit ``weight_decay`` that defaults to 0.0, which is
+    Adam exactly - AdamW's decay is decoupled and additive, so a zero
+    coefficient leaves the update untouched
+    (``test_adamw_at_zero_decay_matches_adam`` pins the equality).
 
     Args:
         model:         Flax module (used only to bind ``apply_fn``).
@@ -282,11 +291,15 @@ def create_train_state(
         lr:            Constant learning rate or an optax schedule
                        (any callable ``step -> lr``).
         max_grad_norm: Global gradient clipping threshold.
+        weight_decay:  Decoupled weight decay; 0.0 = plain Adam.
 
     Returns:
         A Flax ``TrainState`` ready for ``apply_gradients``.
     """
-    tx = optax.chain(optax.clip_by_global_norm(max_grad_norm), optax.adam(lr, eps=1e-5))
+    tx = optax.chain(
+        optax.clip_by_global_norm(max_grad_norm),
+        optax.adamw(lr, eps=1e-5, weight_decay=weight_decay),
+    )
     return TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
 

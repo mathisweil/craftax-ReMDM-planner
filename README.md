@@ -365,7 +365,8 @@ Controlled by the `remask_strategy` key. All strategies operate on top of the th
 | `num_minibatches` | 8 | Gradient minibatches per epoch |
 | `update_epochs` | 8 | SGD epochs per update step |
 | `num_repeats` | 1 | Independent training seeds (vmapped) |
-| `lr` | 3e-4 | Adam learning rate (cosine-decayed to 10% over all gradient steps) |
+| `lr` | 3e-4 | AdamW learning rate (cosine-decayed to 10% over all gradient steps) |
+| `weight_decay` | 0.0 | Decoupled AdamW decay for core training; 0.0 is Adam exactly (the ablation suite keeps 1e-4) |
 | `lr_warmup_frames` | 1.6384e6 | Env-frame linear warm-up budget (0 = disabled). Derives `LR_WARMUP_STEPS` in gradient steps. |
 | `max_grad_norm` | 1.0 | Global gradient clipping norm |
 | `return_weight_cap` | 5.0 | Clip ceiling for per-window return weights (lower clip fixed at 0.1) |
