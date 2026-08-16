@@ -20,7 +20,7 @@ import math
 import pytest
 import yaml
 
-from conftest import ROOT, load_config
+from tests.conftest import ROOT, load_config
 
 # ---------------------------------------------------------------------------
 # Method recipe values (spec-method §7, craftax column; anchors

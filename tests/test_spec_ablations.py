@@ -21,7 +21,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from conftest import SEED
+from tests.conftest import SEED
 
 from experiments.rl_finetuning.ablations.losses import (
     LossContext,
@@ -724,7 +724,7 @@ def test_running_stats_uses_the_configured_decay():
     build the shipped make_run_ablation closure with distinct sentinel
     decays and read the captured cells.
     """
-    from conftest import load_config
+    from tests.conftest import load_config
 
     from experiments.rl_finetuning.ablations.training import make_run_ablation
     from src.planners.model import make_apply_fns

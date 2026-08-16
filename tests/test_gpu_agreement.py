@@ -22,7 +22,7 @@ import sys
 
 import numpy as np
 import pytest
-from conftest import ROOT
+from tests.conftest import ROOT
 
 _GPU = (
     os.environ.get("CUDA_VISIBLE_DEVICES") != ""
@@ -103,7 +103,7 @@ def test_loss_and_sampler_agree_between_cuda_and_cpu():
 _RESTORE_SCRIPT = r"""
 import json
 import jax
-from conftest import load_config
+from tests.conftest import load_config
 from src.planners.env import make_env
 from src.planners.ppo import build_ppo_network, load_ppo_params
 

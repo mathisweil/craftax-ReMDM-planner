@@ -13,7 +13,7 @@ from __future__ import annotations
 import jax
 import orbax.checkpoint as ocp
 import pytest
-from conftest import NUM_ACTIONS, OBS_DIM, PLAN_HORIZON, SEED, TINY_ARCH
+from tests.conftest import NUM_ACTIONS, OBS_DIM, PLAN_HORIZON, SEED, TINY_ARCH
 
 from src.config import cast_override, validate_keys
 

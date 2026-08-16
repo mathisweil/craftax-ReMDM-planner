@@ -19,7 +19,7 @@ import jax
 import jax.numpy as jnp
 import orbax.checkpoint as ocp
 import pytest
-from conftest import ROOT
+from tests.conftest import ROOT
 
 _HF_OFFLINE = (
     ROOT

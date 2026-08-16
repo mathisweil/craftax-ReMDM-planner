@@ -11,7 +11,7 @@ import numpy as np
 import orbax.checkpoint as ocp
 import pytest
 
-from conftest import (
+from tests.conftest import (
     BATCH,
     NUM_ACTIONS,
     OBS_DIM,
@@ -777,7 +777,7 @@ def test_smoke_mode_trains_end_to_end(entry_point_runs) -> None:
 
 def test_smoke_config_overlays_defaults() -> None:
     """configs/smoke.yaml is overrides-only; main.build_config layers it on top."""
-    from conftest import load_config
+    from tests.conftest import load_config
 
     defaults = load_config("configs/defaults.yaml")
     smoke = load_config("configs/smoke.yaml")
@@ -810,7 +810,7 @@ def test_smoke_budget_resolves_to_a_short_run() -> None:
     """Every smoke-sizing key must survive resolution: the frame-denominated
     keys are rescaled to the smoke rollout width, so a stale one silently
     restores a full-size run."""
-    from conftest import load_config
+    from tests.conftest import load_config
 
     from src.planners.common import resolve_num_updates, resolve_scaled_hyperparams
 

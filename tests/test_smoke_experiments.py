@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import optax
 import pytest
 
-from conftest import (
+from tests.conftest import (
     BATCH,
     EXPERIMENT_MODULES,
     NUM_ACTIONS,
