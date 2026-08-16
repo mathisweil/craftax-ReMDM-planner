@@ -612,10 +612,9 @@ def main(argv: list[str] | None = None) -> None:
     from src.planners.model import resolve_checkpoint_path
 
     download_dir = merged.get("WANDB_DOWNLOAD_DIR")
-    for key in ("CHECKPOINT_PATH", "PPO_CHECKPOINT_PATH"):
-        val = merged.get(key)
-        if val and isinstance(val, str) and val.startswith("wandb:"):
-            merged[key] = resolve_checkpoint_path(val, download_dir)
+    val = merged.get("CHECKPOINT_PATH")
+    if val and isinstance(val, str) and val.startswith("wandb:"):
+        merged["CHECKPOINT_PATH"] = resolve_checkpoint_path(val, download_dir)
 
     if args.all:
         selected_names = list(REGISTRY.keys())
