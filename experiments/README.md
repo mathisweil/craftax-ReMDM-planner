@@ -137,6 +137,30 @@ python experiments/rl_finetuning/run_ablations.py \
     --output-dir experiments/rl_finetuning/outputs/merged/
 ```
 
+**Only merge runs from configs that agree on result-affecting keys.** `--merge`
+averages seeds without checking where they came from, so pooling two machine
+configs is sound only when they train the same model and measure it the same
+way. Each family's UCL config is its reference; the QMUL sibling is **not
+poolable** with it:
+
+| Key | Classic UCL | Classic QMUL | Craftax UCL | Craftax QMUL | Effect |
+|---|---|---|---|---|---|
+| `num_envs` | 192 | 64 | 128 | 64 | rollout diversity per iteration |
+| `batch_size` | 1024 | 256 | 1024 | 512 | per-update SNR |
+| `eval_steps` | 1024 | 512 | 1024 | 512 | noisier score |
+| `mixed_replay_buffer_size` | 20000 | 10000 | 10000 | 10000 | replay horizon |
+
+Runs from the two families are never poolable: they are different
+environments. Differences in diagnostic cadence (`eval_every`, `cka_every`,
+`cka_batch_size`, `per_layer_every`, `repr_drift_every`, `grad_align_every`,
+`t_analysis_every`) are wall-clock only and do not affect poolability.
+
+`tests/test_config.py` enforces this: every `ablations_final_*.yaml` must be
+declared poolable or not, configs declared poolable must match their family
+reference on the result-affecting keys, and the recorded QMUL divergences must
+stay accurate. Aligning a QMUL config later fails the test until it is moved to
+the poolable set.
+
 **List all ablations:**
 ```bash
 python experiments/rl_finetuning/run_ablations.py --list

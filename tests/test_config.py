@@ -177,3 +177,117 @@ def test_ablation_config_restates_no_inherited_value(preset) -> None:
     raw = yaml.safe_load((_ABL_CONFIGS / preset).read_text()) or {}
     restated = {k: v for k, v in raw.items() if k in base and base[k] == v}
     assert not restated, f"{preset} restates inherited values: {restated}"
+
+
+# ---------------------------------------------------------------------------
+# cross-machine poolability of ablation runs
+#
+# `run_ablations.py --merge` averages seeds of the same ablation across
+# results.json files, so pooling two machine configs is only sound when they
+# agree on everything that changes the trained model or the measured score.
+# Each family's UCL config is its reference (the minihack twin applies the
+# same policy to its single family).
+# ---------------------------------------------------------------------------
+
+#: Keys that change the trained model or the score it is measured with.
+_RESULT_AFFECTING = frozenset(
+    {
+        "env_name",
+        "max_iter",
+        "num_envs",
+        "num_steps",
+        "batch_size",
+        "lr",
+        "weight_decay",
+        "max_grad_norm",
+        "collect_temperature",
+        "ema_decay",
+        "eval_steps",
+        "eval_replan",
+        "val_diffusion_steps",
+        "temperature",
+        "mixed_replay_buffer_size",
+        "num_seeds",
+    }
+)
+
+#: Reference config per family.
+_REFERENCE_CONFIG = {
+    "classic": "ablations_final_classic_ucl.yaml",
+    "craftax": "ablations_final_craftax_ucl.yaml",
+}
+
+#: Configs whose runs may be merged with their family's reference.
+_POOLABLE = set(_REFERENCE_CONFIG.values())
+
+#: Configs that must NOT be merged with the reference, mapped to the
+#: result-affecting keys on which they are known to diverge.
+_NOT_POOLABLE = {
+    "ablations_final_classic_qmul.yaml": frozenset(
+        {
+            "num_envs",  # 64 vs 192: less rollout diversity per iteration
+            "batch_size",  # 256 vs 1024: ~4x per-update SNR
+            "eval_steps",  # 512 vs 1024: noisier score
+            "mixed_replay_buffer_size",  # 10000 vs 20000
+        }
+    ),
+    "ablations_final_craftax_qmul.yaml": frozenset(
+        {
+            "num_envs",  # 64 vs 128
+            "batch_size",  # 512 vs 1024
+            "eval_steps",  # 512 vs 1024
+        }
+    ),
+}
+
+
+def _family(name: str) -> str:
+    return "classic" if "classic" in name else "craftax"
+
+
+def _machine_configs() -> list[str]:
+    return sorted(p.name for p in _ABL_CONFIGS.glob("ablations_final_*.yaml"))
+
+
+def _divergence(name: str) -> set[str]:
+    reference = _load_ablation_config(
+        str(_ABL_CONFIGS / _REFERENCE_CONFIG[_family(name)])
+    )
+    candidate = _load_ablation_config(str(_ABL_CONFIGS / name))
+    return {
+        k
+        for k in _RESULT_AFFECTING
+        if candidate.get(k, "<absent>") != reference.get(k, "<absent>")
+    }
+
+
+def test_every_machine_config_is_classified() -> None:
+    """A new machine config must be declared poolable or not, never silently."""
+    unclassified = set(_machine_configs()) - _POOLABLE - set(_NOT_POOLABLE)
+    assert not unclassified, (
+        f"Unclassified ablation machine config(s): {sorted(unclassified)}. "
+        "Add to _POOLABLE (and align result-affecting keys with the family "
+        "reference) or to _NOT_POOLABLE with the diverging keys."
+    )
+
+
+@pytest.mark.parametrize("name", sorted(_POOLABLE))
+def test_poolable_config_matches_reference(name) -> None:
+    diverged = _divergence(name)
+    assert not diverged, (
+        f"{name} is declared poolable with {_REFERENCE_CONFIG[_family(name)]} "
+        f"but diverges on result-affecting key(s): {sorted(diverged)}. Align "
+        "them or move it to _NOT_POOLABLE."
+    )
+
+
+@pytest.mark.parametrize("name", sorted(_NOT_POOLABLE))
+def test_not_poolable_divergence_is_recorded(name) -> None:
+    """Catches drift in both directions: new divergence, and silent alignment."""
+    expected = _NOT_POOLABLE[name]
+    actual = _divergence(name)
+    assert actual == set(expected), (
+        f"{name} divergence from {_REFERENCE_CONFIG[_family(name)]} has "
+        f"changed. Recorded: {sorted(expected)}; actual: {sorted(actual)}. "
+        "Update _NOT_POOLABLE, or move it to _POOLABLE if now aligned."
+    )
