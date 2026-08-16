@@ -267,7 +267,7 @@ Full-Craftax diffusion planner checkpoints are not yet released (no full-Craftax
 uv run hf download mathisweil/remdm-craftax-checkpoints --include "checkpoints/**" --local-dir .
 ```
 
-**Match the config to the checkpoint.** The model is built from the config, not the checkpoint, so a released checkpoint under `defaults.yaml` (`d_model` 256, `n_layers` 4) fails with a shape mismatch. All released diffusion checkpoints are `d_model` 384, `n_heads` 8, `n_layers` 6, `d_ff` 768 — use the matching `final_*` config, which also sets the right `env_name`:
+**Match the config to the checkpoint.** The model is built from the config, not the checkpoint, and a mismatch raises at restore. All released diffusion checkpoints are `d_model` 384, `n_heads` 8, `n_layers` 6, `d_ff` 768 — the architecture `defaults.yaml` also carries — so use the matching `final_*` config, which additionally sets the right `env_name` and recipe values:
 
 ```bash
 python main.py --mode inference \
