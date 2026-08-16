@@ -143,6 +143,8 @@ python main.py --mode online --ppo-checkpoint /path/to/ppo_checkpoint \
 
 The DAgger replay buffer is not persisted; it refills within a few iterations. The cosine LR schedule spans the full `num_updates`, with the step counter offset so the LR resumes exactly where it stopped. With a metadata sidecar, `resume_step` and `resume_wandb_run_id` are auto-detected; without one, pass `--resume-step`.
 
+`--resume` restores the optimiser state, so it needs a checkpoint written by the current optimiser chain (AdamW, from 2026-08-16). Resuming an older checkpoint fails loudly on the optimiser-state structure; no compatibility path is provided (author decision). Use `--checkpoint` instead — it restores parameters only and warm-starts a fresh run.
+
 ## Evaluation from a checkpoint
 
 ```bash
@@ -192,15 +194,14 @@ python main.py --mode online --ppo-checkpoint <ppo> --config configs/classic_exp
 
 ### RL fine-tuning ablation suite
 
-25 registered ablations (same names as in the minihack repo). See `experiments/README.md`.
+25 registered ablations (same names as in the minihack repo). The suite trains on the current policy's own rollouts, so it needs only the pretrained diffusion checkpoint — there is no `--ppo-checkpoint`. See `experiments/README.md`.
 
 ```bash
 python experiments/rl_finetuning/run_ablations.py --list
 python experiments/rl_finetuning/run_ablations.py \
-    --checkpoint $PRETRAINED_CKPT --ppo-checkpoint $PPO_CKPT --all
+    --checkpoint $PRETRAINED_CKPT --all
 python experiments/rl_finetuning/run_ablations.py \
     --checkpoint wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy-best:latest \
-    --ppo-checkpoint wandb:my-team/ppo-craftax/ppo-rnn-policy:best \
     --ablations baseline_rl kl_penalty --fast
 ```
 
