@@ -120,3 +120,54 @@ def test_checkpoints_are_written_when_wandb_is_off():
     assert root == "ckpts/online/Env-Online-Diffusion-DAgger-100M"
     # Default when the key is absent.
     assert checkpoint_root({}, "offline", "run").startswith("checkpoints/offline/")
+
+
+# ---------------------------------------------------------------------------
+# W&B naming (spec-config §6.5: the config keys govern; the "remdm-*"
+# literals were dead fallbacks)
+# ---------------------------------------------------------------------------
+
+
+def test_wandb_names_come_from_the_config_not_a_literal():
+    """Training and the ablation suite both take project and entity from
+    the config, and the shipped names are the canonical ones. The
+    minihack twin pins the same rule in its test_config.py."""
+    import yaml
+
+    from tests.conftest import ROOT, load_config
+
+    config = load_config("configs/defaults.yaml")
+    assert config["WANDB_PROJECT"] == "craftax-ReMDM-planner"
+
+    abl = yaml.safe_load(
+        (ROOT / "experiments/rl_finetuning/configs/ablations_default.yaml").read_text()
+    )
+    assert abl["wandb_project"] == "craftax-ReMDM-planner-ablations"
+    assert abl["wandb_entity"] == config["WANDB_ENTITY"]
+
+    for rel in ("src/planners/logging.py", "experiments/rl_finetuning/run_ablations.py"):
+        assert "remdm-craftax" not in (ROOT / rel).read_text(), rel
+
+
+def test_wandb_init_takes_project_and_entity_from_the_config():
+    """init_wandb passes the config's project and entity through to
+    wandb.init rather than defaulting them."""
+    import inspect
+
+    from src.planners.logging import init_wandb
+
+    src = inspect.getsource(init_wandb)
+    assert '"project": config["WANDB_PROJECT"]' in src
+    assert '"entity": config.get("WANDB_ENTITY")' in src
+
+
+def test_suite_wandb_init_takes_project_and_entity_from_the_config():
+    """The ablation suite's wandb.init does the same, from the merged
+    suite config."""
+    import inspect
+
+    from experiments.rl_finetuning.run_ablations import main
+
+    src = inspect.getsource(main)
+    assert 'project=merged.get("WANDB_PROJECT")' in src or 'merged["WANDB_PROJECT"]' in src
+    assert 'entity=merged.get("WANDB_ENTITY")' in src

@@ -58,10 +58,6 @@ eval_every: 25                # evaluate every N iterations
 eval_steps: 512               # env steps per eval rollout
 eval_replan: 8                # env steps per diffusion plan during eval
 
-# ── PPO collector ─────────────────────────────────────────────────────────────
-ppo_model_type: "ppo_rnn"
-layer_size: 512
-
 # ── Diagnostic frequencies ────────────────────────────────────────────────────
 grad_align_every: 25          # gradient alignment check frequency
 repr_drift_every: 25          # representation drift frequency
