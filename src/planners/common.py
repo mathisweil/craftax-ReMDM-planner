@@ -447,9 +447,18 @@ def print_config_snapshot(config: dict[str, Any], mode: str) -> None:
     )
     print(f"    {'num_updates':<24} = {num_updates:,}")
     warmup = int(config["LR_WARMUP_STEPS"])
+    grad_steps_per_update = int(config["UPDATE_EPOCHS"]) * int(
+        config["NUM_MINIBATCHES"]
+    )
+    if mode == "online":
+        grad_steps_per_update *= int(config.get("DAGGER_TRAIN_PASSES") or 1)
+    # Warmup is stored in gradient steps; report the env frames it spans,
+    # which is what lr_warmup_frames declares.
+    warmup_frames = (warmup // grad_steps_per_update) * fpu
     print(f"    {'lr':<24} = {float(config['LR']):.2e}")
     print(
-        f"    {'lr_warmup_steps':<24} = {warmup}  (~{warmup * fpu / 1e6:.2f}M frames)"
+        f"    {'lr_warmup_steps':<24} = {warmup}  "
+        f"(~{warmup_frames / 1e6:.2f}M frames)"
     )
     print(f"    {'max_grad_norm':<24} = {config.get('MAX_GRAD_NORM', 1.0)}")
 
