@@ -10,6 +10,8 @@ These scripts are **standalone research code** — they import from `src/` but d
 Diagnoses why RL fine-tuning of the diffusion model collapses and which interventions fix it.
 Implements **25 ablations**: a baseline plus four groups (A: Regularisation, B: Training Signal, C: Architecture, D: Data Quality), with a comprehensive diagnostic and analysis pipeline.
 
+**Training data is on-policy.** Each iteration rolls the *current* model out under its EMA weights (`diffusion_steps_collect` denoising steps per plan, `num_steps // plan_horizon` plan cycles) and trains on those windows, weighted by each window's own H-step reward sum. The suite therefore needs no expert: `--ppo-checkpoint` is gone, and only the pretrained diffusion `--checkpoint` is required. Author decision 2026-08-16; the minihack twin uses the same definition, so scores are comparable across repos.
+
 ### Directory structure
 
 ```
@@ -80,8 +82,7 @@ Checkpoint paths accept `wandb:` prefixed artifact references (e.g., `wandb:team
 python experiments/rl_finetuning/run_ablations.py \
     --ablations baseline_rl kl_penalty \
     --fast \
-    --checkpoint $PRETRAINED_CKPT \
-    --ppo-checkpoint $PPO_CKPT
+    --checkpoint $PRETRAINED_CKPT
 ```
 
 **Full suite (all 25 ablations):**
@@ -92,7 +93,6 @@ python experiments/rl_finetuning/run_ablations.py \
     --all \
     --num-seeds 3 \
     --checkpoint $PRETRAINED_CKPT \
-    --ppo-checkpoint $PPO_CKPT \
     --use-wandb
 ```
 
@@ -103,7 +103,6 @@ python experiments/rl_finetuning/run_ablations.py \
     --ablations-config experiments/rl_finetuning/configs/ablations_final_classic_ucl.yaml \
     --all --num-seeds 3 \
     --checkpoint wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy-best:latest \
-    --ppo-checkpoint wandb:my-team/ppo-craftax/ppo-rnn-policy:best \
     --use-wandb
 ```
 
@@ -111,16 +110,14 @@ python experiments/rl_finetuning/run_ablations.py \
 ```bash
 python experiments/rl_finetuning/run_ablations.py \
     --ablations ewc lora gradient_surgery trust_region_kl \
-    --checkpoint $PRETRAINED_CKPT \
-    --ppo-checkpoint $PPO_CKPT
+    --checkpoint $PRETRAINED_CKPT
 ```
 
 **From a W&B artifact:**
 ```bash
 python experiments/rl_finetuning/run_ablations.py \
     --ablations baseline_rl \
-    --checkpoint wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy:latest \
-    --ppo-checkpoint wandb:my-team/ppo-craftax/ppo-rnn-policy:best
+    --checkpoint wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy:latest
 ```
 
 **Re-plot from saved results (no training):**

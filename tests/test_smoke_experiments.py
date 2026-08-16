@@ -523,6 +523,54 @@ def test_eval_fn_runs_against_env(craftax_env, abl_config, schedules) -> None:
     assert all(_finite(v) for v in info.values())
 
 
+def test_rollout_is_on_policy_and_returns_are_per_window(
+    craftax_env, abl_config
+) -> None:
+    """The suite collects from the parameters it is handed, and weights
+    each window by that window's own H-step reward sum (author decision
+    2026-08-16, PARITY "Ablation-suite data source and return
+    definition").
+
+    On-policy: two different parameter sets must produce different
+    action sequences from the same env state and RNG - a frozen expert
+    would ignore ``params`` and give identical rollouts. Per-window:
+    the returned weights vary across the windows of one rollout rather
+    than repeating one episode-level number.
+    """
+    from experiments.rl_finetuning.ablations.training import build_rollout_fn
+    from src.planners.model import build_model, init_params, make_apply_fns
+
+    num_actions, obs_dim = craftax_env["num_actions"], craftax_env["obs_dim"]
+    env, env_params = craftax_env["env"], craftax_env["env_params"]
+    config = {
+        **abl_config,
+        "NUM_ACTIONS": num_actions,
+        "NUM_STEPS": 2 * PLAN_HORIZON,
+        "DIFFUSION_STEPS_COLLECT": 2,
+    }
+
+    model = build_model(config, num_actions)
+    apply_eval, _ = make_apply_fns(model)
+    params_a = init_params(model, jax.random.PRNGKey(SEED), obs_dim, PLAN_HORIZON)
+    params_b = init_params(model, jax.random.PRNGKey(SEED + 1), obs_dim, PLAN_HORIZON)
+
+    collect = build_rollout_fn(env, env_params, apply_eval, config, obs_dim)
+    obs, env_state = env.reset(jax.random.PRNGKey(SEED), env_params)
+    done = jnp.zeros(config["NUM_ENVS"], dtype=bool)
+    rng = jax.random.PRNGKey(SEED + 2)
+
+    out_a = collect(params_a, env_state, obs, done, rng)
+    out_b = collect(params_b, env_state, obs, done, rng)
+    acts_a, acts_b = out_a[5], out_b[5]
+    assert not jnp.array_equal(acts_a, acts_b), (
+        "rollout ignored the parameters it was given - not on-policy"
+    )
+
+    returns = out_a[7]
+    assert returns.shape[0] == acts_a.shape[0], "one return per window"
+    assert all(_finite(v) for v in (returns,))
+
+
 # ---------------------------------------------------------------------------
 # 8. Entry point in minimal smoke mode
 # ---------------------------------------------------------------------------

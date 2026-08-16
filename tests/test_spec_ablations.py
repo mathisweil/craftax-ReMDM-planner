@@ -743,7 +743,7 @@ def test_running_stats_uses_the_configured_decay():
     run = make_run_ablation(
         spec=REGISTRY["running_stats"], config=config, pretrained_params=params,
         apply_train=apply_train, apply_eval=apply_eval, env=None, env_params=None,
-        ppo=None, schedule_fn=COSINE[0], schedule_deriv_fn=COSINE[1],
+        schedule_fn=COSINE[0], schedule_deriv_fn=COSINE[1],
         num_actions=V, obs_dim=OBS,
     )
     cells = dict(zip(run.__code__.co_freevars, run.__closure__ or (), strict=False))

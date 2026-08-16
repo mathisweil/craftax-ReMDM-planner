@@ -47,7 +47,10 @@ batch_size: 512               # gradient batch size
 lr: 3.0e-4
 weight_decay: 1.0e-4          # AdamW weight decay
 max_grad_norm: 1.0
-collect_temperature: 1.0             # PPO sampling temperature during collection
+# Denoising steps per plan during on-policy collection (author decision
+# 2026-08-16: the suite trains on the current policy's own rollouts).
+# 5 matches the minihack reference machine config.
+diffusion_steps_collect: 5
 ema_decay: 0.999              # EMA decay for eval model weights
 
 # ── Evaluation ────────────────────────────────────────────────────────────────

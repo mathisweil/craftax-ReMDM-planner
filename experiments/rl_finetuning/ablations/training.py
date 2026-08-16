@@ -161,7 +161,6 @@ class AblationCarry(NamedTuple):
         env_state:   Gymnax environment state.
         obs:         ``[num_envs, obs_dim]`` current observations.
         done:        ``[num_envs]`` episode-done flags.
-        hstate:      PPO recurrent hidden state.
         rng:         PRNG key.
         step_idx:    Current iteration (1-based).
         running_mean: EMA running mean for advantage normalisation.
@@ -175,7 +174,6 @@ class AblationCarry(NamedTuple):
     env_state: Any
     obs: jax.Array
     done: jax.Array
-    hstate: Any
     rng: jax.Array
     step_idx: jax.Array
     running_mean: jax.Array
@@ -422,70 +420,120 @@ def _effective_batch_size(advantages: jax.Array) -> jax.Array:
 def build_rollout_fn(
     env: Any,
     env_params: Any,
-    ppo: Any,
+    apply_eval: Callable,
     config: dict,
     obs_dim: int,
 ) -> Callable:
-    """Build a JIT-compiled rollout function.
+    """Build a JIT-compiled on-policy rollout function.
+
+    Author decision 2026-08-16 (PARITY "Ablation-suite data source and
+    return definition"): both suites train on samples from the
+    *current* policy, with returns defined per training window. The
+    rollout therefore plans with the caller's parameters (the EMA
+    weights during training, the pretrained weights for the Fisher
+    estimate) and executes its own actions - it no longer rolls out a
+    frozen PPO expert. ``num_steps`` env steps are covered by
+    ``num_steps // plan_horizon`` plan cycles, each plan sampled at the
+    cycle's first observation, which is the minihack twin's
+    collect-then-window shape.
 
     Args:
         env:        Wrapped Craftax environment.
         env_params: Environment parameters.
-        ppo:        PPOAgent instance.
+        apply_eval: Eval apply fn (no dropout), used by the sampler.
         config:     UPPERCASE config dict.
         obs_dim:    Observation dimensionality.
 
     Returns:
-        JIT-compiled ``collect_rollout(env_state, obs, done, hstate, rng)``
-        returning ``(env_state, obs, done, hstate, rng, flat_obs,
-        flat_acts, flat_valid, flat_returns, env_score_dict)``.
+        JIT-compiled ``collect_rollout(params, env_state, obs, done, rng)``
+        returning ``(env_state, obs, done, rng, flat_obs, flat_acts,
+        flat_valid, flat_returns, env_score_dict)``.
     """
+    from src.diffusion.sampling import sample_plan
+    from src.diffusion.schedules import SCHEDULE_MAP
+
     num_envs = config["NUM_ENVS"]
     num_steps = config["NUM_STEPS"]
     plan_horizon = config["PLAN_HORIZON"]
-    collect_temperature = config.get("COLLECT_TEMPERATURE", 1.0)
+    num_actions = config["NUM_ACTIONS"]
     valid_per_rollout = num_steps - plan_horizon + 1
+    n_cycles = num_steps // plan_horizon
+    schedule_fn, _ = SCHEDULE_MAP[config["DIFFUSION_SCHEDULE"]]
+    collect_diffusion_steps = config["DIFFUSION_STEPS_COLLECT"]
+
+    if num_steps % plan_horizon != 0:
+        raise ValueError(
+            f"NUM_STEPS ({num_steps}) must be a whole number of plan "
+            f"cycles of PLAN_HORIZON ({plan_horizon})."
+        )
 
     from src.planners.env import Transition
 
     @jax.jit
     def collect_rollout(
+        params: Any,
         env_state: Any,
         obs: jax.Array,
         done: jax.Array,
-        hstate: Any,
         rng: jax.Array,
     ) -> tuple:
-        """Run one PPO rollout and extract sliding-window samples.
+        """Roll the current policy out and extract sliding-window samples.
 
         Args:
+            params:    Parameters to plan with (EMA weights in training).
             env_state: Gymnax environment state.
             obs:       ``[num_envs, obs_dim]`` current observations.
             done:      ``[num_envs]`` episode-done flags.
-            hstate:    PPO recurrent hidden state.
             rng:       PRNG key.
 
         Returns:
             Updated carry + window arrays + env score dict.
         """
 
-        def _env_step(carry: tuple, _: None) -> tuple:
-            es, ob, dn, hs, r = carry
-            r, act_rng, step_rng = jax.random.split(r, 3)
-            action, new_hs = ppo.act(
-                ob, dn, hs, act_rng, temperature=collect_temperature
+        def _cycle(carry: tuple, _: None) -> tuple:
+            es, ob, dn, r = carry
+            r, plan_rng = jax.random.split(r)
+            plan = sample_plan(
+                apply_eval,
+                params,
+                plan_rng,
+                ob,
+                num_actions,
+                plan_horizon,
+                num_steps=collect_diffusion_steps,
+                schedule_fn=schedule_fn,
+                remask_strategy=config["REMASK_STRATEGY"],
+                eta=config["ETA"],
+                use_loop=config["USE_LOOP"],
+                t_on=config["T_ON"],
+                t_off=config["T_OFF"],
+                temperature=config["TEMPERATURE"],
+                top_p=config["TOP_P"],
             )
-            new_obs, es, reward, new_done, info = env.step(
-                step_rng, es, action, env_params
-            )
-            t = Transition(done=dn, action=action, reward=reward, obs=ob, info=info)
-            return (es, new_obs, new_done, new_hs, r), t
 
-        (env_state, obs, done, hstate, rng), traj = jax.lax.scan(
-            _env_step,
-            (env_state, obs, done, hstate, rng),
-            None,
-            num_steps,
+            def _env_step(c: tuple, step_i: jax.Array) -> tuple:
+                es_i, ob_i, dn_i, r_i = c
+                r_i, step_rng = jax.random.split(r_i)
+                action = plan[:, step_i]
+                new_obs, es_next, reward, new_done, info = env.step(
+                    step_rng, es_i, action, env_params
+                )
+                t = Transition(
+                    done=dn_i, action=action, reward=reward, obs=ob_i, info=info
+                )
+                return (es_next, new_obs, new_done, r_i), t
+
+            (es, ob, dn, r), traj_c = jax.lax.scan(
+                _env_step, (es, ob, dn, r), jnp.arange(plan_horizon)
+            )
+            return (es, ob, dn, r), traj_c
+
+        (env_state, obs, done, rng), traj_cycles = jax.lax.scan(
+            _cycle, (env_state, obs, done, rng), None, n_cycles
+        )
+        # [n_cycles, plan_horizon, E, ...] -> [num_steps, E, ...]
+        traj = jax.tree.map(
+            lambda x: x.reshape(num_steps, *x.shape[2:]), traj_cycles
         )
 
         def _window(t_idx: jax.Array) -> tuple:
@@ -506,6 +554,9 @@ def build_rollout_fn(
                 (t_idx, 0),
                 (plan_horizon, num_envs),
             )
+            # Per-window return: the H-step reward sum over exactly the
+            # actions this window trains on (the shared return
+            # definition; the minihack twin sums the same span).
             return obs_t, jnp.swapaxes(acts, 0, 1), valid, jnp.sum(rews, axis=0)
 
         obs_w, act_w, valid_w, ret_w = jax.vmap(_window)(jnp.arange(valid_per_rollout))
@@ -523,7 +574,6 @@ def build_rollout_fn(
             env_state,
             obs,
             done,
-            hstate,
             rng,
             flat_obs,
             flat_acts,
@@ -712,7 +762,6 @@ def make_run_ablation(
     apply_eval: Callable,
     env: Any,
     env_params: Any,
-    ppo: Any,
     schedule_fn: Callable,
     schedule_deriv_fn: Callable,
     num_actions: int,
@@ -733,7 +782,6 @@ def make_run_ablation(
         apply_eval:        Eval apply fn (no dropout).
         env:               Wrapped Craftax environment.
         env_params:        Environment parameters.
-        ppo:               PPOAgent instance.
         schedule_fn:       alpha(t) noise schedule.
         schedule_deriv_fn: d(alpha)/dt analytic derivative.
         num_actions:       Size of the discrete action vocabulary.
@@ -857,7 +905,9 @@ def make_run_ablation(
     bc_loss_fn = make_loss_baseline(ctx)
 
     # Rollout and eval
-    collect_rollout = build_rollout_fn(env, env_params, ppo, config, obs_dim)
+    collect_rollout = build_rollout_fn(
+        env, env_params, lora_apply_eval, config, obs_dim
+    )
     config_with_eval = {**config, "NUM_ACTIONS": num_actions}
     eval_policy = build_eval_fn(
         env,
@@ -941,7 +991,6 @@ def make_run_ablation(
         # Environment init
         obs, env_state = env.reset(env_rng, env_params)
         done = jnp.zeros(num_envs, dtype=jnp.bool_)
-        hstate = ppo.init_hidden(num_envs)
 
         # Replay buffer
         replay_buf = _init_replay_buffer(replay_buffer_size, plan_horizon, obs_dim)
@@ -964,7 +1013,6 @@ def make_run_ablation(
             env_state=env_state,
             obs=obs,
             done=done,
-            hstate=hstate,
             rng=rng,
             step_idx=jnp.array(1, dtype=jnp.int32),
             running_mean=jnp.array(0.0),
@@ -988,11 +1036,12 @@ def make_run_ablation(
             )
 
             # -- Collect rollout --
+            # On-policy: plan with the current EMA weights (author
+            # decision 2026-08-16), the same weights the suite evaluates.
             (
                 env_state_new,
                 obs_new,
                 done_new,
-                hstate_new,
                 rng,
                 flat_obs,
                 flat_acts,
@@ -1000,10 +1049,10 @@ def make_run_ablation(
                 flat_returns,
                 env_score_dict,
             ) = collect_rollout(
+                carry.ema_params,
                 carry.env_state,
                 carry.obs,
                 carry.done,
-                carry.hstate,
                 rollout_rng,
             )
 
@@ -1285,7 +1334,6 @@ def make_run_ablation(
                 env_state=env_state_new,
                 obs=obs_new,
                 done=done_new,
-                hstate=hstate_new,
                 rng=rng,
                 step_idx=step_idx + 1,
                 running_mean=new_mean,
@@ -1458,7 +1506,6 @@ def run_ablation(
     apply_eval: Callable,
     env: Any,
     env_params: Any,
-    ppo: Any,
     schedule_fn: Callable,
     schedule_deriv_fn: Callable,
     num_actions: int,
@@ -1480,7 +1527,6 @@ def run_ablation(
         apply_eval:        Eval apply fn (no dropout).
         env:               Wrapped Craftax environment.
         env_params:        Environment parameters.
-        ppo:               PPOAgent instance.
         schedule_fn:       alpha(t) noise schedule.
         schedule_deriv_fn: d(alpha)/dt analytic derivative.
         num_actions:       Size of the discrete action vocabulary.
@@ -1505,19 +1551,18 @@ def run_ablation(
         rng, fisher_rng, env_rng = jax.random.split(rng, 3)
         obs_init, es_init = env.reset(env_rng, env_params)
         done_init = jnp.zeros(config["NUM_ENVS"], dtype=jnp.bool_)
-        hstate_init = ppo.init_hidden(config["NUM_ENVS"])
-        collect_fn = build_rollout_fn(env, env_params, ppo, config, obs_dim)
+        collect_fn = build_rollout_fn(env, env_params, apply_eval, config, obs_dim)
 
         batches = []
-        es_f, obs_f, done_f, hs_f = es_init, obs_init, done_init, hstate_init
+        es_f, obs_f, done_f = es_init, obs_init, done_init
         for _ in range(n_fisher_batches):
             fisher_rng, rollout_rng = jax.random.split(fisher_rng)
-            es_f, obs_f, done_f, hs_f, _, flat_obs, flat_acts, flat_valid, _, _ = (
+            es_f, obs_f, done_f, _, flat_obs, flat_acts, flat_valid, _, _ = (
                 collect_fn(
+                    pretrained_params,
                     es_f,
                     obs_f,
                     done_f,
-                    hs_f,
                     rollout_rng,
                 )
             )
@@ -1544,7 +1589,6 @@ def run_ablation(
         apply_eval=apply_eval,
         env=env,
         env_params=env_params,
-        ppo=ppo,
         schedule_fn=schedule_fn,
         schedule_deriv_fn=schedule_deriv_fn,
         num_actions=num_actions,

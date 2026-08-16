@@ -7,14 +7,12 @@ Usage::
         --config configs/defaults.yaml \\
         --ablations-config experiments/rl_finetuning/configs/ablations_default.yaml \\
         --checkpoint /path/to/pretrained \\
-        --ppo-checkpoint /path/to/ppo \\
         --all
 
     # Run specific ablations
     python experiments/rl_finetuning/run_ablations.py \\
         --ablations kl_penalty ewc lora gradient_surgery \\
-        --checkpoint /path/to/pretrained \\
-        --ppo-checkpoint /path/to/ppo
+        --checkpoint /path/to/pretrained
 
     # Fast smoke test.  --fast overlays configs/ablations_fast.yaml on top of
     # whichever ablations config is in use; do not also pass it as
@@ -202,13 +200,6 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to the pretrained diffusion checkpoint (offline, DAgger or online).",
     )
-    p.add_argument(
-        "--ppo-checkpoint",
-        type=str,
-        default=None,
-        help="Path to PPO checkpoint used for rollout collection.",
-    )
-
     # Ablation selection
     p.add_argument("--all", action="store_true", help="Run all registered ablations.")
     p.add_argument(
@@ -335,7 +326,6 @@ def _apply_cli_overrides(config: dict, args: argparse.Namespace) -> dict:
         "WANDB_PROJECT": args.wandb_project,
         "WANDB_ENTITY": args.wandb_entity,
         "CHECKPOINT_PATH": args.checkpoint,
-        "PPO_CHECKPOINT_PATH": args.ppo_checkpoint,
     }
     return {
         k: v if v is not None else config.get(k)
@@ -606,8 +596,6 @@ def main(argv: list[str] | None = None) -> None:
     # Validate required paths
     if not merged.get("CHECKPOINT_PATH"):
         parser.error("--checkpoint is required for training mode.")
-    if not merged.get("PPO_CHECKPOINT_PATH"):
-        parser.error("--ppo-checkpoint is required for training mode.")
 
     # Enable the persistent XLA cache before the first compilation.  The suite
     # is the workload it helps most: run_ablation builds a fresh jax.jit
@@ -644,26 +632,12 @@ def main(argv: list[str] | None = None) -> None:
     from src.diffusion.schedules import SCHEDULE_MAP
     from src.planners.env import make_env
     from src.planners.model import build_model, load_checkpoint, make_apply_fns
-    from src.planners.ppo import PPOAgent, build_ppo_network, load_ppo_params
 
     env, env_params = make_env(merged, merged["NUM_ENVS"])
     num_actions = env.action_space(env_params).n
     obs_shape = env.observation_space(env_params).shape
     obs_dim = obs_shape[0]
     merged["NUM_ACTIONS"] = num_actions
-
-    model_type = merged.get("PPO_MODEL_TYPE", "ppo_rnn")
-    layer_size = merged.get("LAYER_SIZE", 512)
-    ppo_net = build_ppo_network(model_type, num_actions, layer_size, merged)
-    ppo_params = load_ppo_params(
-        merged["PPO_CHECKPOINT_PATH"],
-        ppo_net,
-        model_type,
-        merged["NUM_ENVS"],
-        obs_shape,
-        layer_size,
-    )
-    ppo = PPOAgent(ppo_net, ppo_params, model_type, layer_size)
 
     schedule_name = merged.get("DIFFUSION_SCHEDULE", "cosine")
     schedule_fn, schedule_deriv_fn = SCHEDULE_MAP[schedule_name]
@@ -757,7 +731,6 @@ def main(argv: list[str] | None = None) -> None:
                     apply_eval=apply_eval,
                     env=env,
                     env_params=env_params,
-                    ppo=ppo,
                     schedule_fn=schedule_fn,
                     schedule_deriv_fn=schedule_deriv_fn,
                     num_actions=num_actions,
