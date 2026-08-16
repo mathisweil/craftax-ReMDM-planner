@@ -100,3 +100,23 @@ def test_checkpoint_restore_with_mismatched_config_fails_loudly(tmp_path):
 
 # (The smoke preset's frame-denominated sizing keys are already covered by
 # test_smoke_src.py::test_smoke_budget_resolves_to_a_short_run.)
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint persistence without W&B (spec-config §6.2 amendment 2)
+# ---------------------------------------------------------------------------
+
+
+def test_checkpoints_are_written_when_wandb_is_off():
+    """save_policy alone decides whether a run keeps its weights: with
+    W&B off the checkpoints go under checkpoint_dir instead of being
+    discarded (PARITY 'Checkpoint selection and persistence'; the
+    minihack twin saves unconditionally)."""
+    from src.planners.common import checkpoint_root
+
+    root = checkpoint_root(
+        {"CHECKPOINT_DIR": "ckpts"}, "online", "Env-Online-Diffusion-DAgger-100M"
+    )
+    assert root == "ckpts/online/Env-Online-Diffusion-DAgger-100M"
+    # Default when the key is absent.
+    assert checkpoint_root({}, "offline", "run").startswith("checkpoints/offline/")

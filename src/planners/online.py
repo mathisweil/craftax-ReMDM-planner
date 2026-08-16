@@ -27,6 +27,7 @@ from src.diffusion.sampling import sample_plan
 from src.diffusion.schedules import SCHEDULE_MAP
 
 from .common import (
+    checkpoint_root,
     compile_and_run,
     dagger_sizing,
     extract_sliding_windows,
@@ -691,10 +692,14 @@ def run_online(config: dict[str, Any]) -> dict[str, Any]:
     resolve_scaled_hyperparams(config, "online")
     print_config_snapshot(config, "online")
 
+    run_name = (
+        f"{config['ENV_NAME']}-Online-Diffusion-DAgger-"
+        f"{int(config['ONLINE_TOTAL_TIMESTEPS'] // 1e6)}M"
+    )
     if config.get("USE_WANDB"):
         init_wandb(
             config,
-            name=f"{config['ENV_NAME']}-Online-Diffusion-DAgger-{int(config['ONLINE_TOTAL_TIMESTEPS'] // 1e6)}M",
+            name=run_name,
             resume_run_id=config.get("RESUME_WANDB_RUN_ID"),
         )
 
@@ -706,11 +711,12 @@ def run_online(config: dict[str, Any]) -> dict[str, Any]:
     out, timing = compile_and_run(train_fn, rngs, config["ONLINE_TOTAL_TIMESTEPS"])
     print(format_timing(timing))
 
-    if config.get("USE_WANDB") and config.get("SAVE_POLICY"):
+    if config.get("SAVE_POLICY"):
+        ckpt_root = checkpoint_root(config, "online", run_name)
         # Final checkpoint (last iteration params)
         train_states = out["runner_state"].train_state
         train_state = jax.tree.map(lambda x: x[0], train_states)
-        path = os.path.join(wandb.run.dir, "policies")
+        path = os.path.join(ckpt_root, "policies")
         with ocp.CheckpointManager(
             path,
             options=ocp.CheckpointManagerOptions(max_to_keep=1),
@@ -733,13 +739,14 @@ def run_online(config: dict[str, Any]) -> dict[str, Any]:
             config=config,
         )
 
-        artifact = wandb.Artifact(
-            name=f"{config['ENV_NAME']}-policy",
-            type="model",
-            metadata=config,
-        )
-        artifact.add_dir(path)
-        wandb.log_artifact(artifact)
+        if config.get("USE_WANDB"):
+            artifact = wandb.Artifact(
+                name=f"{config['ENV_NAME']}-policy",
+                type="model",
+                metadata=config,
+            )
+            artifact.add_dir(path)
+            wandb.log_artifact(artifact)
 
         # Best checkpoint (highest validation return).
         # Wrap in a dummy TrainState so the Orbax structure matches
@@ -757,7 +764,7 @@ def run_online(config: dict[str, Any]) -> dict[str, Any]:
             params=best_params,
             tx=tx,
         )
-        best_path = os.path.join(wandb.run.dir, "policies_best")
+        best_path = os.path.join(ckpt_root, "policies_best")
         with ocp.CheckpointManager(
             best_path,
             options=ocp.CheckpointManagerOptions(max_to_keep=1),
@@ -765,14 +772,15 @@ def run_online(config: dict[str, Any]) -> dict[str, Any]:
             mgr.save(0, args=ocp.args.StandardSave(best_state))
         print(f"Saved best policy to {best_path}")
 
-        best_artifact = wandb.Artifact(
-            name=f"{config['ENV_NAME']}-policy-best",
-            type="model",
-            metadata=config,
-        )
-        best_artifact.add_dir(best_path)
-        wandb.log_artifact(best_artifact)
+        if config.get("USE_WANDB"):
+            best_artifact = wandb.Artifact(
+                name=f"{config['ENV_NAME']}-policy-best",
+                type="model",
+                metadata=config,
+            )
+            best_artifact.add_dir(best_path)
+            wandb.log_artifact(best_artifact)
 
-        print("Uploaded final + best policy artifacts to wandb")
+            print("Uploaded final + best policy artifacts to wandb")
 
     return out

@@ -244,7 +244,7 @@ Fairness-critical values are env-frame denominated (the six keys above) and resc
 
 ## Checkpoints
 
-With W&B on and `save_policy: true` (both defaults), training saves Orbax checkpoints to `wandb.run.dir/policies` (final) and `wandb.run.dir/policies_best` (highest validation return) and uploads them as W&B artifacts named `{env_name}-policy` and `{env_name}-policy-best`. Diffusion checkpoints carry a `resume_metadata.json` sidecar — the authoritative record of the producing run's config, and what `--resume` reads to auto-detect `resume_step` and `resume_wandb_run_id`. PPO checkpoints carry `config.yaml` and `wandb-summary.json`.
+With `save_policy: true` (the default), training saves Orbax checkpoints to `policies` (final) and `policies_best` (highest validation return). With W&B on these sit under `wandb.run.dir` and are uploaded as W&B artifacts named `{env_name}-policy` and `{env_name}-policy-best`; with W&B off they go to `{checkpoint_dir}/{mode}/{run_name}/` instead, so a run never discards its weights. Diffusion checkpoints carry a `resume_metadata.json` sidecar — the authoritative record of the producing run's config, and what `--resume` reads to auto-detect `resume_step` and `resume_wandb_run_id`. PPO checkpoints carry `config.yaml` and `wandb-summary.json`.
 
 **Pass the checkpoint directory, not the step subdirectory** — `CheckpointManager` resolves the latest step itself.
 

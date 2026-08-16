@@ -14,6 +14,7 @@ import wandb
 from src.diffusion.schedules import SCHEDULE_MAP
 
 from .common import (
+    checkpoint_root,
     compile_and_run,
     extract_sliding_windows,
     format_timing,
@@ -344,10 +345,14 @@ def run_offline_diffusion(config):
     resolve_scaled_hyperparams(config, "offline")
     print_config_snapshot(config, "offline")
 
+    run_name = (
+        f"{config['ENV_NAME']}-Offline-Diffusion-BC-"
+        f"{int(config['OFFLINE_TOTAL_TIMESTEPS'] // 1e6)}M"
+    )
     if config["USE_WANDB"]:
         init_wandb(
             config,
-            name=f"{config['ENV_NAME']}-Offline-Diffusion-BC-{int(config['OFFLINE_TOTAL_TIMESTEPS'] // 1e6)}M",
+            name=run_name,
             resume_run_id=config.get("RESUME_WANDB_RUN_ID"),
         )
 
@@ -359,10 +364,10 @@ def run_offline_diffusion(config):
     out, timing = compile_and_run(train_fn, rngs, config["OFFLINE_TOTAL_TIMESTEPS"])
     print(format_timing(timing))
 
-    if config["USE_WANDB"] and config["SAVE_POLICY"]:
+    if config["SAVE_POLICY"]:
         train_states = out["runner_state"][0]
         train_state = jax.tree.map(lambda x: x[0], train_states)
-        path = os.path.join(wandb.run.dir, "policies")
+        path = os.path.join(checkpoint_root(config, "offline", run_name), "policies")
         with ocp.CheckpointManager(
             path, options=ocp.CheckpointManagerOptions(max_to_keep=1)
         ) as mgr:
@@ -384,10 +389,11 @@ def run_offline_diffusion(config):
             config=config,
         )
 
-        artifact = wandb.Artifact(
-            name=f"{config['ENV_NAME']}-policy", type="model", metadata=config
-        )
-        artifact.add_dir(path)
-        wandb.log_artifact(artifact)
+        if config["USE_WANDB"]:
+            artifact = wandb.Artifact(
+                name=f"{config['ENV_NAME']}-policy", type="model", metadata=config
+            )
+            artifact.add_dir(path)
+            wandb.log_artifact(artifact)
 
-        print("Uploaded policy artifact to wandb")
+            print("Uploaded policy artifact to wandb")

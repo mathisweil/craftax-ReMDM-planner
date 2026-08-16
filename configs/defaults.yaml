@@ -134,6 +134,10 @@ eval_num_envs: 32
 
 # ── Checkpointing ────────────────────────────────────────────────────────────
 save_policy: true
+# Where checkpoints land when W&B is off. With W&B on they go to the run
+# directory and are uploaded as artifacts; either way save_policy governs
+# whether they are written at all.
+checkpoint_dir: checkpoints
 
 # ── Resume ───────────────────────────────────────────────────────────────────
 resume_checkpoint_path: null        # accepts wandb: refs

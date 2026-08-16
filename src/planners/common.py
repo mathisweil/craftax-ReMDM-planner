@@ -7,6 +7,7 @@ duplication.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from typing import Any
@@ -349,6 +350,34 @@ def dagger_sizing(config: dict[str, Any], num_updates: int) -> dict[str, int]:
         ),
         "n_train_passes": int(config.get("DAGGER_TRAIN_PASSES") or 1),
     }
+
+
+def checkpoint_root(config: dict[str, Any], mode: str, run_name: str) -> str:
+    """Directory the run's checkpoints are written under.
+
+    With W&B active this is the run directory, so the artifacts upload
+    from where they are written. Without it, checkpoints go to
+    ``{CHECKPOINT_DIR}/{mode}/{run_name}`` instead of being discarded -
+    ``SAVE_POLICY`` alone decides whether a run keeps its weights, as
+    in the minihack twin (PARITY "Checkpoint selection and
+    persistence").
+
+    Args:
+        config:   Upper-cased config dict.
+        mode:     ``"offline"`` or ``"online"``.
+        run_name: Human-readable run name, also used for the W&B run.
+
+    Returns:
+        Root directory path (created lazily by the checkpoint manager).
+    """
+    try:
+        import wandb
+
+        if wandb.run is not None:
+            return str(wandb.run.dir)
+    except ImportError:
+        pass
+    return os.path.join(str(config.get("CHECKPOINT_DIR", "checkpoints")), mode, run_name)
 
 
 def print_config_snapshot(config: dict[str, Any], mode: str) -> None:
