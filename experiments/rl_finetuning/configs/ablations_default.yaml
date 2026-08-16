@@ -138,4 +138,4 @@ wandb_project: craftax-ReMDM-planner-ablations
 wandb_entity: myopic-planner
 
 # ── Multi-seed ────────────────────────────────────────────────────────────────
-num_seeds: 1                  # run each ablation num_seeds times, report mean±std
+num_seeds: 3                  # run each ablation num_seeds times, report mean±std
