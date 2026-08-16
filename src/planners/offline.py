@@ -53,7 +53,7 @@ def make_train_offline_diffusion(config: dict[str, Any]):
     num_steps = config["NUM_STEPS"]
     num_envs = config["NUM_ENVS"]
     plan_horizon = config["PLAN_HORIZON"]
-    val_interval = config.get("VAL_INTERVAL", 50)
+    val_interval = config["VAL_INTERVAL"]
     val_replan_every = config.get("VAL_REPLAN_EVERY", 4)
     val_steps = config.get("VAL_STEPS", 128)
     n_val_cycles = val_steps // val_replan_every
@@ -108,7 +108,7 @@ def make_train_offline_diffusion(config: dict[str, Any]):
     total_grad_steps = (
         config["NUM_UPDATES"] * config["UPDATE_EPOCHS"] * config["NUM_MINIBATCHES"]
     )
-    warmup_steps = config.get("LR_WARMUP_STEPS", 0)
+    warmup_steps = config["LR_WARMUP_STEPS"]
     lr_schedule = (
         optax.warmup_cosine_decay_schedule(
             init_value=0.0,

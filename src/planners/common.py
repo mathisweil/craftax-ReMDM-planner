@@ -138,6 +138,28 @@ def resolve_num_updates(config: dict[str, Any], mode: str) -> None:
     config[ts_key] = num_updates * frames_per_update
 
 
+def _require(config: dict[str, Any], key: str) -> Any:
+    """Read a declared config key that has no meaningful default.
+
+    Args:
+        config: Upper-cased config dict.
+        key:    Key that must be present and non-null.
+
+    Returns:
+        The key's value.
+
+    Raises:
+        ValueError: If the key is missing or null.
+    """
+    value = config.get(key)
+    if value is None:
+        raise ValueError(
+            f"{key.lower()!r} must be set; it is the source the runner's "
+            "update-step value is derived from."
+        )
+    return value
+
+
 def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
     """Resolve env-frame-denominated hyperparameters into update-step form.
 
@@ -145,17 +167,17 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
     runners consume from the env-frame / update-cycle quantities the
     configs declare:
 
-    +-----------------------------+------------------------+----------+
-    | Declared (env-frame)        | Derived (update-step)  | Mode     |
-    +=============================+========================+==========+
-    | ``LR_WARMUP_FRAMES``        | ``LR_WARMUP_STEPS``    | both     |
-    +-----------------------------+------------------------+----------+
-    | ``VAL_INTERVAL_FRAMES``     | ``VAL_INTERVAL``       | both     |
-    +-----------------------------+------------------------+----------+
-    | ``DAGGER_BETA_FINAL``       | ``DAGGER_BETA_DECAY``  | online   |
-    +-----------------------------+------------------------+----------+
-    | ``DAGGER_BUFFER_CYCLES``    | ``DAGGER_BUFFER_MAX``  | online   |
-    +-----------------------------+------------------------+----------+
+    +-----------------------------+------------------------+
+    | Declared (env-frame)        | Derived (update-step)  |
+    +=============================+========================+
+    | ``LR_WARMUP_FRAMES``        | ``LR_WARMUP_STEPS``    |
+    +-----------------------------+------------------------+
+    | ``VAL_INTERVAL_FRAMES``     | ``VAL_INTERVAL``       |
+    +-----------------------------+------------------------+
+    | ``DAGGER_BETA_FINAL``       | ``DAGGER_BETA_DECAY``  |
+    +-----------------------------+------------------------+
+    | ``DAGGER_BUFFER_CYCLES``    | ``DAGGER_BUFFER_MAX``  |
+    +-----------------------------+------------------------+
 
     Why env-frame units
     -------------------
@@ -166,8 +188,7 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
     beta*, not *per-update decay constant*).
 
     The conversion for ``DAGGER_BETA_FINAL`` requires ``NUM_UPDATES``,
-    so this function MUST be called after :func:`resolve_num_updates`
-    when resolving online mode.
+    so this function MUST be called after :func:`resolve_num_updates`.
 
     Idempotent: calling this twice is equivalent to calling it once.
 
@@ -177,7 +198,7 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
         mode:   Either ``"offline"`` or ``"online"``.
 
     Raises:
-        ValueError: If ``DAGGER_BETA_FINAL`` is set in online mode but
+        ValueError: If a declared key is missing or null, if
                     ``NUM_UPDATES`` has not been resolved yet, or if the
                     resolved warmup meets or exceeds the budget.
     """
@@ -189,28 +210,27 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
             gspu *= int(config.get("DAGGER_TRAIN_PASSES") or 1)
         return gspu
 
+    # Frame-denominated warmup (author decision 2026-08-15, final):
+    # optax consumes warmup in *gradient* steps, so frames convert
+    # through the effective geometry - one optimiser update spans fpu
+    # frames and performs update_epochs * num_minibatches
+    # (* dagger_train_passes online) gradient steps. A null or zero
+    # budget disables warmup.
     # float() first to accept YAML scientific notation parsed as string
     # (PyYAML 1.1 only auto-coerces "3.0e+8", not "3e8" or "3.0e8").
-    warmup_frames = config.get("LR_WARMUP_FRAMES")
-    if warmup_frames is not None:
-        # Frame-denominated warmup (author decision 2026-08-15, final):
-        # optax consumes warmup in *gradient* steps, so frames convert
-        # through the effective geometry - one optimiser update spans
-        # fpu frames and performs update_epochs * num_minibatches
-        # (* dagger_train_passes online) gradient steps.
-        config["LR_WARMUP_STEPS"] = (
-            int(float(warmup_frames)) // fpu
-        ) * _grad_steps_per_update()
+    warmup_frames = config.get("LR_WARMUP_FRAMES") or 0
+    config["LR_WARMUP_STEPS"] = (
+        int(float(warmup_frames)) // fpu
+    ) * _grad_steps_per_update()
 
-    val_frames = config.get("VAL_INTERVAL_FRAMES")
-    if val_frames is not None:
-        config["VAL_INTERVAL"] = max(1, int(float(val_frames)) // fpu)
+    val_frames = _require(config, "VAL_INTERVAL_FRAMES")
+    config["VAL_INTERVAL"] = max(1, int(float(val_frames)) // fpu)
 
     # Short-budget guard (step-7 finding N1): optax's warmup-cosine
     # schedule needs warmup < total gradient steps; without this check a
     # too-small budget only crashes later, deep inside optax, with
     # `decay_steps <= 0`. Applies whenever the budget is already resolved.
-    warmup_steps = int(config.get("LR_WARMUP_STEPS") or 0)
+    warmup_steps = int(config["LR_WARMUP_STEPS"])
     num_updates = config.get("NUM_UPDATES")
     if warmup_steps > 0 and num_updates is not None:
         grad_steps_per_update = _grad_steps_per_update()
@@ -223,27 +243,25 @@ def resolve_scaled_hyperparams(config: dict[str, Any], mode: str) -> None:
                 "increase the *_total_timesteps budget or reduce the warmup."
             )
 
-    if mode != "online":
-        return
-
-    beta_final = config.get("DAGGER_BETA_FINAL")
-    if beta_final is not None:
-        num_updates = config.get("NUM_UPDATES")
-        if num_updates is None:
-            raise ValueError(
-                "DAGGER_BETA_FINAL requires NUM_UPDATES to be resolved "
-                "first; call resolve_num_updates() before "
-                "resolve_scaled_hyperparams()."
-            )
-        beta_init = float(config.get("DAGGER_BETA_INIT", 1.0))
-        # final = init * decay^N  =>  decay = (final / init) ** (1 / N)
-        config["DAGGER_BETA_DECAY"] = (float(beta_final) / beta_init) ** (
-            1.0 / int(num_updates)
+    # The two DAgger quantities are derived in both modes: they are pure
+    # functions of the config and NUM_UPDATES, and the offline runner's
+    # snapshot and sizing helpers read them too.
+    beta_final = _require(config, "DAGGER_BETA_FINAL")
+    num_updates = config.get("NUM_UPDATES")
+    if num_updates is None:
+        raise ValueError(
+            "DAGGER_BETA_FINAL requires NUM_UPDATES to be resolved "
+            "first; call resolve_num_updates() before "
+            "resolve_scaled_hyperparams()."
         )
+    beta_init = float(config.get("DAGGER_BETA_INIT", 1.0))
+    # final = init * decay^N  =>  decay = (final / init) ** (1 / N)
+    config["DAGGER_BETA_DECAY"] = (float(beta_final) / beta_init) ** (
+        1.0 / int(num_updates)
+    )
 
-    buffer_cycles = config.get("DAGGER_BUFFER_CYCLES")
-    if buffer_cycles is not None:
-        config["DAGGER_BUFFER_MAX"] = max(1, int(round(float(buffer_cycles) * fpu)))
+    buffer_cycles = _require(config, "DAGGER_BUFFER_CYCLES")
+    config["DAGGER_BUFFER_MAX"] = max(1, int(round(float(buffer_cycles) * fpu)))
 
 
 def extract_sliding_windows(
@@ -346,7 +364,7 @@ def dagger_sizing(config: dict[str, Any], num_updates: int) -> dict[str, int]:
         "samples_per_update": samples_per_update,
         "max_buffer_size": min(
             num_updates * samples_per_update,
-            int(config.get("DAGGER_BUFFER_MAX", 100_000)),
+            int(config["DAGGER_BUFFER_MAX"]),
         ),
         "n_train_passes": int(config.get("DAGGER_TRAIN_PASSES") or 1),
     }
@@ -428,7 +446,7 @@ def print_config_snapshot(config: dict[str, Any], mode: str) -> None:
         f"    {ts_key.lower():<24} = {total_frames:,}  (~{total_frames / 1e6:.1f}M frames)"
     )
     print(f"    {'num_updates':<24} = {num_updates:,}")
-    warmup = int(config.get("LR_WARMUP_STEPS", 0))
+    warmup = int(config["LR_WARMUP_STEPS"])
     print(f"    {'lr':<24} = {float(config['LR']):.2e}")
     print(
         f"    {'lr_warmup_steps':<24} = {warmup}  (~{warmup * fpu / 1e6:.2f}M frames)"
@@ -475,9 +493,7 @@ def print_config_snapshot(config: dict[str, Any], mode: str) -> None:
         )
         print(f"    {'total_grad_steps':<24} = {total_grad_steps:,}")
 
-    # Display-only fallback: VAL_INTERVAL is always derived from
-    # VAL_INTERVAL_FRAMES by resolve_scaled_hyperparams before this runs.
-    val_int = int(config.get("VAL_INTERVAL", 0))
+    val_int = int(config["VAL_INTERVAL"])
     print("  -- Validation --")
     print(
         f"    val_interval        = {val_int} updates  (~{val_int * fpu / 1e6:.2f}M frames)"

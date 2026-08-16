@@ -91,7 +91,7 @@ def _last_validated_step(config: dict[str, Any], num_updates: int) -> int | None
     Returns:
         Index into the metric arrays, or ``None`` if no validation ran.
     """
-    val_interval = int(config.get("VAL_INTERVAL", 50))
+    val_interval = int(config["VAL_INTERVAL"])
     start = int(config.get("RESUME_STEP") or 0)
     validated = [i for i in range(num_updates) if (start + i) % val_interval == 0]
     return validated[-1] if validated else None

@@ -119,7 +119,7 @@ def make_train_online_dagger(config: dict[str, Any]):
     num_steps = config["NUM_STEPS"]
 
     # Validation config
-    val_interval = config.get("VAL_INTERVAL", 50)
+    val_interval = config["VAL_INTERVAL"]
     val_replan_every = config.get("VAL_REPLAN_EVERY", 4)
     val_steps = config.get("VAL_STEPS", 128)
     n_val_cycles = val_steps // val_replan_every
@@ -210,12 +210,12 @@ def make_train_online_dagger(config: dict[str, Any]):
     # Beta schedule: probability of using expert for rollout actions.
     # beta_i = beta_init * beta_decay^i  ->  0 as i -> inf.
     beta_init = config.get("DAGGER_BETA_INIT", 1.0)
-    beta_decay = config.get("DAGGER_BETA_DECAY", 0.95)
+    beta_decay = config["DAGGER_BETA_DECAY"]
 
     # cosine LR schedule matching offline training.  Stretched to
     # cover all gradient steps across train passes (B1).
     total_grad_steps = num_updates * n_train_passes * update_epochs * num_minibatches
-    warmup_steps = config.get("LR_WARMUP_STEPS", 0)
+    warmup_steps = config["LR_WARMUP_STEPS"]
     lr_schedule = (
         optax.warmup_cosine_decay_schedule(
             init_value=0.0,
