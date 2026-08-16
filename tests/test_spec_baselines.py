@@ -13,13 +13,16 @@ The minihack twin file covers its in-repo SB3/DT baselines
 
 from __future__ import annotations
 
+import inspect
 import json
 
 import jax
 import jax.numpy as jnp
 import orbax.checkpoint as ocp
 import pytest
-from tests.conftest import ROOT
+from tests.conftest import ROOT, load_config
+
+from src.planners.common import resolve_num_updates
 
 _HF_OFFLINE = (
     ROOT
@@ -83,21 +86,45 @@ def test_released_offline_metadata_is_recipe_consistent():
 
 
 @_needs_artefact
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "step-7 finding N3, decision recorded (2026-08-15 §4a: migrate "
-        "the step dir to 99,942,400): execution is blocked from this "
-        "machine - the stored HF token is read-only. Flips once the "
-        "rename lands with a write token (step-10 report)."
-    ),
-)
-def test_released_offline_step_dir_uses_the_frame_denominated_unit():
-    """Under the current save convention the offline Orbax step equals
-    the resolved frame budget (offline.py: mgr.save(int(
-    config['OFFLINE_TOTAL_TIMESTEPS']))), so the released artefact's
-    step directory should read 99,942,400."""
+def test_released_offline_step_dir_is_the_documented_historical_exception():
+    """The released Classic offline checkpoint's step directory reads
+    1000000000, from a convention that predates the frame-denominated
+    one (step-7 finding N3).
+
+    Author decision 2026-08-16: the artefact stays as published and is
+    historical/noncanonical; new artefacts use the canonical unit,
+    which for offline is the resolved env-frame budget
+    (offline.py: ``mgr.save(int(config["OFFLINE_TOTAL_TIMESTEPS"]))``,
+    99,942,400 for the Classic recipe at 512 envs). This test fails if
+    the artefact is silently renamed, or if the README's historical
+    note stops explaining the two numbers.
+    """
     step_dirs = sorted(
         int(p.name) for p in _HF_OFFLINE.iterdir() if p.name.isdigit()
     )
-    assert step_dirs == [99_942_400]
+    assert step_dirs == [1_000_000_000]
+
+    note = (ROOT / "README.md").read_text()
+    assert "Historical note" in note
+    assert "1000000000" in note and "99,942,400" in note
+
+
+def test_new_offline_checkpoints_use_the_frame_denominated_step():
+    """The canonical unit for a new offline checkpoint is the resolved
+    env-frame budget, not an update count or a PPO-style timestep.
+
+    Pinned at the call site so a change of unit has to change this
+    test: the offline runner saves at ``int(OFFLINE_TOTAL_TIMESTEPS)``
+    after the resolver has re-snapped it to ``NUM_UPDATES * fpu``.
+    """
+    from src.planners import offline
+
+    source = inspect.getsource(offline.run_offline_diffusion)
+    assert 'mgr.save(\n                int(config["OFFLINE_TOTAL_TIMESTEPS"]),' in source
+
+    config = {
+        **load_config("configs/defaults.yaml"),
+        **load_config("configs/final_classic_ucl.yaml"),
+    }
+    resolve_num_updates(config, "offline")
+    assert int(config["OFFLINE_TOTAL_TIMESTEPS"]) == 99_942_400
