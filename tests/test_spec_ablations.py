@@ -15,6 +15,7 @@ The minihack twin file carries the same mechanisms in its framework.
 
 from __future__ import annotations
 
+import logging
 import math
 
 import jax
@@ -516,6 +517,54 @@ def test_reward_filter_percentile_ignores_invalid_windows():
     assert keep.tolist() == [False] * 6 + [True, True] + [False] * 4
     # Without the validity mask the same batch keeps nothing.
     assert not np.asarray(reward_filter_mask(returns, 75))[:8].any()
+
+
+def test_an_empty_reward_filter_batch_warns(caplog):
+    """A kept count of zero is logged; a non-empty one is silent.
+
+    Tied returns leave nothing strictly above the percentile, so the
+    keep-mask is all-False, the ELBO and its gradient are exactly zero, and
+    the iteration is indistinguishable from a normal one in every logged
+    quantity. The boundary stays strict, per spec-ablations §2; only the
+    degenerate case becomes visible.
+    """
+    from experiments.rl_finetuning.ablations.training import (
+        reward_filter_mask,
+        warn_if_reward_filter_kept_nothing,
+    )
+
+    valid = jnp.ones(4, dtype=bool)
+
+    with caplog.at_level(logging.WARNING):
+        tied = reward_filter_mask(jnp.full(4, 2.0), 75, valid)
+        warn_if_reward_filter_kept_nothing(tied, 75)
+    assert "kept 0 of 4 windows" in caplog.text
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        spread = reward_filter_mask(jnp.arange(1.0, 5.0), 75, valid)
+        warn_if_reward_filter_kept_nothing(spread, 75)
+    assert caplog.text == ""
+
+
+def test_the_reward_filtering_branch_is_wired_to_the_warning():
+    """The filter's only call site emits the warning.
+
+    Source-anchored: the call sits inside the jitted scan body, which no
+    unit test can reach without running a rollout. Without this the helper
+    could be correct and never invoked -- the shape of the original defect.
+    """
+    import inspect
+
+    from experiments.rl_finetuning.ablations import training
+
+    src = inspect.getsource(training)
+    filter_call = "mask = reward_filter_mask(flat_returns, reward_filter_pct, mask)"
+    assert filter_call in src
+    assert (
+        f"{filter_call}\n                "
+        "warn_if_reward_filter_kept_nothing(mask, reward_filter_pct)"
+    ) in src
 
 
 def test_action_diversity_discards_degenerate_plans():

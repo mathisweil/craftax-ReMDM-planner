@@ -403,6 +403,41 @@ def reward_filter_mask(
     return valid & (returns > threshold)
 
 
+def warn_if_reward_filter_kept_nothing(mask: jax.Array, percentile: float) -> None:
+    """Warn from inside the jitted loop when the filter kept no window.
+
+    A batch whose valid returns all tie leaves nothing strictly above the
+    percentile, so the keep-mask is all-False and the ELBO is exactly 0.0.
+    The iteration then looks like any other in every logged quantity, which
+    is what made this invisible. The strict boundary itself is the specified
+    one and is unchanged; only its degenerate case becomes visible.
+
+    ``lax.cond`` keeps the host callback off the common path, and the
+    callback carries no traced argument, so nothing here forces a sync on a
+    normal iteration.
+
+    Args:
+        mask:       ``[N]`` keep-mask from :func:`reward_filter_mask`.
+        percentile: The percentile that produced it, named in the message.
+    """
+    n_windows = mask.shape[0]
+
+    def _warn() -> None:
+        logger.warning(
+            "Reward filter kept 0 of %d windows at p%g: the valid returns "
+            "tie at or below the threshold, so this iteration's ELBO and "
+            "its gradient are exactly zero.",
+            n_windows,
+            percentile,
+        )
+
+    jax.lax.cond(
+        jnp.any(mask),
+        lambda: None,
+        lambda: jax.debug.callback(_warn),
+    )
+
+
 def _effective_batch_size(advantages: jax.Array) -> jax.Array:
     """Compute effective batch size: (sum w)^2 / sum w^2.
 
@@ -1065,6 +1100,7 @@ def make_run_ablation(
             # -- Reward filtering --
             if use_reward_filtering:
                 mask = reward_filter_mask(flat_returns, reward_filter_pct, mask)
+                warn_if_reward_filter_kept_nothing(mask, reward_filter_pct)
 
             # Apply mask to validity
             flat_valid = mask
