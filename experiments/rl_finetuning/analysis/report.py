@@ -23,6 +23,10 @@ import numpy as np
 
 from experiments.rl_finetuning.ablations.registry import REGISTRY
 from experiments.rl_finetuning.ablations.training import AblationHistory
+from experiments.rl_finetuning.analysis.tables import (
+    baseline_rl_score_of,
+    verdict,
+)
 
 matplotlib.use("Agg")
 logger = logging.getLogger(__name__)
@@ -228,8 +232,9 @@ def generate_diagnosis_report(
 
     # Identify primary failure mode
     primary = scored[0]
+    baseline_rl_score = baseline_rl_score_of(results, pretrained_score)
     all_failed = all(
-        res["score"] < pretrained_score - 0.1
+        verdict(res["score"], baseline_rl_score, pretrained_score) == "COLLAPSE"
         for name, res in results.items()
         if name != "baseline_rl"
     )
@@ -254,11 +259,13 @@ def generate_diagnosis_report(
             "",
         ]
     else:
-        n_improved = sum(
-            1 for res in results.values() if res["score"] > pretrained_score - 0.1
+        n_held = sum(
+            1
+            for res in results.values()
+            if verdict(res["score"], baseline_rl_score, pretrained_score) != "COLLAPSE"
         )
         lines += [
-            f"**{n_improved}/{len(results)} ablations** achieved scores near or above the pretrained baseline.",
+            f"**{n_held}/{len(results)} ablations** held at or above `baseline_rl`.",
             "",
         ]
 
@@ -304,18 +311,13 @@ def generate_diagnosis_report(
     for name, res in sorted(results.items(), key=lambda x: x[1]["score"], reverse=True):
         score = res["score"]
         delta = score - pretrained_score
-        verdict = (
-            "IMPROVEMENT"
-            if delta > 0.05
-            else "COLLAPSE"
-            if score < pretrained_score - 0.1
-            else "NEUTRAL"
-        )
+        label = verdict(score, baseline_rl_score, pretrained_score)
         spec = REGISTRY.get(name)
         hypothesis_text = spec.hypothesis if spec else "N/A"
         lines += [
-            f"### {name}  [{verdict}]",
-            f"- **Score:** {score:.4f}  (delta vs pretrained: {delta:+.4f})",
+            f"### {name}  [{label}]",
+            f"- **Score:** {score:.4f}  (delta vs pretrained: {delta:+.4f}, "
+            f"delta vs baseline_rl: {score - baseline_rl_score:+.4f})",
             f"- **Hypothesis tested:** {hypothesis_text}",
         ]
         history: AblationHistory = res["history"]
