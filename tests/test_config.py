@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -291,3 +292,181 @@ def test_not_poolable_divergence_is_recorded(name) -> None:
         f"changed. Recorded: {sorted(expected)}; actual: {sorted(actual)}. "
         "Update _NOT_POOLABLE, or move it to _POOLABLE if now aligned."
     )
+
+
+_SHIPPED_CONFIGS = (_CONFIGS / "defaults.yaml", _ABL_DEFAULT)
+_SOURCE_DIRS = ("src", "experiments", "scripts")
+
+
+def _production_sources() -> list[Path]:
+    """Every production module: the entry point and the source packages."""
+    found = [_ROOT / "main.py"]
+    for name in _SOURCE_DIRS:
+        found += sorted((_ROOT / name).rglob("*.py"))
+    return found
+
+
+def _normalise(key: str) -> str:
+    """Config keys are lower case in YAML and upper case in code here."""
+    return key.upper()
+
+
+# Every key read from a config object that no shipped YAML declares, with the
+# reason it is not declared. Anything not listed here fails the test.
+_NOT_FROM_A_CONFIG_FILE = frozenset(
+    {
+        # Derived at load by resolve_num_updates / resolve_scaled_hyperparams
+        # from the env-frame and update-cycle forms that ARE declared. Setting
+        # a derived form directly is a documented hazard, not a config key
+        # (README §Configuration, CLAUDE.md).
+        "NUM_UPDATES",
+        "LR_WARMUP_STEPS",
+        "VAL_INTERVAL",
+        "DAGGER_BETA_DECAY",
+        "DAGGER_BUFFER_MAX",
+        "MINIBATCH_SIZE",
+        # Read off the environment's action space, not off a file.
+        "NUM_ACTIONS",
+        # Injected by the CLI: run mode, JIT toggle and the four artefact
+        # paths, none of which has a default worth shipping.
+        "MODE",
+        "JIT",
+        "CHECKPOINT_PATH",
+        "PPO_CHECKPOINT_PATH",
+        "OFFLINE_CHECKPOINT_PATH",
+        "OFFLINE_DATA_PATH",
+        "INFERENCE_OUTPUT",
+        # Read from the PPO expert artefact's own W&B config snapshot in
+        # hf_upload.py, which declares it; it is not a key of this repo.
+        "TOTAL_TIMESTEPS",
+    }
+)
+
+
+# ---------------------------------------------------------------------------
+# Config-key reachability (the class F-1 belongs to)
+# ---------------------------------------------------------------------------
+# F-1: `hf_upload.py::selection` read `checkpoint_every` and `max_iterations`
+# long after both were renamed out of the config. `.get()` returned None, so
+# every published DAgger selection.json recorded a null and nothing failed.
+# The class is "a key the code reads that no shipped config declares", and the
+# only way to keep it closed is to re-derive the set on every run.
+#
+# `_CONFIG_NAMES` are the identifiers a merged config is bound to across the
+# production sources. Attributes and subscripts on those names are config
+# reads; leading-underscore names are not -- they are the convention for a
+# value the code stamps onto the namespace at run time.
+_CONFIG_NAMES = frozenset({"config", "cfg", "merged", "conf"})
+_NOT_CONFIG_ATTRS = frozenset(
+    {"get", "items", "keys", "values", "update", "copy", "pop", "setdefault"}
+)
+
+
+class _ConfigKeyScanner(ast.NodeVisitor):
+    """Collect every config key a module reads, with its call site."""
+
+    def __init__(self) -> None:
+        self.keys: dict[str, set[str]] = {}
+        self.path = "?"
+
+    def _record(self, key: str, node: ast.AST) -> None:
+        if not key.startswith("_"):
+            self.keys.setdefault(key, set()).add(f"{self.path}:{node.lineno}")
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in _CONFIG_NAMES
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            self._record(node.args[0].value, node)
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and len(node.args) >= 2
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id in _CONFIG_NAMES
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+        ):
+            self._record(node.args[1].value, node)
+        self.generic_visit(node)
+
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        if (
+            isinstance(node.value, ast.Name)
+            and node.value.id in _CONFIG_NAMES
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)
+        ):
+            self._record(node.slice.value, node)
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if (
+            isinstance(node.value, ast.Name)
+            and node.value.id in _CONFIG_NAMES
+            and node.attr not in _NOT_CONFIG_ATTRS
+        ):
+            self._record(node.attr, node)
+        self.generic_visit(node)
+
+
+def _config_keys_read() -> dict[str, set[str]]:
+    scanner = _ConfigKeyScanner()
+    for source in _production_sources():
+        scanner.path = str(source.relative_to(_ROOT))
+        scanner.visit(ast.parse(source.read_text()))
+    return scanner.keys
+
+
+def _declared_keys() -> set[str]:
+    declared: set[str] = set()
+    for path in _SHIPPED_CONFIGS:
+        declared |= set(yaml.safe_load(path.read_text()) or {})
+    return declared
+
+
+def test_every_config_key_the_code_reads_is_declared_in_a_shipped_config():
+    """No production source may read a key no shipped config declares.
+
+    Every unresolved key must be named in `_NOT_FROM_A_CONFIG_FILE` with the
+    reason it is not declared -- derived at load, injected by the CLI, or read
+    from a foreign config. That list is the point of the test: an entry is a
+    visible decision, whereas F-1 was a silent one.
+    """
+    read = _config_keys_read()
+    declared = {_normalise(key) for key in _declared_keys()}
+
+    unresolved = {
+        key: sorted(sites)
+        for key, sites in read.items()
+        if _normalise(key) not in declared and key not in _NOT_FROM_A_CONFIG_FILE
+    }
+
+    assert not unresolved, (
+        "config keys read by production code that no shipped config declares "
+        f"and no exemption covers: {unresolved}"
+    )
+
+
+def test_the_reachability_scan_reaches_the_code_it_claims_to_cover():
+    """Guard the scanner itself.
+
+    A scan that silently matched nothing would pass the test above forever.
+    These floors pin that the production sources are found, that a healthy
+    number of keys is recovered, and that the exemption list has not grown
+    into an allowlist for everything.
+    """
+    read = _config_keys_read()
+
+    assert len(_production_sources()) >= 20
+    assert len(read) >= 80
+    assert len(_declared_keys()) >= 80
+    assert len(_NOT_FROM_A_CONFIG_FILE) <= len(read) // 4
+    stale = sorted(_NOT_FROM_A_CONFIG_FILE - set(read))
+    assert not stale, f"exemptions for keys nothing reads any more: {stale}"
