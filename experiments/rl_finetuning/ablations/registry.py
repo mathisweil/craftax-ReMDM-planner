@@ -58,7 +58,8 @@ class AblationSpec:
         frozen_path_fragments:  Parameter path substrings to freeze (zero gradient).
         wins_only:              If True, pre-filter batch to windows with return > threshold.
         gradient_surgery:       If True, apply PCGrad to RL vs. BC gradients.
-        mixed_replay:           If True, mix offline buffer into each batch.
+        mixed_replay:           If True, resample the run's own past online
+                                windows into each batch.
         t_curriculum:           If True, anneal t range over training.
         reward_filtering:       If True, discard windows with return < percentile.
         running_stats:          If True, normalise advantages with running mean/std.
@@ -239,7 +240,7 @@ REGISTRY: dict[str, AblationSpec] = {
     "mixed_replay": AblationSpec(
         name="mixed_replay",
         group="A",
-        description="Baseline ELBO with offline PPO data mixed into online batches",
+        description="Self-replay: the run's own past online windows resampled into each batch",
         hypothesis="If mixed replay helps: online data distribution alone is too corrupted",
         loss_factory=make_loss_mixed_replay,
         optimizer_factory=_std_opt,

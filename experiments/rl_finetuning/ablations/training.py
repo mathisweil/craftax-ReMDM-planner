@@ -1128,7 +1128,7 @@ def make_run_ablation(
             val_b = flat_valid[:batch_size]  # [B]
             adv_b = advantages[:batch_size]  # [B]
 
-            # -- Mixed replay: blend in offline data --
+            # -- Mixed replay: splice in the run's own past online windows --
             if use_mixed_replay:
                 n_offline = max(1, int(batch_size * mixed_replay_ratio))
                 n_online = batch_size - n_offline
