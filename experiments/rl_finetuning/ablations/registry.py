@@ -55,7 +55,6 @@ class AblationSpec:
         hypothesis:             What this ablation tests (failure hypothesis).
         loss_factory:           Callable(ctx, **extra) -> LossFn.
         optimizer_factory:      Callable(config, params) -> GradientTransformation.
-        frozen_path_fragments:  Parameter path substrings to freeze (zero gradient).
         wins_only:              If True, pre-filter batch to windows with return > threshold.
         gradient_surgery:       If True, apply PCGrad to RL vs. BC gradients.
         mixed_replay:           If True, resample the run's own past online
@@ -76,7 +75,6 @@ class AblationSpec:
     optimizer_factory: OptimizerFactory = field(
         default_factory=lambda: make_optimizer_standard
     )
-    frozen_path_fragments: list[str] = field(default_factory=list)
     wins_only: bool = False
     gradient_surgery: bool = False
     mixed_replay: bool = False

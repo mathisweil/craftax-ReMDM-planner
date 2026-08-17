@@ -154,50 +154,6 @@ def make_optimizer_llrd(config: dict, params: Any) -> optax.GradientTransformati
     )
 
 
-def make_optimizer_frozen_paths(
-    config: dict, params: Any, frozen_path_fragments: list[str]
-) -> optax.GradientTransformation:
-    """Adam with gradient masking for specified parameter paths.
-
-    Parameters whose full path string contains ANY fragment from
-    ``frozen_path_fragments`` receive zero gradient (effectively frozen).
-
-    Args:
-        config:                 UPPERCASE config dict.
-        params:                 Parameter pytree.
-        frozen_path_fragments:  Path substrings identifying frozen params.
-
-    Returns:
-        Optax transformation with frozen parameters.
-    """
-    max_grad_norm = config.get("MAX_GRAD_NORM", 1.0)
-    lr = config.get("LR", 3e-4)
-    weight_decay = config.get("WEIGHT_DECAY", 1e-4)
-
-    def should_freeze(path: tuple) -> bool:
-        path_str = "/".join(str(k.key) if hasattr(k, "key") else str(k) for k in path)
-        return any(frag in path_str for frag in frozen_path_fragments)
-
-    # multi_transform, not masked: optax.masked leaves NON-selected updates
-    # untouched rather than zeroing them, so masking in the trainable params
-    # would hand every frozen parameter its raw clipped gradient as an update
-    # (roughly SGD at lr=1.0, in the ascent direction).
-    label_tree = jax.tree_util.tree_map_with_path(
-        lambda path, _: "frozen" if should_freeze(path) else "trainable", params
-    )
-
-    return optax.chain(
-        optax.clip_by_global_norm(max_grad_norm),
-        optax.multi_transform(
-            {
-                "trainable": optax.adamw(lr, weight_decay=weight_decay, eps=1e-5),
-                "frozen": optax.set_to_zero(),
-            },
-            label_tree,
-        ),
-    )
-
-
 def make_optimizer_selected(
     config: dict, params: Any, select_fn: Callable[[tuple[str, ...]], bool]
 ) -> optax.GradientTransformation:
@@ -206,11 +162,9 @@ def make_optimizer_selected(
     ``select_fn`` receives the parameter path as a tuple of segment
     strings (e.g. ``("params", "TransformerBlock_0", "Dense_1",
     "kernel")``) and returns True for trainable parameters. Everything
-    else receives a zero update via ``optax.set_to_zero`` (the
-    multi_transform rationale in :func:`make_optimizer_frozen_paths`
-    applies here too). Segment-level selection avoids the bare-substring
-    collisions that froze the wrong modules in the group-C probes
-    (traceability §8.1/§8.2).
+    else receives a zero update via ``optax.set_to_zero``. Segment-level
+    selection avoids the bare-substring collisions that froze the wrong
+    modules in the group-C probes (traceability §8.1/§8.2).
 
     Args:
         config:    UPPERCASE config dict.
@@ -227,6 +181,12 @@ def make_optimizer_selected(
     def _segments(path: tuple) -> tuple[str, ...]:
         return tuple(str(k.key) if hasattr(k, "key") else str(k) for k in path)
 
+    # multi_transform, not masked: optax.masked leaves NON-selected updates
+    # untouched rather than zeroing them, so masking in the trainable params
+    # would hand every frozen parameter its raw clipped gradient as an update
+    # (roughly SGD at lr=1.0, in the ascent direction). That was the FREEZE
+    # defect, and it is why every freezing factory here labels the whole tree
+    # and routes the frozen label through set_to_zero.
     label_tree = jax.tree_util.tree_map_with_path(
         lambda path, _: "trainable" if select_fn(_segments(path)) else "frozen",
         params,
@@ -403,7 +363,7 @@ def make_optimizer_lora_only(
     max_grad_norm = config.get("MAX_GRAD_NORM", 1.0)
     weight_decay = config.get("WEIGHT_DECAY", 1e-4)
 
-    # multi_transform, not masked: see make_optimizer_frozen_paths.  With
+    # multi_transform, not masked: see make_optimizer_selected.  With
     # optax.masked the base parameters would receive their raw gradients.
     label_tree = {
         "base": jax.tree.map(lambda _: "frozen", base_params),

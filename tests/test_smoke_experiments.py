@@ -311,29 +311,6 @@ def test_lora_apply_and_optimizer_run(abl_config, apply_fns, params, batch) -> N
     assert all(_finite(p) for p in jax.tree_util.tree_leaves(updated["base"]))
 
 
-def test_frozen_paths_receive_no_update(abl_config, params) -> None:
-    """Regression: optax.masked passes NON-selected leaves through unchanged
-    rather than zeroing them, so masking in the trainable params handed every
-    'frozen' parameter its raw clipped gradient. Now multi_transform +
-    set_to_zero."""
-    from experiments.rl_finetuning.ablations.optimizers import make_optimizer_frozen_paths
-
-    fragments = ["TransformerBlock"]
-    tx = make_optimizer_frozen_paths(abl_config, params, fragments)
-    opt_state = tx.init(params)
-    grads = jax.tree.map(lambda p: jnp.full_like(p, 0.5), params)
-    updates, _ = tx.update(grads, opt_state, params)
-
-    frozen = [
-        leaf for path, leaf in jax.tree_util.tree_flatten_with_path(updates)[0]
-        if any(f in "/".join(str(k.key) for k in path) for f in fragments)
-    ]
-    assert frozen, "test selected no frozen leaves"
-    assert all(float(jnp.max(jnp.abs(u))) == 0.0 for u in frozen), (
-        "frozen parameters received a non-zero update"
-    )
-
-
 def test_lora_optimizer_freezes_the_base(abl_config, apply_fns, params) -> None:
     from experiments.rl_finetuning.ablations.optimizers import (
         make_lora_params,
