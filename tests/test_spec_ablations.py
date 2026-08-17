@@ -1044,6 +1044,126 @@ def test_the_non_freezing_optimisers_freeze_nothing(name, prod):
 
 
 # ---------------------------------------------------------------------------
+# Group C: trainable sets at the PRODUCTION architecture
+# ---------------------------------------------------------------------------
+# The Dense index layout the expectations below are derived for. At
+# OBS_ENCODER_LAYERS=2 the top-level Dense modules are: 0-1 obs encoder MLP,
+# 2 obs projection, 3-4 time-embedding MLP, 5 action head -- one index higher
+# throughout than the TINY layout the tests above assert, where the head is
+# Dense_4. `_dense_index_map` computes exactly this arithmetically, so a test
+# that only ever sees OBS_ENCODER_LAYERS=1 cannot tell a correct map from one
+# that is off by the encoder depth.
+_PROD_OBS_ENCODER_LAYERS = 2
+_PROD_N_LAYERS = 6
+_PROD_HEAD = frozenset({"params/Dense_5"})
+# Head, plus the token-interface embeddings: the time-embedding MLP
+# (Dense_3, Dense_4) and the action embedding.
+_PROD_FROZEN_BACKBONE = _PROD_HEAD | frozenset(
+    {"params/Dense_3", "params/Dense_4", "params/Embed_0"}
+)
+
+
+def _prod_modules(params) -> frozenset[str]:
+    return frozenset(
+        "/".join(str(k.key) for k in path).rsplit("/", 1)[0]
+        for path, _ in jax.tree_util.tree_flatten_with_path(params)[0]
+    )
+
+
+def _prod_trainable_modules(config: dict, params, name: str) -> frozenset[str]:
+    return frozenset(
+        leaf.rsplit("/", 1)[0]
+        for leaf, delta in _prod_deltas(config, params, name).items()
+        if delta != 0.0
+    )
+
+
+def test_the_production_layout_is_the_one_the_group_c_expectations_assume(prod):
+    """Pin the architecture the expectations below are derived for.
+
+    Without this a config change would surface as an unreadable set
+    mismatch in every group-C case at once, rather than as one failure
+    saying the layout moved and the derivations need redoing.
+    """
+    config, params = prod
+    assert config["OBS_ENCODER_LAYERS"] == _PROD_OBS_ENCODER_LAYERS
+    assert config["N_LAYERS"] == _PROD_N_LAYERS
+    assert len(jax.tree_util.tree_leaves(params)) == 113
+
+
+def test_frozen_backbone_at_production_trains_the_head_and_token_embeddings(prod):
+    """Canonical set (spec-ablations §2, step-9 amendment) at the real
+    Dense layout: Dense_3/Dense_4 (t-emb), Dense_5 (head), Embed_0. The
+    obs encoder including its projection, the six transformer blocks and
+    all LayerNorms are frozen."""
+    config, params = prod
+    assert _prod_trainable_modules(config, params, "frozen_backbone") == (
+        _PROD_FROZEN_BACKBONE
+    )
+
+
+def test_head_only_at_production_trains_only_the_final_projection(prod):
+    """Canonical set: exactly the final action projection, which is
+    Dense_5 here and Dense_4 at TINY -- the index defect §8.1/§8.2 turned
+    on."""
+    config, params = prod
+    trainable = _prod_trainable_modules(config, params, "head_only")
+    assert trainable == _PROD_HEAD
+    assert trainable < _prod_trainable_modules(config, params, "frozen_backbone")
+
+
+def test_attention_only_at_production_trains_only_the_attention_projections(prod):
+    """Canonical set: exactly the per-block attention projections across
+    all six blocks; the LayerNorms, the FFNs and the head are frozen."""
+    config, params = prod
+    expected = frozenset(
+        m for m in _prod_modules(params) if "MultiHeadDotProductAttention_" in m
+    )
+    assert len(expected) == 4 * _PROD_N_LAYERS
+    assert _prod_trainable_modules(config, params, "attention_only") == expected
+
+
+def test_ffn_only_at_production_trains_only_the_ffn_layers(prod):
+    """Canonical set: exactly the two FFN Dense layers inside each of the
+    six blocks; norms and head frozen. The per-block Dense_0/Dense_1 must
+    not be confused with the top-level Dense_0/Dense_1, which are the obs
+    encoder -- the substring collision behind §8.1."""
+    config, params = prod
+    expected = frozenset(
+        m
+        for m in _prod_modules(params)
+        if "TransformerBlock_" in m and ("/Dense_0" in m or "/Dense_1" in m)
+    )
+    assert len(expected) == 2 * _PROD_N_LAYERS
+    assert _prod_trainable_modules(config, params, "ffn_only") == expected
+
+
+@pytest.mark.parametrize("top_n", [1, 2, 3])
+def test_layer_ablation_at_production_trains_only_the_top_blocks_and_head(
+    top_n, prod
+):
+    """Canonical set: every parameter of the top-n transformer blocks plus
+    the action head.
+
+    `layer_ablation_top3` is only reachable here: the TINY arch has two
+    blocks, so the top-3 arm was the one registry entry no test touched.
+    With N_LAYERS=6 the top-1 set is TransformerBlock_5 + head, top-2 adds
+    block 4 and top-3 block 3.
+    """
+    config, params = prod
+    kept = {
+        f"params/TransformerBlock_{i}"
+        for i in range(_PROD_N_LAYERS - top_n, _PROD_N_LAYERS)
+    }
+    expected = frozenset(
+        m for m in _prod_modules(params) if any(m.startswith(k) for k in kept)
+    ) | _PROD_HEAD
+    assert _prod_trainable_modules(
+        config, params, f"layer_ablation_top{top_n}"
+    ) == expected
+
+
+# ---------------------------------------------------------------------------
 # Suite loss estimator (cross-repo twin; NELBO per spec-method §3.1/§3.4)
 # ---------------------------------------------------------------------------
 
