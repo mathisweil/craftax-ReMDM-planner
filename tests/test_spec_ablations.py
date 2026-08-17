@@ -17,11 +17,14 @@ from __future__ import annotations
 
 import logging
 import math
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import optax
 import pytest
+import yaml
 from tests.conftest import SEED
 
 from experiments.rl_finetuning.ablations.losses import (
@@ -42,6 +45,7 @@ from experiments.rl_finetuning.ablations.losses import (
 from experiments.rl_finetuning.ablations.optimizers import (
     gradient_surgery,
     make_lora_params,
+    make_optimizer_lora_only,
     merge_lora_into_base,
 )
 from experiments.rl_finetuning.ablations.registry import REGISTRY
@@ -887,6 +891,156 @@ def test_layer_ablation_trains_only_the_top_blocks_and_head(top_n):
         m for m in _all_modules() if any(m.startswith(k) for k in kept)
     ) | _HEAD
     assert _trainable_modules(f"layer_ablation_top{top_n}") == expected
+
+
+# ---------------------------------------------------------------------------
+# The freeze family at the PRODUCTION architecture
+# ---------------------------------------------------------------------------
+# Every ablation whose optimiser trains a strict subset of the parameters.
+_FREEZING_ABLATIONS = (
+    "frozen_backbone",
+    "head_only",
+    "attention_only",
+    "ffn_only",
+    "layer_ablation_top1",
+    "layer_ablation_top2",
+    "layer_ablation_top3",
+    "lora",
+)
+# The other two partitioning optimisers, asked the opposite question: LLRD
+# splits the tree by depth and baseline_rl not at all, so neither may freeze
+# anything. Same mechanism, inverted expectation.
+_NON_FREEZING_ABLATIONS = ("llrd", "baseline_rl")
+
+_ABLATIONS_DEFAULT = (
+    Path(__file__).resolve().parents[1]
+    / "experiments"
+    / "rl_finetuning"
+    / "configs"
+    / "ablations_default.yaml"
+)
+
+
+@pytest.fixture(scope="module")
+def prod():
+    """``(config, params)`` for the model the suite actually trains.
+
+    Read from the shipped ``ablations_default.yaml`` through the suite's own
+    upper-casing convention, with the action count and observation width
+    taken from the real environment, so the layout tracks production instead
+    of a copy of it. At the pins that is 113 leaves and 9,334,289 parameters:
+    ``N_LAYERS=6``, ``D_MODEL=384``, ``OBS_ENCODER_LAYERS=2``.
+
+    The TINY arch the tests above use is a different layout, not a smaller
+    one: the group-C selectors derive their Dense indices arithmetically from
+    ``OBS_ENCODER_LAYERS``, so the head is ``Dense_4`` at TINY and ``Dense_5``
+    here, and ``layer_ablation_top3`` is unreachable with two blocks.
+    """
+    from src.planners.env import make_env
+
+    config = {
+        k.upper(): v
+        for k, v in yaml.safe_load(_ABLATIONS_DEFAULT.read_text()).items()
+    }
+    env, env_params = make_env(config, 1)
+    config["NUM_ACTIONS"] = env.action_space(env_params).n
+    obs_dim = env.observation_space(env_params).shape[0]
+
+    model = build_model(config, config["NUM_ACTIONS"])
+    params = init_params(
+        model, jax.random.PRNGKey(SEED), obs_dim, config["PLAN_HORIZON"]
+    )
+    return config, params
+
+
+def _prod_deltas(config: dict, params, name: str) -> dict[str, float]:
+    """Per-leaf ``max|parameter delta|`` after one step of *name*'s optimiser.
+
+    Built the way ``run_ablation`` builds it, LoRA branch included, and driven
+    by a non-zero gradient on EVERY leaf, the nominally frozen ones included.
+    The measurement is the applied parameter delta rather than the update, so
+    AdamW's decoupled weight decay is inside it: at the shipped non-zero
+    ``WEIGHT_DECAY`` a frozen leaf that reached the optimiser would move.
+    """
+    if name == "lora":
+        lora = make_lora_params(
+            params, config.get("LORA_RANK", 8), jax.random.PRNGKey(SEED)
+        )
+        tree = {"base": params, "lora": lora}
+        tx = make_optimizer_lora_only(config, params, lora)
+    else:
+        tree = params
+        tx = REGISTRY[name].optimizer_factory(config, params)
+
+    grads = jax.tree.map(lambda p: jnp.full_like(p, 0.5), tree)
+    updates, _ = tx.update(grads, tx.init(tree), tree)
+    updated = optax.apply_updates(tree, updates)
+
+    flat_new = jax.tree_util.tree_flatten_with_path(updated)[0]
+    flat_old = jax.tree_util.tree_flatten_with_path(tree)[0]
+    return {
+        "/".join(str(k.key) for k in path): float(jnp.max(jnp.abs(new - old)))
+        for (path, new), (_, old) in zip(flat_new, flat_old, strict=True)
+    }
+
+
+def _moved(deltas: dict[str, float]) -> frozenset[str]:
+    return frozenset(name for name, d in deltas.items() if d != 0.0)
+
+
+@pytest.mark.parametrize("name", _FREEZING_ABLATIONS)
+def test_frozen_leaves_move_exactly_zero_at_the_production_architecture(
+    name, prod
+):
+    """Every leaf either moves a full optimiser step or does not move at all.
+
+    This is the standing guard for the FREEZE defect. ``optax.masked`` leaves
+    NON-selected updates untouched rather than zeroing them, so masking in the
+    trainable parameters handed every "frozen" leaf its raw clipped gradient
+    as an update -- roughly SGD at lr 1.0, in the ascent direction. It survived
+    four months and a green suite because nothing measured a parameter delta,
+    and nothing measured one at the architecture the suite runs.
+
+    Two properties, both needed:
+
+    - no leakage: a leaf's delta is exactly 0.0 or at least a tenth of the
+      learning rate. A partial freeze, a stale gradient or decoupled weight
+      decay reaching a frozen leaf all land between those and fail here,
+      where an order-of-magnitude tolerance would pass them.
+    - the partition is real: at least one leaf frozen and at least one leaf
+      trained. An optimiser that trains nothing is the failure the minihack
+      twin raises on; here the whole-tree ``set_to_zero`` label makes it a
+      valid optimiser that silently updates nothing.
+    """
+    config, params = prod
+    deltas = _prod_deltas(config, params, name)
+    moved = _moved(deltas)
+    floor = config["LR"] / 10
+
+    leaking = {n: d for n, d in deltas.items() if 0.0 < d < floor}
+    assert not leaking, f"{name}: leaves moved by less than a full step: {leaking}"
+    assert moved, f"{name} trained nothing"
+    assert moved < frozenset(deltas), f"{name} froze nothing"
+
+
+@pytest.mark.parametrize("name", _NON_FREEZING_ABLATIONS)
+def test_the_non_freezing_optimisers_freeze_nothing(name, prod):
+    """LLRD and baseline_rl must reach every leaf.
+
+    LLRD is the other ``multi_transform`` user, so it is swept for the same
+    defect class from the opposite side: its label function has to be total,
+    because any leaf it fails to label would be dropped rather than merely
+    slowed. Its slowest group is ``lr * 0.9 ** (N_LAYERS + 1)``, comfortably
+    above the leakage floor, so "slow" and "frozen" stay distinguishable.
+    """
+    config, params = prod
+    deltas = _prod_deltas(config, params, name)
+
+    assert _moved(deltas) == frozenset(deltas), (
+        f"{name} froze "
+        f"{sorted(set(deltas) - _moved(deltas))}"
+    )
+    assert min(deltas.values()) >= config["LR"] / 10
 
 
 # ---------------------------------------------------------------------------
