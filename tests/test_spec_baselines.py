@@ -86,27 +86,25 @@ def test_released_offline_metadata_is_recipe_consistent():
 
 
 @_needs_artefact
-def test_released_offline_step_dir_is_the_documented_historical_exception():
-    """The released Classic offline checkpoint's step directory reads
-    1000000000, from a convention that predates the frame-denominated
-    one (step-7 finding N3).
+def test_released_offline_step_dir_uses_the_frame_denominated_unit():
+    """The released Classic offline checkpoint's step directory is the
+    resolved env-frame budget, the same unit a new one would save at
+    (offline.py: ``mgr.save(int(config["OFFLINE_TOTAL_TIMESTEPS"]))``).
 
-    Author decision 2026-08-16: the artefact stays as published and is
-    historical/noncanonical; new artefacts use the canonical unit,
-    which for offline is the resolved env-frame budget
-    (offline.py: ``mgr.save(int(config["OFFLINE_TOTAL_TIMESTEPS"]))``,
-    99,942,400 for the Classic recipe at 512 envs). This test fails if
-    the artefact is silently renamed, or if the README's historical
-    note stops explaining the two numbers.
+    It read 1000000000, from a convention that predates the
+    frame-denominated one (step-7 finding N3), and was renamed on the
+    Hub to 99,942,400 = 1525 updates x 512 envs x 128 steps, which is
+    what this run's own resume_metadata.json records. The contents are
+    unchanged and the restored parameters are identical; the step
+    number appears in no file inside the checkpoint.
     """
     step_dirs = sorted(
         int(p.name) for p in _HF_OFFLINE.iterdir() if p.name.isdigit()
     )
-    assert step_dirs == [1_000_000_000]
+    assert step_dirs == [99_942_400]
 
-    note = (ROOT / "README.md").read_text()
-    assert "Historical note" in note
-    assert "1000000000" in note and "99,942,400" in note
+    meta = json.loads((_HF_OFFLINE / "resume_metadata.json").read_text())
+    assert int(meta["config_snapshot"]["OFFLINE_TOTAL_TIMESTEPS"]) == step_dirs[0]
 
 
 def test_new_offline_checkpoints_use_the_frame_denominated_step():
