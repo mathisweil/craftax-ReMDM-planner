@@ -195,7 +195,7 @@ REGISTRY: dict[str, AblationSpec] = {
     "baseline_rl": AblationSpec(
         name="baseline_rl",
         group="Baseline",
-        description="Return-weighted ELBO — no modifications",
+        description="Return-weighted ELBO -- no modifications",
         hypothesis="Diagnoses whether the RL signal alone causes collapse",
         loss_factory=make_loss_baseline,
         optimizer_factory=_std_opt,
@@ -203,7 +203,7 @@ REGISTRY: dict[str, AblationSpec] = {
     "kl_penalty": AblationSpec(
         name="kl_penalty",
         group="A",
-        description="Return-weighted ELBO + soft KL penalty vs. pretrained",
+        description="Return-weighted ELBO + soft KL penalty vs pretrained",
         hypothesis="If this helps: catastrophic forgetting is the primary cause; "
         "soft regularisation suffices",
         loss_factory=make_loss_kl_penalty,
