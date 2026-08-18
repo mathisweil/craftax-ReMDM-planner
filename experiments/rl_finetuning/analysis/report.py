@@ -40,6 +40,7 @@ _HYPOTHESIS_GROUPS = {
             "kl_penalty",
             "ewc",
             "llrd",
+            "lora",
             "frozen_backbone",
             "head_only",
         ],
