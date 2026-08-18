@@ -134,11 +134,12 @@ python experiments/rl_finetuning/run_ablations.py \
     --output-dir experiments/rl_finetuning/outputs/merged/
 ```
 
-**Only merge runs from configs that agree on result-affecting keys.** `--merge`
-averages seeds without checking where they came from, so pooling two machine
-configs is sound only when they train the same model and measure it the same
-way. Each family's UCL config is its reference; the QMUL sibling is **not
-poolable** with it:
+**`--merge` only pools runs from configs that agree on result-affecting keys.**
+Pooling is sound only when the runs train the same model and measure it the
+same way, so `--merge` compares the configs the results files recorded and
+refuses, naming every diverging key with both values, rather than averaging
+across them. A file that records no config is refused too. Each family's UCL
+config is its reference; the QMUL sibling is **not poolable** with it:
 
 | Key | Classic UCL | Classic QMUL | Craftax UCL | Craftax QMUL | Effect |
 |---|---|---|---|---|---|
@@ -156,7 +157,9 @@ environments. Differences in diagnostic cadence (`eval_every`, `cka_every`,
 declared poolable or not, configs declared poolable must match their family
 reference on the result-affecting keys, and the recorded QMUL divergences must
 stay accurate. Aligning a QMUL config later fails the test until it is moved to
-the poolable set.
+the poolable set. The key set itself is declared once, in
+`run_ablations._RESULT_AFFECTING`, so the classification the tests check and
+the refusal `--merge` performs are the same policy.
 
 **List all ablations:**
 ```bash

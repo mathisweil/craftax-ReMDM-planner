@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import json
+import math
 from pathlib import Path
 
 import pytest
@@ -10,6 +12,7 @@ import yaml
 
 import main
 from experiments.rl_finetuning.run_ablations import (
+    _RESULT_AFFECTING,
     _apply_fast_overrides,
     _load_ablation_config,
     _to_upper,
@@ -190,27 +193,9 @@ def test_ablation_config_restates_no_inherited_value(preset) -> None:
 # same policy to its single family).
 # ---------------------------------------------------------------------------
 
-#: Keys that change the trained model or the score it is measured with.
-_RESULT_AFFECTING = frozenset(
-    {
-        "env_name",
-        "max_iter",
-        "num_envs",
-        "num_steps",
-        "batch_size",
-        "lr",
-        "weight_decay",
-        "max_grad_norm",
-        "collect_temperature",
-        "ema_decay",
-        "eval_steps",
-        "eval_replan",
-        "val_diffusion_steps",
-        "temperature",
-        "mixed_replay_buffer_size",
-        "num_seeds",
-    }
-)
+# The result-affecting key set is declared once, in production, as
+# ``run_ablations._RESULT_AFFECTING``: the same set that classifies these
+# configs is the one ``--merge`` enforces on the configs a run recorded.
 
 #: Reference config per family.
 _REFERENCE_CONFIG = {
@@ -292,6 +277,125 @@ def test_not_poolable_divergence_is_recorded(name) -> None:
         f"changed. Recorded: {sorted(expected)}; actual: {sorted(actual)}. "
         "Update _NOT_POOLABLE, or move it to _POOLABLE if now aligned."
     )
+
+
+# ---------------------------------------------------------------------------
+# --merge enforces the policy above on the configs a run actually recorded.
+# The classification tests read the shipped YAML; these read results.json,
+# which is what an operator merges and where `main` records the UPPERCASE
+# `merged` dict, so the guard has to answer to both casings.
+# ---------------------------------------------------------------------------
+
+
+def _results_file(tmp_path: Path, name: str, config: dict, scores: list[float]):
+    """Write a minimal results.json recording *config*.
+
+    Args:
+        tmp_path: Directory to write into.
+        name:     File name.
+        config:   The config to record, exactly as given.
+        scores:   Per-seed scores for the single ablation in the file.
+
+    Returns:
+        The path, as a string.
+    """
+    payload = {
+        "pretrained_score": 0.5,
+        "pretrained_ach_rates": {},
+        "config": config,
+        "ablations": {
+            "baseline_rl": {
+                "score": sum(scores) / len(scores),
+                "score_std": 0.0,
+                "all_scores": scores,
+                "history": {},
+            }
+        },
+    }
+    path = tmp_path / name
+    path.write_text(json.dumps(payload))
+    return str(path)
+
+
+def _recorded(name: str) -> dict:
+    """The shipped machine config *name* as `main` would record it."""
+    return _to_upper(_load_ablation_config(str(_ABL_CONFIGS / name)))
+
+
+@pytest.mark.parametrize("name", sorted(_NOT_POOLABLE))
+def test_merge_refuses_a_not_poolable_pair(tmp_path, name) -> None:
+    """The refusal names every recorded diverging key, with both values."""
+    from experiments.rl_finetuning.run_ablations import _merge_result_files
+
+    reference = _REFERENCE_CONFIG[_family(name)]
+    paths = [
+        _results_file(tmp_path, "ref.json", _recorded(reference), [1.0]),
+        _results_file(tmp_path, "cand.json", _recorded(name), [2.0]),
+    ]
+    with pytest.raises(ValueError) as excinfo:
+        _merge_result_files(paths)
+
+    message = str(excinfo.value)
+    assert "not poolable" in message
+    for key in _NOT_POOLABLE[name]:
+        assert key in message, f"{key} is a recorded divergence but unnamed"
+
+
+def test_merge_refuses_a_cross_family_pair(tmp_path) -> None:
+    """Classic and Craftax runs are never poolable: different env, among
+    other things. Neither family's config is the other's reference, so
+    nothing above would have caught this."""
+    from experiments.rl_finetuning.run_ablations import _merge_result_files
+
+    paths = [
+        _results_file(
+            tmp_path,
+            "classic.json",
+            _recorded("ablations_final_classic_ucl.yaml"),
+            [1.0],
+        ),
+        _results_file(
+            tmp_path,
+            "craftax.json",
+            _recorded("ablations_final_craftax_ucl.yaml"),
+            [2.0],
+        ),
+    ]
+    with pytest.raises(ValueError, match="not poolable"):
+        _merge_result_files(paths)
+
+
+def test_merge_refuses_a_file_that_records_no_config(tmp_path) -> None:
+    """A distinct refusal: absent is not equal, so it is never merged on trust."""
+    from experiments.rl_finetuning.run_ablations import _merge_result_files
+
+    paths = [
+        _results_file(
+            tmp_path, "ref.json", _recorded("ablations_final_craftax_ucl.yaml"), [1.0]
+        ),
+        _results_file(tmp_path, "bare.json", {}, [2.0]),
+    ]
+    with pytest.raises(ValueError, match="records no config"):
+        _merge_result_files(paths)
+
+
+def test_merge_still_pools_two_runs_of_the_same_config(tmp_path) -> None:
+    """The guard is a refusal on wrong input only: a poolable pair merges to
+    the same values it did before the guard existed."""
+    from experiments.rl_finetuning.run_ablations import _merge_result_files
+
+    config = _recorded("ablations_final_craftax_ucl.yaml")
+    paths = [
+        _results_file(tmp_path, "a.json", config, [1.0, 2.0]),
+        _results_file(tmp_path, "b.json", config, [3.0]),
+    ]
+    merged, pretrained, _, merged_config = _merge_result_files(paths)
+
+    assert merged["baseline_rl"]["all_scores"] == [1.0, 2.0, 3.0]
+    assert merged["baseline_rl"]["score"] == pytest.approx(2.0)
+    assert merged["baseline_rl"]["score_std"] == pytest.approx(math.sqrt(2 / 3))
+    assert pretrained == pytest.approx(0.5)
+    assert merged_config == config
 
 
 _SHIPPED_CONFIGS = (_CONFIGS / "defaults.yaml", _ABL_DEFAULT)
