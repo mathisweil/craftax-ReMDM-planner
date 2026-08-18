@@ -11,6 +11,8 @@ tests/test_spec_training.py.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -109,3 +111,74 @@ def test_mixed_execution_mask_matches_beta():
     assert not np.asarray(
         mixed_execution_mask(jax.random.PRNGKey(4), 0.0, 64)
     ).any()
+
+
+# ---------------------------------------------------------------------------
+# the env stack auto-resets exactly once (sweep S4-1)
+# ---------------------------------------------------------------------------
+
+
+def _short_episode_env(num_envs: int, max_timesteps: int = 6):
+    """``make_env`` at the shipped settings, with episodes forced short."""
+    import yaml
+
+    from src.planners.env import make_env
+
+    root = Path(__file__).resolve().parents[1]
+    raw = yaml.safe_load((root / "configs" / "defaults.yaml").read_text())
+    config = {k.upper(): v for k, v in raw.items()}
+    env, env_params = make_env(config, num_envs)
+    return env, env_params.replace(max_timesteps=max_timesteps)
+
+
+def test_the_env_stack_auto_resets_exactly_once() -> None:
+    """`make_craftax_env_from_name(name, auto_reset=True)` already returns an
+    `EnvironmentAutoReset`, whose step resets and selects on every step.
+    Wrapping that in `AutoResetEnvWrapper` generates a second world every
+    step and discards it.
+
+    Guarded behaviourally rather than by isinstance, because the outer
+    wrapper is observable: its `jax.tree.map(lax.select(done, ...))` replaces
+    the whole `LogEnvState` on a done, including LogWrapper's
+    `returned_episode_*` accumulator, which is designed to persist between
+    episodes. With the wrapper present the accumulator reads 0 on every step
+    after a done; without it, it carries the last completed episode.
+    """
+    from Craftax_Baselines.wrappers import AutoResetEnvWrapper
+
+    num_envs, horizon = 4, 14
+    env, params = _short_episode_env(num_envs)
+
+    # Structural: no AutoResetEnvWrapper anywhere in the chain.
+    node, seen = env, []
+    while hasattr(node, "_env"):
+        seen.append(type(node).__name__)
+        node = node._env
+    seen.append(type(node).__name__)
+    assert AutoResetEnvWrapper.__name__ not in seen, (
+        f"the env stack still double-resets: {seen}"
+    )
+
+    rng = jax.random.PRNGKey(0)
+    rng, reset_rng = jax.random.split(rng)
+    _, state = env.reset(reset_rng, params)
+
+    lengths, dones = [], []
+    for _ in range(horizon):
+        rng, step_rng = jax.random.split(rng)
+        actions = jnp.zeros((num_envs,), dtype=jnp.int32)
+        _, state, _, done, info = env.step(step_rng, state, actions, params)
+        lengths.append(np.asarray(info["returned_episode_lengths"]))
+        dones.append(bool(np.asarray(done).any()))
+
+    assert any(dones), "no episode terminated; the guard measured nothing"
+    first = dones.index(True)
+    assert first + 1 < horizon, "no step observed after the first termination"
+
+    # The accumulator survives the reset. This is the assertion that goes red
+    # when AutoResetEnvWrapper is put back.
+    assert (lengths[first] > 0).all()
+    assert (lengths[first + 1] > 0).all(), (
+        "returned_episode_lengths was wiped by an outer reset; the stack is "
+        "double-resetting again"
+    )

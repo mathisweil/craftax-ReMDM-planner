@@ -8,7 +8,6 @@ import jax.numpy as jnp
 from craftax.craftax_env import make_craftax_env_from_name
 
 from Craftax_Baselines.wrappers import (
-    AutoResetEnvWrapper,
     BatchEnvWrapper,
     LogWrapper,
     OptimisticResetVecEnvWrapper,
@@ -37,6 +36,14 @@ def make_env(config: dict, num_envs: int):
     # Benchmark-forced: episodes auto-reset inside the vectorised env;
     # the boundary observation is the post-reset obs. The minihack repo
     # manages episodes explicitly instead.
+    #
+    # The second argument is ``auto_reset``, so when optimistic resets are
+    # off the returned env is a ``CraftaxClassicSymbolicEnv(EnvironmentAutoReset)``
+    # that already resets and selects on every step. Wrapping that in
+    # ``AutoResetEnvWrapper`` — as the vendored Craftax_Baselines trainers
+    # still do — makes JAX generate a second world every step and throw it
+    # away, unconditionally, for a measured 17-27% of env throughput. The
+    # boundary semantics are the inner env's either way.
     env = make_craftax_env_from_name(
         config["ENV_NAME"], not config["USE_OPTIMISTIC_RESETS"]
     )
@@ -49,6 +56,5 @@ def make_env(config: dict, num_envs: int):
             reset_ratio=min(config["OPTIMISTIC_RESET_RATIO"], num_envs),
         )
     else:
-        env = AutoResetEnvWrapper(env)
         env = BatchEnvWrapper(env, num_envs=num_envs)
     return env, env_params
