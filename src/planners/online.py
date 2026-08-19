@@ -69,6 +69,7 @@ class DAggerCarry(NamedTuple):
     buf_fill: int
     best_params: Any  # copy of params with highest val return
     best_val_return: jnp.ndarray  # scalar, -inf initially
+    best_step_idx: jnp.ndarray  # scalar int32, update index of best_params; -1 if none
 
 
 def expert_action(
@@ -186,7 +187,6 @@ def make_train_online_dagger(config: dict[str, Any]):
     # runs here; the two used to disagree on n_train_passes.
     sizing = dagger_sizing(config, num_updates)
     n_cycles = sizing["n_cycles"]
-    valid_per_rollout = sizing["valid_per_rollout"]
     samples_per_update = sizing["samples_per_update"]
     max_buffer_size = sizing["max_buffer_size"]
     n_train_passes = sizing["n_train_passes"]
@@ -335,6 +335,7 @@ def make_train_online_dagger(config: dict[str, Any]):
                 buf_fill,
                 best_params,
                 best_val_return,
+                best_step_idx,
             ) = carry
 
             # Beta decays each update: expert -> learner
@@ -608,12 +609,23 @@ def make_train_online_dagger(config: dict[str, Any]):
                     best_params,
                     state.params,
                 )
-                return new_best, jnp.where(improved, val_ret, best_val_return)
+                # Carried purely so the checkpoint can be named in env frames
+                # like every other one; it enters no loss, no update and no
+                # RNG draw, so the trained parameters are bit-identical
+                # with and without it.
+                new_step = jnp.where(
+                    improved, jnp.int32(step_idx), best_step_idx
+                )
+                return (
+                    new_best,
+                    jnp.where(improved, val_ret, best_val_return),
+                    new_step,
+                )
 
-            best_params, best_val_return = jax.lax.cond(
+            best_params, best_val_return, best_step_idx = jax.lax.cond(
                 is_val_step,
                 _update_best,
-                lambda: (best_params, best_val_return),
+                lambda: (best_params, best_val_return, best_step_idx),
             )
             metric["best_val_return"] = best_val_return
 
@@ -635,6 +647,7 @@ def make_train_online_dagger(config: dict[str, Any]):
                 buf_fill=buf_fill,
                 best_params=best_params,
                 best_val_return=best_val_return,
+                best_step_idx=best_step_idx,
             )
             return new_carry, metric
 
@@ -655,6 +668,7 @@ def make_train_online_dagger(config: dict[str, Any]):
             buf_fill=jnp.int32(0),
             best_params=params,
             best_val_return=jnp.array(-jnp.inf),
+            best_step_idx=jnp.int32(-1),
         )
         runner_final, metrics = jax.lax.scan(
             _update_step,
@@ -666,6 +680,7 @@ def make_train_online_dagger(config: dict[str, Any]):
             "runner_state": runner_final,
             "metrics": metrics,
             "best_params": runner_final.best_params,
+            "best_step_idx": runner_final.best_step_idx,
         }
 
     return train
@@ -724,8 +739,16 @@ def run_online(config: dict[str, Any]) -> dict[str, Any]:
             path,
             options=ocp.CheckpointManagerOptions(max_to_keep=1),
         ) as mgr:
+            # Env frames, the unit `offline.py` already saves at and the one
+            # the released artefacts carry (`.../DAgger-100M/100000000/`).
+            # `resolve_num_updates` re-snaps this key to
+            # `NUM_UPDATES * NUM_ENVS * NUM_STEPS`, so it is the exact frame
+            # count trained, and it is invariant under `num_envs` where the
+            # update count this used to save is not: the same run on 96 and
+            # 512 envs produced two different directory names for the same
+            # experience.
             mgr.save(
-                int(config["NUM_UPDATES"]),
+                int(config["ONLINE_TOTAL_TIMESTEPS"]),
                 args=ocp.args.StandardSave(train_state),
             )
         print(f"Saved final policy to {path}")
@@ -769,13 +792,23 @@ def run_online(config: dict[str, Any]) -> dict[str, Any]:
             params=best_params,
             tx=tx,
         )
+        # Frames at which the best validation score was recorded, so this
+        # checkpoint is named in the same unit as every other one instead of
+        # the fixed `0` sentinel it used to carry. `best_step_idx` is the
+        # 0-based update index, so the run had completed `+ 1` updates; a run
+        # whose validation never improved leaves it at -1 and saves at frame
+        # 0, which is then the honest number rather than a placeholder.
+        frames_per_update = int(config["NUM_ENVS"]) * int(config["NUM_STEPS"])
+        best_step_idx = int(jax.tree.map(lambda x: x[0], out["best_step_idx"]))
+        best_frames = (best_step_idx + 1) * frames_per_update
+
         best_path = os.path.join(ckpt_root, "policies_best")
         with ocp.CheckpointManager(
             best_path,
             options=ocp.CheckpointManagerOptions(max_to_keep=1),
         ) as mgr:
-            mgr.save(0, args=ocp.args.StandardSave(best_state))
-        print(f"Saved best policy to {best_path}")
+            mgr.save(best_frames, args=ocp.args.StandardSave(best_state))
+        print(f"Saved best policy to {best_path} at {best_frames:,} frames")
 
         if config.get("USE_WANDB"):
             best_artifact = wandb.Artifact(

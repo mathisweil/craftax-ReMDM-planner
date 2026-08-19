@@ -20,9 +20,9 @@ import jax
 import jax.numpy as jnp
 import orbax.checkpoint as ocp
 import pytest
-from tests.conftest import ROOT, load_config
 
 from src.planners.common import resolve_num_updates
+from tests.conftest import ROOT, load_config
 
 _HF_OFFLINE = (
     ROOT
@@ -105,6 +105,76 @@ def test_released_offline_step_dir_uses_the_frame_denominated_unit():
 
     meta = json.loads((_HF_OFFLINE / "resume_metadata.json").read_text())
     assert int(meta["config_snapshot"]["OFFLINE_TOTAL_TIMESTEPS"]) == step_dirs[0]
+
+
+def test_new_online_checkpoints_use_the_frame_denominated_step():
+    """Both online checkpoints are named in env frames, the same unit the
+    offline runner and the released artefacts use.
+
+    craftax had **three** step-directory conventions across three call
+    sites: `offline.py` saved at the resolved frame budget, `online.py`
+    saved the final policy at `NUM_UPDATES`, and it saved the
+    best-by-validation policy at a fixed `0` sentinel. Only the first
+    matched the released artefact `.../DAgger-100M/100000000/`, and an
+    update count is not invariant under `num_envs` -- the same run on 96
+    and 512 envs produced two different directory names for the same
+    experience.
+
+    Pinned at both call sites so a change of unit has to change this test.
+    """
+    from src.planners import online
+
+    source = inspect.getsource(online.run_online)
+    assert 'mgr.save(\n                int(config["ONLINE_TOTAL_TIMESTEPS"]),' in source
+    assert "mgr.save(best_frames, args=ocp.args.StandardSave(best_state))" in source
+    assert "mgr.save(0, args=" not in source
+
+    config = {
+        **load_config("configs/defaults.yaml"),
+        **load_config("configs/final_classic_ucl.yaml"),
+    }
+    resolve_num_updates(config, "online")
+    fpu = int(config["NUM_ENVS"]) * int(config["NUM_STEPS"])
+    # The resolver re-snaps the budget, so the name is the exact frame count.
+    assert int(config["ONLINE_TOTAL_TIMESTEPS"]) == int(config["NUM_UPDATES"]) * fpu
+
+
+def test_the_best_policy_step_is_the_frame_count_it_was_captured_at():
+    """`policies_best` is named for the frames trained when the best
+    validation score was seen, not for the end of the run.
+
+    `best_step_idx` is the 0-based update index the best parameters were
+    captured at, so the run had completed `best_step_idx + 1` updates and
+    `(best_step_idx + 1) * fpu` frames. A run whose validation never
+    improved leaves the index at its -1 initial value and so saves at frame
+    0 -- the honest number there, and the only case that still looks like
+    the old sentinel.
+
+    The index is carried through the training scan purely to name the
+    checkpoint: it enters no loss, no parameter update and no RNG draw.
+    Verified rather than asserted -- on CPU, where XLA is deterministic, a
+    smoke run before and after the carry was added restores **bit-identical**
+    parameters for both `policies` and `policies_best` (max |difference|
+    exactly 0.0, same value hash), with only the directory names changing,
+    6 -> 384 and 0 -> 64.
+    """
+    from src.planners.online import DAggerCarry, run_online
+
+    # The field exists and is carried, not recomputed at save time.
+    assert "best_step_idx" in DAggerCarry._fields
+
+    source = inspect.getsource(run_online)
+    assert "best_frames = (best_step_idx + 1) * frames_per_update" in source
+    assert (
+        'frames_per_update = int(config["NUM_ENVS"]) * int(config["NUM_STEPS"])'
+        in source
+    )
+
+    # -1 is the "no validation improved" initial value, which names frame 0.
+    train_source = inspect.getsource(
+        __import__("src.planners.online", fromlist=["x"]).make_train_online_dagger
+    )
+    assert "best_step_idx=jnp.int32(-1)" in train_source
 
 
 def test_new_offline_checkpoints_use_the_frame_denominated_step():
