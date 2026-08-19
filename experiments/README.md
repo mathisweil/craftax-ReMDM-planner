@@ -10,7 +10,7 @@ These scripts are **standalone research code** — they import from `src/` but d
 Diagnoses why RL fine-tuning of the diffusion model collapses and which interventions fix it.
 Implements **25 ablations**: a baseline plus four groups (A: Regularisation, B: Training Signal, C: Architecture, D: Data Quality), with a comprehensive diagnostic and analysis pipeline.
 
-**Training data is on-policy.** Each iteration rolls the *current* model out under its EMA weights (`diffusion_steps_collect` denoising steps per plan, `num_steps // plan_horizon` plan cycles) and trains on those windows, weighted by each window's own H-step reward sum. The suite therefore needs no expert: `--ppo-checkpoint` is gone, and only the pretrained diffusion `--checkpoint` is required. Author decision 2026-08-16; the minihack twin uses the same definition, so scores are comparable across repos.
+**Training data is on-policy.** Each iteration rolls the *current* model out under its EMA weights (`diffusion_steps_collect` denoising steps per plan, `num_steps // plan_horizon` plan cycles) and trains on those windows, weighted by each window's own H-step reward sum. The suite therefore needs no expert: `--ppo-checkpoint` is gone, and only the pretrained diffusion `--checkpoint` is required.
 
 ### Directory structure
 
@@ -42,7 +42,7 @@ rl_finetuning/
 
 `ablations_default.yaml` carries the transformer architecture of the released DAgger checkpoints — 384-dim, 8 heads, 6 layers, `d_ff` 768, `plan_horizon` 32, the same for Classic and Full — so the `ablations_final_*` presets need not restate it. A run against a differently-shaped checkpoint must override those keys, or the model build fails on a shape mismatch.
 
-#### Config precedence
+### Config layering
 
 Lowest to highest:
 
@@ -50,30 +50,26 @@ Lowest to highest:
 configs/defaults.yaml -> ablations_default.yaml -> machine config -> ablations_fast.yaml (--fast only) -> CLI flags
 ```
 
-Any file given to `--ablations-config` layers on top of `ablations_default.yaml` automatically, so the `ablations_final_*` presets carry only their own deltas. That is a fixed two-layer relationship: an ablations config never inherits from another ablations config.
+Any file given to `--ablations-config` layers on top of `ablations_default.yaml` automatically, so the `ablations_final_*` presets carry only their own deltas. An ablations config never inherits from another ablations config.
 
-`ablations_fast.yaml` is deliberately **not** layered that way: `--fast` reads it raw and overlays it last. Putting `ablations_default.yaml` under it would drag the base's values back over whichever machine config is in use.
+`ablations_fast.yaml` is deliberately **not** layered that way: `--fast` reads it raw and overlays it last.
 
-**Presets hold only deltas, never restate a default.** A key belongs in a machine config only if its value differs from `ablations_default.yaml`. Restating a default silently pins the preset when the base later moves. `tests/test_config.py` enforces this.
+**Presets hold only deltas, never restate a default** — `tests/test_config.py` enforces it.
 
 The two craftax presets each restate the three keys where Full Craftax departs from the Classic base (`env_name`, `val_diffusion_steps`, `temperature`); with no inheritance between configs there is nowhere shared to put them, so a change to those must be made in both files.
 
-#### Compilation cache
+### Compilation cache
 
-The suite is the workload the persistent XLA cache helps most. Each `(ablation, seed)` builds its own `jax.jit` closure, so nothing is reused within a process, yet the graph is identical across the seeds of one ablation: only the PRNG key differs, and that is a runtime argument. With `num_seeds: 3` that makes two runs in three a cache hit, and the same applies to reruns and to the per-GPU processes of the `--merge` workflow.
-
-It is off unless `jax_compilation_cache_dir` is set, and the key reaches the suite through `configs/defaults.yaml` at the bottom of the chain above. Point it at local disk, not an NFS home. `run_ablations.py` has no `--override`, so set it in `configs/defaults.yaml`:
+The graph is identical across the seeds of one ablation — only the PRNG key differs, and that is a runtime argument — so at `num_seeds: 3` two runs in three are a cache hit, as are reruns and the per-GPU processes of `--merge`. Off unless `jax_compilation_cache_dir` is set, and **`run_ablations.py` has no `--override`**, so it must be set in `configs/defaults.yaml`. Point it at local disk, not an NFS home:
 
 ```yaml
 # configs/defaults.yaml
 jax_compilation_cache_dir: /var/tmp/your-user/jax-cache
 ```
 
-The cache is keyed on the lowered HLO, so a hit is bit-identical to a miss: it changes no numerics.
-
 ### Usage
 
-The pretrained diffusion checkpoint can come from either offline training (`--mode offline`) or DAgger online training (`--mode online`) — the checkpoint format is identical. Use `--checkpoint` to point to it. For DAgger runs, either the final (`{env}-policy`) or best-validation (`{env}-policy-best`) artifact produced by `--mode online` can be consumed directly.
+The pretrained diffusion checkpoint can come from either offline training (`--mode offline`) or DAgger online training (`--mode online`). Use `--checkpoint` to point to it. For DAgger runs, either the final (`{env}-policy`) or best-validation (`{env}-policy-best`) artifact produced by `--mode online` can be consumed directly.
 
 Checkpoint paths accept `wandb:` prefixed artifact references (e.g., `wandb:team/project/artifact:latest`), which are downloaded automatically before training begins.
 
@@ -135,11 +131,10 @@ python experiments/rl_finetuning/run_ablations.py \
 ```
 
 **`--merge` only pools runs from configs that agree on result-affecting keys.**
-Pooling is sound only when the runs train the same model and measure it the
-same way, so `--merge` compares the configs the results files recorded and
-refuses, naming every diverging key with both values, rather than averaging
-across them. A file that records no config is refused too. Each family's UCL
-config is its reference; the QMUL sibling is **not poolable** with it:
+It compares the configs the results files recorded and refuses, naming every
+diverging key with both values; a file that records no config is refused too.
+Each family's UCL config is its reference, and the QMUL sibling is **not
+poolable** with it:
 
 | Key | Classic UCL | Classic QMUL | Craftax UCL | Craftax QMUL | Effect |
 |---|---|---|---|---|---|
@@ -148,8 +143,7 @@ config is its reference; the QMUL sibling is **not poolable** with it:
 | `eval_steps` | 1024 | 512 | 1024 | 512 | noisier score |
 | `mixed_replay_buffer_size` | 20000 | 10000 | 10000 | 10000 | replay horizon |
 
-Runs from the two families are never poolable: they are different
-environments. Differences in diagnostic cadence (`eval_every`, `cka_every`,
+Differences in diagnostic cadence (`eval_every`, `cka_every`,
 `cka_batch_size`, `per_layer_every`, `repr_drift_every`, `grad_align_every`,
 `t_analysis_every`) are wall-clock only and do not affect poolability.
 
@@ -254,6 +248,13 @@ experiments/rl_finetuning/outputs/{run_id}/
 `results.json` is written incrementally after each ablation completes — a partial file with
 N of 25 ablations is fully valid and loadable by `--analyze-only --results-path`.
 
+### W&B logging
+
+All metrics are logged under `ablations/{method_name}/{metric}`, e.g.:
+- `ablations/kl_penalty/eval_score`
+- `ablations/gradient_surgery/grad_align`
+- `ablations/ewc/repr_drift_kl`
+
 ### Diagnostic metrics collected
 
 | Metric | Frequency | What it answers |
@@ -272,10 +273,3 @@ N of 25 ablations is fully valid and loadable by `--analyze-only --results-path`
 | Action dist JS divergence | post-training | Mode collapse vs drift? |
 | Action dist KL / TV | post-training | Magnitude of behavioural shift |
 | Action transition matrix | post-training | Bigram structure change |
-
-### W&B namespace
-
-All metrics are logged under `ablations/{method_name}/{metric}`, e.g.:
-- `ablations/kl_penalty/eval_score`
-- `ablations/gradient_surgery/grad_align`
-- `ablations/ewc/repr_drift_kl`
