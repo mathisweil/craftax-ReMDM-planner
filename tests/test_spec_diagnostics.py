@@ -1,10 +1,12 @@
 """Diagnostics closed-form spec tests (step 8).
 
 Sources: research/spec-ablations.md §3 (CKA per Kornblith 2019
-eqs (4)-(5); PCGrad surgery metrics per Yu 2020; ESS per Kish 1965).
+eqs (4)-(5); PCGrad surgery metrics per Yu 2020; ESS per Kish 1965;
+§3.4 exact permutation test + bootstrap CI).
 Expected values are hand-computed in the docstrings. The minihack twin
-file carries the same CKA/ESS/surgery assertions plus its repo-specific
-JS/permutation/bootstrap/merge diagnostics.
+file carries the same CKA/ESS/surgery and significance assertions --
+`write_significance_test` is byte-identical across the repos -- plus its
+repo-specific JS/action-distribution/merge diagnostics.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from experiments.rl_finetuning.analysis.tables import (
     baseline_rl_score_of,
     metric_scale,
     verdict,
+    write_significance_test,
 )
 from experiments.rl_finetuning.diagnostics.gradient import (
     compute_surgery_metrics_jax,
@@ -91,6 +94,69 @@ def test_surgery_metrics_measure_removed_gradient_mass():
 # Ablation-suite verdict rule (shared with the sibling repo, character for
 # character; PARITY open question resolved 2026-08-17)
 # ---------------------------------------------------------------------------
+
+
+def test_the_significance_test_states_its_floor_and_corrects_for_selection(tmp_path):
+    """The significance test is exact over all C(n_a+n_b, n_b) relabellings,
+    reports the floor that enumeration imposes, and draws its null
+    distribution over every candidate arm rather than over the one it picked
+    (spec-ablations §3.4; both repos' experiments/README tables).
+
+    Derivation, floor: every relabelling's complement negates each mean
+    difference and so ties the statistic, which makes the count at least two
+    -- p >= 2/C(6,3) = 0.100 at three seeds a side, for any data whatsoever.
+    Baseline [0,0,0] against [1e6,1e6,1e6] therefore reports p = 0.100, and
+    0.100 has to be reported as the floor rather than left to read as
+    marginal significance.
+
+    Derivation, selection: baseline [0,1,2,3] against [4,5,6,7] has an
+    observed difference of 4, which only the two extreme partitions of the
+    70 relabellings reach -- p = 2/70 = 0.029 while that arm is the only
+    candidate. The null arm [-6,-2,2,6] scores no better than baseline but
+    is spread widely enough that its own relabellings reach a statistic of 4
+    another twelve times, and it is a candidate the maximum must range over,
+    so p becomes 14/70 = 0.200. Selecting the arm from the same scores and
+    then testing it uncorrected reports 0.029 either way.
+    """
+    write_significance_test(
+        {
+            "baseline_rl": {"all_scores": [0.0, 0.0, 0.0]},
+            "kl_penalty": {"all_scores": [1e6, 1e6, 1e6]},
+        },
+        tmp_path,
+    )
+    text = (tmp_path / "significance_test.txt").read_text()
+    assert "20 relabellings" in text
+    assert "p = 0.100" in text
+    assert "minimum attainable p at 3 baseline and 3 condition seeds: 0.100" in text
+    assert "AT the floor" in text
+
+    alone = tmp_path / "alone"
+    write_significance_test(
+        {
+            "baseline_rl": {"all_scores": [0.0, 1.0, 2.0, 3.0]},
+            "kl_penalty": {"all_scores": [4.0, 5.0, 6.0, 7.0]},
+        },
+        alone,
+    )
+    text = (alone / "significance_test.txt").read_text()
+    assert "1 candidate arm " in text
+    assert "p = 0.029" in text
+    ci_line = next(line for line in text.splitlines() if "bootstrap" in line)
+    assert float(ci_line.split("[")[1].split(",")[0]) > 0.0
+
+    with_null_arm = tmp_path / "with_null_arm"
+    write_significance_test(
+        {
+            "baseline_rl": {"all_scores": [0.0, 1.0, 2.0, 3.0]},
+            "kl_penalty": {"all_scores": [4.0, 5.0, 6.0, 7.0]},
+            "ewc": {"all_scores": [-6.0, -2.0, 2.0, 6.0]},
+        },
+        with_null_arm,
+    )
+    text = (with_null_arm / "significance_test.txt").read_text()
+    assert "2 candidate arms" in text
+    assert "p = 0.200" in text
 
 
 def test_verdict_labels_against_baseline_rl_at_metric_scale():

@@ -226,6 +226,7 @@ experiments/rl_finetuning/outputs/{run_id}/
 │       └── js_divergence_comparison.png   # Cross-ablation JS divergence bar chart
 └── tables/
     ├── main_results.{csv,tex}
+    ├── significance_test.txt              # Max-statistic permutation test + p floor + bootstrap CI
     ├── gradient_analysis.{csv,tex}
     ├── t_distribution.{csv,tex}
     ├── forgetting_analysis.{csv,tex}
