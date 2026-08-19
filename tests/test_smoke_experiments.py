@@ -375,6 +375,51 @@ def test_gradient_diagnostics(apply_fns, params, batch, schedules) -> None:
     assert _finite(frac) and _finite(n_conflict)
 
 
+def test_grad_alignment_shares_one_draw_and_references_the_pretrained_params(
+    apply_fns, params, batch, schedules
+) -> None:
+    """The RL and BC gradients come from one ``(z_t, t)`` draw, and the BC
+    gradient is taken at the pretrained parameters (spec-ablations §3.2; the
+    same definition as minihack's `compute_grad_alignment`).
+
+    Derivation of the exact case: uniform advantages make the RL loss
+    ``(per_sample * 1).mean()`` and the BC loss ``per_sample.mean()`` the
+    same expression, so on one draw at one parameter point the two
+    gradients are the same vector and the cosine is exactly 1. Anything
+    less is the draw differing: `compute_loss` samples its timestep and its
+    masking from the key it is given, and two keys make the metric a
+    Monte-Carlo estimate whose scatter is the size of the quantity.
+
+    Displacing the current parameters from the reference then drops the
+    cosine below 1 while nothing about the objectives has changed, which is
+    what taking the BC gradient at a fixed pretrained reference means.
+    """
+    from experiments.rl_finetuning.diagnostics.gradient import make_grad_alignment_fn
+
+    _, apply_train = apply_fns
+    align = make_grad_alignment_fn(apply_train, schedules[0], schedules[1], NUM_ACTIONS)
+    uniform = jnp.ones_like(batch["advantages"])
+    args = (batch["acts"], batch["obs"], batch["valid"], jax.random.PRNGKey(SEED))
+
+    # One draw, one parameter point, one objective in two spellings.
+    cos_sim, rl_norm, bc_norm = align(params, params, *args, uniform)
+    assert cos_sim == pytest.approx(1.0, abs=1e-4)
+    assert rl_norm == pytest.approx(bc_norm, rel=1e-5)
+
+    # The reference is the pretrained point, not wherever the run has got to.
+    key = jax.random.PRNGKey(SEED + 1)
+    displaced_params = jax.tree.map(
+        lambda p, k: p + 0.05 * jax.random.normal(k, p.shape),
+        params,
+        jax.tree.unflatten(
+            jax.tree.structure(params),
+            list(jax.random.split(key, len(jax.tree.leaves(params)))),
+        ),
+    )
+    displaced, _, _ = align(displaced_params, params, *args, uniform)
+    assert displaced < 1.0 - 1e-3
+
+
 def test_representation_diagnostics(apply_fns, params, batch, schedules, abl_config) -> None:
     from experiments.rl_finetuning.diagnostics.representation import make_cka_fn, make_repr_drift_fn
 

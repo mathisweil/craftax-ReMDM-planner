@@ -53,25 +53,37 @@ def make_grad_alignment_fn(
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
         """Compute cosine similarity between RL and BC gradient vectors.
 
+        Both gradients are taken on the same batch **and the same
+        ``(z_t, t)`` draw**: ``compute_loss`` samples its timestep and its
+        masking from the key it is given, so the two losses are handed one
+        key rather than two halves of a split. At independent draws the
+        metric reports Monte-Carlo noise as objective disagreement. Measured
+        over six trials on one fixed batch: two draws give a mean cosine of
+        0.309 ranging over 0.680, including two trials that report
+        *anti*-alignment, where one draw gives 0.968 ranging over 0.066.
+
+        The BC gradient is taken at ``ref_params``, the pretrained
+        parameters, not at ``params``. A fixed reference is comparable
+        across iterations and is the quantity the forgetting framing needs.
+
         Args:
             params:     Current model parameters.
             ref_params: Pretrained reference parameters.
             acts:       ``[B, H]`` int32 action sequences.
             obs:        ``[B, obs_dim]`` float32 observations.
             valid:      ``[B]`` validity mask.
-            rng:        PRNG key.
+            rng:        PRNG key, shared by both losses.
             advantages: ``[B]`` return weights.
 
         Returns:
             Tuple of (cos_sim, rl_grad_norm, bc_grad_norm) as JAX scalars.
         """
-        rng_rl, rng_bc = jax.random.split(rng)
 
         def rl_loss(p: Any) -> jax.Array:
             loss, _ = compute_loss(
                 apply_fn,
                 p,
-                rng_rl,
+                rng,
                 acts,
                 obs,
                 valid,
@@ -87,7 +99,7 @@ def make_grad_alignment_fn(
             loss, _ = compute_loss(
                 apply_fn,
                 p,
-                rng_bc,
+                rng,
                 acts,
                 obs,
                 valid,
