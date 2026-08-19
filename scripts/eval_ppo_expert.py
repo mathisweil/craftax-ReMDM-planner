@@ -20,16 +20,27 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# `src.planners.ppo` imports from `Craftax_Baselines`, whose own modules import
+# each other by bare name (`from logz.batch_logging import ...`), so the
+# submodule has to be on the path as well as the repo root. `main.py` does the
+# same thing; this script did only the repo root, so it could not start from
+# the invocation its README documents.
+_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_ROOT))
+sys.path.insert(1, str(_ROOT / "Craftax_Baselines"))
 
-import jax
-import jax.numpy as jnp
-import numpy as np
+import jax  # noqa: E402
+import jax.numpy as jnp  # noqa: E402
+import numpy as np  # noqa: E402
+from craftax.craftax.constants import (  # noqa: E402
+    Achievement as FullCraftaxAchievements,
+)
+from craftax.craftax_classic.constants import (  # noqa: E402
+    Achievement as ClassicAchievements,
+)
+from craftax.craftax_env import make_craftax_env_from_name  # noqa: E402
 
-from craftax.craftax_env import make_craftax_env_from_name
-from craftax.craftax.constants import Achievement as FullCraftaxAchievements
-from craftax.craftax_classic.constants import Achievement as ClassicAchievements
-from src.planners.ppo import load_ppo_agent
+from src.planners.ppo import load_ppo_agent  # noqa: E402
 
 
 def main() -> None:

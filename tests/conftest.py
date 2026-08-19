@@ -102,10 +102,21 @@ def load_config(relative_path: str) -> dict:
 
 
 def run_entry_point(args: list[str], timeout: int = 120) -> subprocess.CompletedProcess:
-    """Run a repo entry point in a subprocess with the smoke-test guards applied."""
+    """Run a repo entry point in a subprocess with the smoke-test guards applied.
+
+    **`PYTHONPATH` is deliberately not set, and must not be.** It used to carry
+    the repo root and `Craftax_Baselines`, which is exactly the bootstrap an
+    entry point is supposed to do for itself -- so a script that could not
+    start from its own documented invocation passed here anyway, because the
+    harness had already repaired it. `scripts/eval_ppo_expert.py` was in that
+    state. Only the environment guards a smoke run genuinely needs are set:
+    CPU-only JAX, and W&B off.
+
+    Anything inherited from the caller is stripped, so a `PYTHONPATH` set in
+    the developer's shell cannot mask the same defect either.
+    """
     env = {
-        **os.environ,
-        "PYTHONPATH": os.pathsep.join([str(ROOT), str(ROOT / "Craftax_Baselines")]),
+        **{k: v for k, v in os.environ.items() if k != "PYTHONPATH"},
         "JAX_PLATFORMS": "cpu",
         "WANDB_MODE": "disabled",
     }
