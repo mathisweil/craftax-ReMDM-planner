@@ -1,8 +1,9 @@
 """Representation-space diagnostics: KL drift and CKA similarity.
 
 KL drift measures how far the output distribution has moved from the
-pretrained model.  CKA (Centred Kernel Alignment) measures similarity
-of internal activations at the representation level.
+pretrained model.  CKA (Centred Kernel Alignment) measures similarity of
+the mean-pooled output logits: the model's action distribution, not its
+internal activations, which nothing here reads.
 
 All functions return JAX arrays and are fully JIT-compatible.
 """
@@ -168,6 +169,9 @@ def make_cka_fn(
         rng: jax.Array,
     ) -> jax.Array:
         """Compute CKA similarity between current and reference representations.
+
+        Uses mean-pooled logits over the sequence dimension as the
+        representation vector, as the sibling repo does.
 
         Args:
             params:     Current model parameters.

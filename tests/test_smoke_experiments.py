@@ -240,7 +240,7 @@ def test_one_finetuning_step(loss_ctx, abl_config, params, batch) -> None:
     assert any(
         not jnp.array_equal(a, b)
         for a, b in zip(jax.tree_util.tree_leaves(params),
-                        jax.tree_util.tree_leaves(new_params))
+                        jax.tree_util.tree_leaves(new_params), strict=True)
     ), "fine-tuning step left every parameter untouched"
 
 
@@ -330,7 +330,7 @@ def test_lora_optimizer_freezes_the_base(abl_config, apply_fns, params) -> None:
     assert all(
         jnp.array_equal(a, b)
         for a, b in zip(jax.tree_util.tree_leaves(combined["base"]),
-                        jax.tree_util.tree_leaves(updated["base"]))
+                        jax.tree_util.tree_leaves(updated["base"]), strict=True)
     ), "LoRA optimizer must not update the frozen base"
 
 
@@ -343,7 +343,7 @@ def test_gradient_surgery_projects_conflicts(params) -> None:
 
     assert all(_finite(g) for g in jax.tree_util.tree_leaves(projected))
     for proj, ref in zip(jax.tree_util.tree_leaves(projected),
-                         jax.tree_util.tree_leaves(g_bc)):
+                         jax.tree_util.tree_leaves(g_bc), strict=True):
         assert float(jnp.sum(proj * ref)) <= 1e-4, "conflict was not removed"
 
 
@@ -421,7 +421,10 @@ def test_grad_alignment_shares_one_draw_and_references_the_pretrained_params(
 
 
 def test_representation_diagnostics(apply_fns, params, batch, schedules, abl_config) -> None:
-    from experiments.rl_finetuning.diagnostics.representation import make_cka_fn, make_repr_drift_fn
+    from experiments.rl_finetuning.diagnostics.representation import (
+        make_cka_fn,
+        make_repr_drift_fn,
+    )
 
     apply_eval, _ = apply_fns
     drift = make_repr_drift_fn(apply_eval, schedules[0], NUM_ACTIONS)
