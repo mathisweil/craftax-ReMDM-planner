@@ -47,6 +47,23 @@ ROLES = {
 RUN_FILES = ("results.json", "diagnosis.md")
 RUN_DIRS = ("tables", "figures")
 
+# Environment provenance, never needed to restore a checkpoint, and dropped
+# from every published config in both repos: the nested `_wandb` blob (email,
+# host, git remote, absolute paths), every `wandb_*` and `hub_*` key, and
+# `use_wandb` itself — which matches neither prefix, so both repos shipped it
+# in the released config while claiming to scrub W&B settings. Keys are
+# compared lower-cased, because craftax records them UPPERCASE and minihack
+# lower-case.
+DROP_PREFIXES = ("wandb_", "hub_")
+DROP_KEYS = ("_wandb", "use_wandb")
+
+
+def is_environment_key(key: str) -> bool:
+    """True for a config key that is provenance rather than recipe."""
+    lowered = key.lower()
+    return lowered in DROP_KEYS or lowered.startswith(DROP_PREFIXES)
+
+
 # wandb-metadata.json is pure environment provenance (email, host, git remote,
 # absolute paths) and is never needed to restore a checkpoint.
 COPY_IGNORE = shutil.ignore_patterns(
@@ -149,10 +166,18 @@ def shorten_paths(value):
 
 
 def strip_wandb_block(config_yaml: Path) -> None:
-    """Remove the ``_wandb`` blob (email, local paths) from a staged config."""
+    """Drop the environment keys from a staged config.
+
+    Was `_wandb` alone, which left `USE_WANDB`, `WANDB_ENTITY` and
+    `WANDB_PROJECT` in the released `config.yaml`. No credential was ever
+    exposed — those live in the `_wandb` blob and `wandb-metadata.json`, both
+    already removed — but the published surface advertised a W&B account and
+    project that are nothing to do with the recipe, and the sibling repo
+    dropped a different set again. Both now drop the same one.
+    """
     raw = yaml.safe_load(config_yaml.read_text())
-    raw.pop("_wandb", None)
-    config_yaml.write_text(yaml.safe_dump(raw, sort_keys=True))
+    kept = {k: v for k, v in raw.items() if not is_environment_key(k)}
+    config_yaml.write_text(yaml.safe_dump(kept, sort_keys=True))
 
 
 def scrub_abs_paths(resume_json: Path) -> None:
@@ -179,7 +204,9 @@ def describe(model_dir: Path, steps: list[int]) -> dict[str, str]:
         )
     else:
         raw = yaml.safe_load((model_dir / "config.yaml").read_text())
-        cfg = {k: v["value"] for k, v in raw.items() if k != "_wandb"}
+        cfg = {
+            k: v["value"] for k, v in raw.items() if not is_environment_key(k)
+        }
         detail = f"{float(cfg['TOTAL_TIMESTEPS']):.0e} frames"
         arch = f"RNN, layer size {cfg['LAYER_SIZE']}"
     return {
