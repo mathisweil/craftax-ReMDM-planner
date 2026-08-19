@@ -222,7 +222,7 @@ experiments/rl_finetuning/outputs/{run_id}/
 │   └── action_dist/
 │       ├── action_freq_{name}.png         # Side-by-side pre/post action frequency bars
 │       ├── transition_matrix_{name}.png   # 3-panel heatmap (pre, post, difference)
-│       ├── action_metrics_{name}.png      # 2x2 dashboard (entropy, effective, Gini, divergences)
+│       ├── action_metrics_{name}.png      # 2x2 dashboard (entropy in nats, effective, Gini, divergences)
 │       └── js_divergence_comparison.png   # Cross-ablation JS divergence bar chart
 └── tables/
     ├── main_results.{csv,tex}

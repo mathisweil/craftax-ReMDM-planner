@@ -11,6 +11,7 @@ repo-specific JS/action-distribution/merge diagnostics.
 
 from __future__ import annotations
 
+import math
 import re
 
 import jax.numpy as jnp
@@ -94,6 +95,31 @@ def test_surgery_metrics_measure_removed_gradient_mass():
 # Ablation-suite verdict rule (shared with the sibling repo, character for
 # character; PARITY open question resolved 2026-08-17)
 # ---------------------------------------------------------------------------
+
+
+def test_action_entropy_is_reported_in_nats():
+    """Action-distribution entropy is in nats (spec-ablations §3.5; the same
+    unit as minihack's `compute_entropy` since its matched commit).
+
+    Both repos reported "entropy" under one label with the unit stated
+    nowhere: craftax natural log, minihack log base 2, a factor of
+    1/ln 2 = 1.442695 apart. Canon is nats, which is what the NELBO and
+    cross-entropy figures throughout both suites already use.
+
+    Derivation: eight actions drawn 4/2/1/1 out of 8 give probabilities
+    [1/2, 1/4, 1/8, 1/8] over the four used and zero elsewhere, and an
+    entropy of (1/2)ln2 + (1/4)ln4 + 2*(1/8)ln8 = 1.75 ln 2 = 1.2130075656
+    nats, which is 1.75 bits. The epsilon the implementation adds inside
+    the log costs less than 1e-9 of that.
+    """
+    from experiments.rl_finetuning.analysis.action_distribution import _compute_metrics
+
+    actions = np.array([[0, 0, 0, 0, 1, 1, 2, 3]], dtype=np.int32)
+    rewards = np.zeros_like(actions, dtype=np.float32)
+    dones = np.zeros_like(actions, dtype=bool)
+    metrics = _compute_metrics(actions, rewards, dones, 8, 0.0)
+    assert metrics.entropy == pytest.approx(1.75 * math.log(2), abs=1e-6)
+    assert metrics.entropy == pytest.approx(1.2130075656, abs=1e-6)
 
 
 def test_the_significance_test_states_its_floor_and_corrects_for_selection(tmp_path):

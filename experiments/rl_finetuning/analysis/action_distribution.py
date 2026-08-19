@@ -140,7 +140,9 @@ class ActionDistMetrics:
     Args:
         action_counts:     ``[num_actions]`` raw counts.
         action_probs:      ``[num_actions]`` normalised probabilities.
-        entropy:           Shannon entropy of action distribution.
+        entropy:           Shannon entropy of the action distribution, in
+                           **nats** (natural log), matching the NELBO and
+                           cross-entropy units used throughout both suites.
         effective_actions: Number of actions with > 1% probability.
         gini:              Gini coefficient (0=uniform, 1=degenerate).
         transition_matrix: ``[num_actions, num_actions]`` row-normalised
@@ -472,7 +474,7 @@ def plot_metrics_dashboard(
         color=["#1976D2", "#F57C00"],
         alpha=0.8,
     )
-    ax.set_ylabel("Shannon Entropy")
+    ax.set_ylabel("Shannon Entropy (nats)")
     ax.set_title("Action Entropy")
 
     # Effective actions
