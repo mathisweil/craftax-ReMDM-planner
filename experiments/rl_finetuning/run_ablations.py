@@ -360,14 +360,20 @@ def _results_to_json(
     pretrained_score: float,
     config: dict,
     pretrained_ach_rates: dict[str, float] | None = None,
+    merge_provenance: dict | None = None,
 ) -> bytes:
     """Serialise all results to orjson bytes.
 
     Args:
         results:              Dict mapping name -> {"history": AblationHistory, "score": float}.
         pretrained_score:     Pretrained baseline score.
-        config:               Merged config dict.
+        config:               The run's config; under --merge, the first input
+                              file's, whole.
         pretrained_ach_rates: Per-achievement unlock rates for the pretrained baseline.
+        merge_provenance:     Under --merge, which files were pooled and which
+                              one the recorded config came from. Omitted for a
+                              single run, so its presence is what marks a file
+                              as merged.
 
     Returns:
         UTF-8 JSON bytes.
@@ -375,6 +381,7 @@ def _results_to_json(
     serialisable = {
         "pretrained_score": pretrained_score,
         "pretrained_ach_rates": pretrained_ach_rates or {},
+        **({"merge_provenance": merge_provenance} if merge_provenance else {}),
         "config": {
             k: v
             for k, v in config.items()
@@ -530,8 +537,18 @@ def _merge_result_files(
     Args:
         paths: List of paths to results.json files.
 
+    The config returned is **the first input file's**, whole. Merging the
+    files key by key produced a config that matched no input file: the
+    poolability guard forbids the result-affecting keys from diverging, but
+    everything else -- `NUM_ENVS`, worker counts, output paths, the W&B run
+    name -- could still come from a different file per key, and the record
+    beside the merged numbers then described a run that never happened.
+    Which file it came from, and what the other inputs were, is recorded
+    next to it by the caller rather than blended into it.
+
     Returns:
-        Tuple of (merged_results, pretrained_score, pretrained_ach_rates, config).
+        Tuple of (merged_results, pretrained_score, pretrained_ach_rates, config),
+        where config is the first input file's, unmodified.
 
     Raises:
         FileNotFoundError: If any path does not exist.
@@ -544,7 +561,6 @@ def _merge_result_files(
     merged_results: dict[str, dict] = {}
     pretrained_scores: list[float] = []
     merged_ach_rates: dict[str, float] = {}
-    merged_config: dict = {}
     reference_path = ""
     reference_config: dict = {}
 
@@ -565,8 +581,6 @@ def _merge_result_files(
         pretrained_scores.append(pt_score)
         if ach_rates:
             merged_ach_rates.update(ach_rates)
-        if config:
-            merged_config.update(config)
 
         for name, res in results.items():
             if name not in merged_results:
@@ -602,7 +616,7 @@ def _merge_result_files(
         len(merged_results),
         pretrained_score,
     )
-    return merged_results, pretrained_score, merged_ach_rates, merged_config
+    return merged_results, pretrained_score, merged_ach_rates, reference_config
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -643,8 +657,16 @@ def main(argv: list[str] | None = None) -> None:
         # Write merged results
         ach_rates_arg = pretrained_ach_rates if pretrained_ach_rates else None
         merged_path = output_dir / "results.json"
+        provenance = {"inputs": list(args.merge), "config_from": args.merge[0]}
+        logger.info(
+            "Recorded config comes from %s; pooled with %s",
+            provenance["config_from"],
+            ", ".join(provenance["inputs"][1:]) or "nothing",
+        )
         merged_path.write_bytes(
-            _results_to_json(results, pretrained_score, config, ach_rates_arg)
+            _results_to_json(
+                results, pretrained_score, config, ach_rates_arg, provenance
+            )
         )
         logger.info("Wrote merged results to %s", merged_path)
         # Regenerate analysis
