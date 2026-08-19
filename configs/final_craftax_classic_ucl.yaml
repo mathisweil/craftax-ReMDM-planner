@@ -6,7 +6,7 @@
 # The recipe itself lives in configs/defaults.yaml. Only what differs between
 # the two clusters lives here, which is the rollout width and the seed.
 #
-# Nothing enforces that this file and final_classic_qmul.yaml stay in step: the
+# Nothing enforces that this file and final_craftax_classic_qmul.yaml stay in step: the
 # guard is test_cluster_siblings_differ_only_in_num_envs_and_seed. A
 # hyperparameter change meant for both belongs in defaults.yaml, not here.
 #

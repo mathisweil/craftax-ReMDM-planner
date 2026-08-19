@@ -4,7 +4,7 @@
 # -----------------------------------------------------------------------------
 # This file IS the paper's Classic DAgger recipe, not a neutral baseline: run
 # main.py with no --config and you get it. The per-cluster configs
-# (final_classic_{qmul,ucl}.yaml) hold only what genuinely differs between the
+# (final_craftax_classic_{qmul,ucl}.yaml) hold only what genuinely differs between the
 # two machines, which is num_envs and seed.
 #
 # Two consequences worth knowing before editing:

@@ -320,7 +320,7 @@ def dagger_sizing(config: dict[str, Any], num_updates: int) -> dict[str, int]:
     ``n_train_passes`` independently and disagreed: the snapshot reported
     ``dagger_buffer_max // samples_per_update`` while the runner used 1,
     overstating ``total_grad_steps`` by 2x on ``defaults.yaml`` and both
-    ``final_classic_*`` configs, and by 23x on
+    ``final_craftax_classic_*`` configs, and by 23x on
     ``classic_exp_c_full_recipe.yaml``.
 
     Sliding windows (B3): a rollout of ``num_steps`` transitions yields

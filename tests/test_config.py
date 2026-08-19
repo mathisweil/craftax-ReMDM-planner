@@ -49,8 +49,8 @@ def _build(argv: list[str]) -> dict:
     [
         ("configs/final_craftax_ucl.yaml", {"NUM_ENVS": 448, "SEED": 42}),
         ("configs/final_craftax_qmul.yaml", {"NUM_ENVS": 64, "SEED": 43}),
-        ("configs/final_classic_ucl.yaml", {"NUM_ENVS": 512, "SEED": 42}),
-        ("configs/final_classic_qmul.yaml", {"NUM_ENVS": 96, "SEED": 43}),
+        ("configs/final_craftax_classic_ucl.yaml", {"NUM_ENVS": 512, "SEED": 42}),
+        ("configs/final_craftax_classic_qmul.yaml", {"NUM_ENVS": 96, "SEED": 43}),
     ],
 )
 def test_preset_resolves_over_the_defaults(preset, expected) -> None:
@@ -62,7 +62,7 @@ def test_preset_resolves_over_the_defaults(preset, expected) -> None:
     assert config["N_LAYERS"] == 6
 
 
-@pytest.mark.parametrize("family", ["classic", "craftax"])
+@pytest.mark.parametrize("family", ["craftax_classic", "craftax"])
 def test_cluster_siblings_differ_only_in_num_envs_and_seed(family) -> None:
     """No inheritance links the pair, so this is the only thing holding them
     together. For craftax it matters most: eleven keys are duplicated verbatim
@@ -200,7 +200,7 @@ def test_ablation_config_restates_no_inherited_value(preset) -> None:
 
 #: Reference config per family.
 _REFERENCE_CONFIG = {
-    "classic": "ablations_final_classic_ucl.yaml",
+    "classic": "ablations_final_craftax_classic_ucl.yaml",
     "craftax": "ablations_final_craftax_ucl.yaml",
 }
 
@@ -210,7 +210,7 @@ _POOLABLE = set(_REFERENCE_CONFIG.values())
 #: Configs that must NOT be merged with the reference, mapped to the
 #: result-affecting keys on which they are known to diverge.
 _NOT_POOLABLE = {
-    "ablations_final_classic_qmul.yaml": frozenset(
+    "ablations_final_craftax_classic_qmul.yaml": frozenset(
         {
             "num_envs",  # 64 vs 192: less rollout diversity per iteration
             "batch_size",  # 256 vs 1024: ~4x per-update SNR
@@ -352,7 +352,7 @@ def test_merge_refuses_a_cross_family_pair(tmp_path) -> None:
         _results_file(
             tmp_path,
             "classic.json",
-            _recorded("ablations_final_classic_ucl.yaml"),
+            _recorded("ablations_final_craftax_classic_ucl.yaml"),
             [1.0],
         ),
         _results_file(

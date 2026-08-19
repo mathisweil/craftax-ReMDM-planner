@@ -104,7 +104,7 @@ def test_full_craftax_recipe_deltas(preset):
 # ---------------------------------------------------------------------------
 
 _FINALS = [
-    "final_classic_ucl", "final_classic_qmul",
+    "final_craftax_classic_ucl", "final_craftax_classic_qmul",
     "final_craftax_ucl", "final_craftax_qmul",
 ]
 
@@ -143,8 +143,8 @@ def test_num_updates_formula_and_resnap(preset):
 @pytest.mark.parametrize(
     ("preset", "n_documented", "decay_documented"),
     [
-        ("final_classic_qmul", 8138, 0.9998689),
-        ("final_classic_ucl", 1525, 0.9993005),
+        ("final_craftax_classic_qmul", 8138, 0.9998689),
+        ("final_craftax_classic_ucl", 1525, 0.9993005),
     ],
 )
 def test_classic_beta_decay_resolves_to_documented(preset, n_documented, decay_documented):
@@ -195,8 +195,8 @@ def test_full_craftax_beta_decay_resolves_to_documented(
 @pytest.mark.parametrize(
     ("preset", "warmup_steps", "buffer_max"),
     [
-        ("final_classic_ucl", 1600, 125_000),
-        ("final_classic_qmul", 8512, 23_438),
+        ("final_craftax_classic_ucl", 1600, 125_000),
+        ("final_craftax_classic_qmul", 8512, 23_438),
         ("final_craftax_ucl", 1792, 43_750),
         ("final_craftax_qmul", 12_800, 6_250),
     ],

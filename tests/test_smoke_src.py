@@ -437,7 +437,7 @@ def test_dagger_sizing_defaults_to_one_train_pass(real_config) -> None:
 #   craftax_ucl  (fpu 57_344): 1743;  28*64 = 1792;  round(0.76294*57344) = 43_750
 #   craftax_qmul (fpu  8_192): 12_207; 200*64 = 12_800; round(0.76294*8192) = 6_250
 FINAL_CONFIG_DERIVATIONS = {
-    "configs/final_classic_ucl.yaml": {
+    "configs/final_craftax_classic_ucl.yaml": {
         "NUM_ENVS": 512,
         "NUM_UPDATES": 1525,
         "LR_WARMUP_STEPS": 1600,
@@ -449,7 +449,7 @@ FINAL_CONFIG_DERIVATIONS = {
         "LR_WARMUP_STEPS": 1792,
         "DAGGER_BUFFER_MAX": 43_750,
     },
-    "configs/final_classic_qmul.yaml": {
+    "configs/final_craftax_classic_qmul.yaml": {
         "NUM_ENVS": 96,
         "NUM_UPDATES": 8138,
         "LR_WARMUP_STEPS": 8512,
