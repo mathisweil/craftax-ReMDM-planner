@@ -14,7 +14,7 @@ JAX/Flax ReMDM planner on Craftax; supervision by a pre-trained PPO expert (`Cra
 
 - The model is built from the config: match config to checkpoint. Released HF checkpoints load with `final_*` configs, not `defaults.yaml`.
 - Pass a checkpoint directory to checkpoint flags, not a step subdirectory.
-- Released PPO expert checkpoints currently fail to restore on CPU-only machines (README.md §Checkpoints).
+- Released PPO expert checkpoints fail to restore on CPU-only machines (README.md §Implementation notes).
 
 ## Tests
 
