@@ -416,45 +416,73 @@ def make_forgetting_analysis_table(
     pretrained_score: float,
     collapse_threshold: float = 0.1,
 ) -> pl.DataFrame:
-    """Forgetting analysis: Method | First collapse iter | Min score | Recovery score | Recovered?.
+    """Forgetting timeline: first collapse, min score, recovery.
+
+    One function, character for character, in both repos. The two halves
+    had drifted apart in five places; each is settled below, with the
+    behaviour that was dropped named so the choice can be read back.
+
+    **Collapse boundary** is multiplicative: ``pretrained * (1 -
+    collapse_threshold)``, a tenth below pretrained. minihack subtracted an
+    absolute 0.05 instead, which means something different on a Craftax
+    achievement score than on a MiniHack win rate; the verdict rule was
+    scaled to the metric on 2026-08-17 and this follows it.
+
+    **Recovery** is judged from the first collapse onward -- did any later
+    evaluation climb back to the boundary. An arm that never collapsed
+    reports ``"N/A"``, not recovery: minihack asked only whether the final
+    score cleared the boundary, which labels every healthy arm "recovered"
+    from a collapse it never had.
+
+    **The recovery score** is ``res["score"]``, the terminal evaluation,
+    which is the quantity the main results table, the verdict rule and the
+    hypothesis table all use. minihack read the last in-loop evaluation
+    instead, so its ``Final_Score`` column and the ``Score`` column beside
+    it could disagree.
+
+    **An arm with no evaluation history still gets a row**, with a null
+    minimum and no collapse. minihack skipped it, which silently shrinks
+    the denominator of any count taken over this table.
+
+    **Arms are visited in sorted order**, so the table is byte-reproducible
+    across runs; craftax inherited dict order.
 
     Args:
-        results:            Dict mapping name -> {"history": AblationHistory, "score": float}.
-        pretrained_score:   Pretrained model score.
-        collapse_threshold: Fraction below pretrained to count as collapse.
+        results:            ``{name: {"history": AblationHistory, "score": float}}``.
+        pretrained_score:   Pretrained model eval score.
+        collapse_threshold: Fraction below pretrained that counts as collapse.
 
     Returns:
-        Polars DataFrame.
+        Polars DataFrame with one row per ablation, in sorted name order.
     """
     collapse_level = pretrained_score * (1 - collapse_threshold)
-    rows = []
-    for name, res in results.items():
+    rows: list[dict] = []
+    for name, res in sorted(results.items()):
         history: AblationHistory = res["history"]
-        final_score = res["score"]
         evals = history.eval_score
         eval_iters = history.eval_iters
 
         first_collapse_iter = "never"
-        min_score = round(min(evals), 4) if evals else float("nan")
-        recovery_score = round(final_score, 4)
+        min_score = round(min(evals), 4) if evals else None
+        min_score_iter = eval_iters[evals.index(min(evals))] if evals else None
+        recovery_score = round(res["score"], 4)
         recovered = "N/A"
 
-        if evals:
-            for i, (it, sc) in enumerate(zip(eval_iters, evals, strict=False)):
-                if sc < collapse_level:
-                    first_collapse_iter = str(it)
-                    # Check if recovered later
-                    later_scores = evals[i + 1 :]
-                    recovered = (
-                        "Y" if any(s >= collapse_level for s in later_scores) else "N"
-                    )
-                    break
+        for i, (it, sc) in enumerate(zip(eval_iters, evals, strict=False)):
+            if sc < collapse_level:
+                first_collapse_iter = str(it)
+                later_scores = evals[i + 1 :]
+                recovered = (
+                    "Y" if any(s >= collapse_level for s in later_scores) else "N"
+                )
+                break
 
         rows.append(
             {
                 "Method": name,
                 "First_Collapse_Iter": first_collapse_iter,
                 "Min_Score": min_score,
+                "Min_Score_Iter": min_score_iter,
                 "Recovery_Score": recovery_score,
                 "Recovered": recovered,
             }
