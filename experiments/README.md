@@ -34,8 +34,8 @@ rl_finetuning/
 └── configs/
     ├── ablations_default.yaml              # Base hyperparameters for every ablation run
     ├── ablations_fast.yaml                 # Smoke-test overlay (50 iterations, 16 envs)
-    ├── ablations_final_classic_ucl.yaml    # Matches configs/final_classic_ucl.yaml   (UCL 3090 Ti, seed 42)
-    ├── ablations_final_classic_qmul.yaml   # Matches configs/final_classic_qmul.yaml  (QMUL H200, seed 43)
+    ├── ablations_final_craftax_classic_ucl.yaml    # Matches configs/final_craftax_classic_ucl.yaml   (UCL 3090 Ti, seed 42)
+    ├── ablations_final_craftax_classic_qmul.yaml   # Matches configs/final_craftax_classic_qmul.yaml  (QMUL H200, seed 43)
     ├── ablations_final_craftax_ucl.yaml    # Matches configs/final_craftax_ucl.yaml   (UCL reference machine (GPU model unrecorded),   seed 42)
     └── ablations_final_craftax_qmul.yaml   # Matches configs/final_craftax_qmul.yaml  (QMUL H200, seed 43)
 ```
@@ -96,7 +96,7 @@ python experiments/rl_finetuning/run_ablations.py \
 ```bash
 # Craftax Classic, UCL hardware (seed 42 checkpoint)
 python experiments/rl_finetuning/run_ablations.py \
-    --ablations-config experiments/rl_finetuning/configs/ablations_final_classic_ucl.yaml \
+    --ablations-config experiments/rl_finetuning/configs/ablations_final_craftax_classic_ucl.yaml \
     --all --num-seeds 3 \
     --checkpoint wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy-best:latest \
     --use-wandb
