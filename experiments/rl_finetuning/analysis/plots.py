@@ -129,18 +129,33 @@ def _overlay_legend(ax: plt.Axes, fig: plt.Figure, *, ncol: int = 5) -> None:
 def _ema(values: list[float], alpha: float = 0.3) -> list[float]:
     """Exponential moving average smoothing for a list of scalars.
 
+    A missing value -- ``None`` after a NaN has round-tripped through JSON,
+    or a NaN itself -- is missing data, not a measurement of zero. It is
+    carried through as NaN, which matplotlib draws as a **gap** in the
+    line, and the average steps over it rather than being pulled towards
+    zero by it: a run whose evaluation failed once would otherwise show a
+    win rate collapsing to 0 and recovering, which is a finding the suite
+    would report and nothing that happened.
+
     Args:
-        values: Raw scalar values.
+        values: Raw scalar values, possibly with ``None`` or NaN holes.
         alpha:  Smoothing factor (0=no smoothing, 1=no memory).
 
     Returns:
-        Smoothed list of same length.
+        Smoothed list of the same length, NaN wherever the input was
+        missing, and NaN in the leading positions until the first real
+        value arrives.
     """
     if not values:
         return []
-    smoothed = [values[0]]
-    for v in values[1:]:
-        smoothed.append(alpha * v + (1 - alpha) * smoothed[-1])
+    smoothed: list[float] = []
+    state: float | None = None
+    for v in values:
+        if v is None or v != v:  # None, or NaN, which is not equal to itself
+            smoothed.append(float("nan"))
+            continue
+        state = float(v) if state is None else alpha * float(v) + (1 - alpha) * state
+        smoothed.append(state)
     return smoothed
 
 
