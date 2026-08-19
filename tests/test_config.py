@@ -600,8 +600,9 @@ def test_the_reachability_scan_reaches_the_code_it_claims_to_cover():
 # It is deliberately NOT compared with the `experiments/README.md` table:
 # those cells are short labels in a different register ("Soft KL constraint
 # vs pretrained") and the registry carries the mechanism sentence. 24 of 25
-# differ by design; only `mixed_replay` coincides, because F-2 fixed it by
-# copying the README wording.
+# differ by design; only `mixed_replay` coincides, because `a2d8231` gave
+# the registry and the README the same self-replay sentence -- superseding
+# F-2, which had reached the coincidence by copying the older README wording.
 # ---------------------------------------------------------------------------
 
 _EXPECTED_DESCRIPTIONS = {
