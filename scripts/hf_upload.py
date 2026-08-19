@@ -59,10 +59,41 @@ HUB_IGNORE = ["**/.DS_Store", "**/__pycache__/**", "**/wandb-metadata.json"]
 # Discovery
 # =============================================================================
 
+# `checkpoints/hf/` is where a Hub *download* lands. Publishing from it would
+# re-upload already-published artefacts into a nested `checkpoints/hf/...` tree
+# on the Hub, so it is never a publish source in either repo.
+HF_DOWNLOAD_DIR = "hf"
+
+
+def _is_download_copy(path: Path) -> bool:
+    """True for anything under ``checkpoints/hf/``, wherever it sits."""
+    return HF_DOWNLOAD_DIR in path.relative_to(CKPTS).parts
+
+
 def discover_checkpoints() -> dict[Path, list[int]]:
-    """Map each checkpoint directory to its saved step numbers."""
+    """Map each checkpoint directory to its saved step numbers.
+
+    Discovery is at the **released layout**, ``checkpoints/<role>/<name>/<step>/``
+    — the layout the Hub repo mirrors, which is why `--dry-run` shows the tree a
+    publish would create. A training run writes elsewhere, so its `policies`
+    directory has to be copied into place first; the README documents that and
+    it is a real requirement, not an accident of this glob.
+
+    Anything under ``checkpoints/hf/`` is skipped as a download copy. The fixed
+    depth already excluded it here, one level deeper than a real checkpoint, but
+    only by arithmetic — the exclusion is now stated, so it survives a layout
+    with a different depth.
+
+    Measured on this repo's live tree: 4 checkpoints discovered, 4 download
+    copies under ``checkpoints/hf/`` skipped.
+
+    Returns:
+        ``{checkpoint directory: [step numbers]}``.
+    """
     models: dict[Path, list[int]] = {}
     for marker in sorted(CKPTS.glob("*/*/*/_CHECKPOINT_METADATA")):
+        if _is_download_copy(marker):
+            continue
         models.setdefault(marker.parent.parent, []).append(int(marker.parent.name))
     return models
 
@@ -466,7 +497,15 @@ def main() -> int:
 
     models = discover_checkpoints()
     if not models:
-        print(f"No Orbax checkpoints found under {CKPTS}.", file=sys.stderr)
+        print(
+            f"No Orbax checkpoints found under {CKPTS}.\n"
+            "Discovery expects the released layout, "
+            "checkpoints/<role>/<name>/<step>/, and skips checkpoints/hf/ "
+            "because that is where Hub downloads land. Copy a run's "
+            "`wandb.run.dir/policies` directory to "
+            "checkpoints/{offline,online}/<name> first.",
+            file=sys.stderr,
+        )
         return 1
     runs = discover_runs()
     inference = discover_inference(args.inference_results)

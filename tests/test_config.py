@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 import json
 import math
 from pathlib import Path
@@ -493,6 +494,67 @@ _NOT_FROM_A_CONFIG_FILE = frozenset(
         "TOTAL_TIMESTEPS",
     }
 )
+
+
+# ---------------------------------------------------------------------------
+# Publishing: discovery layout and the published config surface
+# ---------------------------------------------------------------------------
+
+
+def _hf_upload():
+    spec = importlib.util.spec_from_file_location(
+        "hf_upload", _ROOT / "scripts" / "hf_upload.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _plant(directory: Path) -> None:
+    """Write the marker craftax discovery looks for, under a step directory."""
+    step = directory / "1000"
+    step.mkdir(parents=True, exist_ok=True)
+    (step / "_CHECKPOINT_METADATA").write_text("{}")
+
+
+def test_publish_discovery_is_at_the_released_layout_and_skips_downloads(tmp_path):
+    """Checkpoint discovery finds the released layout and never the Hub
+    download copies under `checkpoints/hf/` (both repos' README, Publishing).
+
+    The two repos failed this in opposite directions. craftax used a
+    fixed-depth glob, which happened to exclude `checkpoints/hf/` because a
+    download sits one level deeper than a real checkpoint -- true by
+    arithmetic, not by intent, and silent if the layout ever changed depth.
+    minihack used a recursive `rglob("*.pth")`, which on its live tree found
+    ten directories, **none of them at the released layout**: seven raw
+    `dagger_<timestamp>/` run directories, the repository root with two loose
+    files, and two artefacts already published, which a publish would have
+    pushed back up into a nested `checkpoints/hf/checkpoints/...` tree.
+
+    Both now discover at the released layout and both skip `checkpoints/hf/`
+    explicitly, so the exclusion holds at any depth.
+    """
+    hf = _hf_upload()
+    monkey_ckpts = tmp_path / "checkpoints"
+    released = monkey_ckpts / "online" / "Some-Model-100M"
+    download = monkey_ckpts / "hf" / "checkpoints" / "online" / "Some-Model-100M"
+    stray = monkey_ckpts / "dagger_20260101_000000_abcd"
+    for d in (released, download, stray):
+        d.mkdir(parents=True)
+        _plant(d)
+    # A download parked at the released depth is still a download.
+    shallow_download = monkey_ckpts / "hf" / "Some-Model-100M"
+    shallow_download.mkdir(parents=True)
+    _plant(shallow_download)
+
+    hf.CKPTS = monkey_ckpts
+    found = hf.discover_checkpoints()
+
+    assert set(found) == {released}, sorted(str(p) for p in found)
+    assert not any(hf._is_download_copy(p) for p in found)
+    assert hf._is_download_copy(download)
+    assert hf._is_download_copy(shallow_download)
+
 
 
 # ---------------------------------------------------------------------------

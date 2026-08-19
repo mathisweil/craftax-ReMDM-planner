@@ -288,7 +288,9 @@ python main.py --mode online \
 HF_TOKEN=hf_xxx uv run python scripts/hf_upload.py --repo-id mathisweil/remdm-craftax-checkpoints --dry-run
 ```
 
-`--dry-run` prints the staged tree and card without uploading; drop it to upload. Also `--inference-results <FILE|DIR> ...` (eval JSONs kept elsewhere), `--private`, `--yes`. Discovery expects `checkpoints/<role>/<name>/<step>/`, so copy a run's `wandb.run.dir/policies` directory to `checkpoints/{offline,online}/<name>` first.
+`--dry-run` prints the staged tree and card without uploading; drop it to upload. Also `--inference-results <FILE|DIR> ...` (eval JSONs kept elsewhere), `--private`, `--yes`.
+
+**Checkpoint discovery expects the released layout**, `checkpoints/<role>/<name>/<step>/` — the layout the Hub repo mirrors. A training run writes elsewhere, so copy its `wandb.run.dir/policies` directory to `checkpoints/{offline,online}/<name>` first, or nothing is staged. `checkpoints/hf/` is skipped: that is where a Hub *download* lands, and publishing from it would push already-published artefacts back up into a nested `checkpoints/hf/checkpoints/...` tree. The sibling `minihack-ReMDM-planner` repo has the same requirement and the same exclusion.
 
 ## Results, citation, licence
 
