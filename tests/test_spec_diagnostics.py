@@ -129,7 +129,7 @@ def test_action_entropy_is_reported_in_nats():
 
 def test_the_curve_smoother_leaves_a_gap_where_data_is_missing():
     """A missing evaluation is a hole in the record, not a measurement of
-    zero, and `_ema` draws it as a gap (spec-ablations §3.3).
+    zero, and `_ema` draws it as a gap (spec-ablations §3.9).
 
     A NaN metric round-trips through the results JSON as null and comes
     back as None. minihack substituted 0.0 for it and craftax raised a
@@ -172,7 +172,7 @@ def test_the_curve_smoother_leaves_a_gap_where_data_is_missing():
 def test_the_forgetting_table_is_one_definition_across_the_repos():
     """The forgetting table is one function in both repos, and each of the
     five places the two halves had drifted apart resolves the same way
-    (spec-ablations §3.3).
+    (spec-ablations §3.8).
 
     Derivation, boundary: multiplicative, ``pretrained * (1 - 0.1)``. At a
     pretrained score of 1.0 that is 0.9, so an evaluation of 0.85 is a
@@ -473,7 +473,7 @@ def test_the_hypothesis_evidence_sets_are_the_pinned_shared_ones():
 def test_the_evidence_margin_is_a_fraction_of_the_metric_scale():
     """An arm counts as evidence for a hypothesis when it clears the larger
     reference by a fraction of the metric scale, not by a flat 0.01
-    (spec-ablations §3.6; the same scaling as :func:`verdict`).
+    (spec-ablations §3.7; the same scaling as :func:`verdict`).
 
     Both repos demanded an absolute +0.01 over `max(pretrained, baseline)`
     on metrics of different magnitude: 0.4 % of a 2.6 Craftax achievement
