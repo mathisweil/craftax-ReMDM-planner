@@ -8,24 +8,7 @@ The sibling repository [`minihack-ReMDM-planner`](../minihack-ReMDM-planner) imp
 
 The planner starts from a fully-masked action sequence and iteratively unmasks tokens over `T` denoising steps; ReMDM extends MDLM with remasking strategies that let committed tokens be re-predicted, improving plan coherence. Two independent training pipelines are compared head-to-head in the accompanying paper (under submission; citation to follow), both supervised by a pre-trained PPO expert:
 
-```
-[Shared]   Train PPO agent              Craftax_Baselines/ppo_rnn.py | ppo_rnd.py
-               |
-               v  checkpoint
-       ┌───────┴────────┐
-       │                │
-  [Offline BC]     [Online DAgger]
-  --mode offline    --mode online
-  (live PPO         (from scratch; mixed policy
-   rollouts)         + expert labels -> buffer)
-       │                │
-       v                v
-   checkpoint        checkpoint
-       │                │
-       └───────┬────────┘
-               v
-[Evaluate] --mode inference --checkpoint ...
-```
+One PPO expert checkpoint feeds both pipelines: `--mode offline` behaviour-clones from live expert rollouts, `--mode online` runs DAgger from scratch against expert labels. Either output is scored with `--mode inference`.
 
 ## Setup
 
@@ -48,7 +31,7 @@ uv sync --extra cuda13
 uv sync --extra cuda12
 ```
 
-Extras: `cuda13` and `cuda12` are mutually exclusive and Linux-only. Unlike the minihack repo, where plain `uv sync` already yields a CUDA build on Linux, JAX ships GPU support only through these extras, so a GPU node needs one explicitly.
+Extras: `cuda13` and `cuda12` are mutually exclusive and Linux-only. JAX ships GPU support only through these extras, so a GPU node needs one explicitly.
 
 ## Repo layout
 
@@ -70,7 +53,7 @@ craftax-ReMDM-planner/
 
 ## Quickstart
 
-Full DAgger pipeline (rollout, expert labelling, gradient updates, validation) under `configs/smoke.yaml`, ~25 s on CPU. The expert is randomly initialised unless `--ppo-checkpoint` is given, so this runs on a clean clone with no downloads; returns read `0.000` because no episode terminates in so short a run — watch `mean step reward`, `loss`, `all metrics finite`.
+Full DAgger pipeline (rollout, expert labelling, gradient updates, validation) under `configs/smoke.yaml`, ~25 s on CPU. The expert is randomly initialised unless `--ppo-checkpoint` is given, so this runs on a clean clone with no downloads. Watch `mean step reward`, `loss` and `all metrics finite`; returns stay at `0.000`, since no episode terminates in so short a run.
 
 ```bash
 python main.py --mode smoke
@@ -89,11 +72,11 @@ python ppo_rnn.py --env_name Craftax-Classic-Symbolic-v1 \
 cd ..
 ```
 
-(`ppo_rnd.py` for Random Network Distillation. The submodule keeps its own upstream CLI.) Released experts are on the HF Hub, see [Checkpoints](#checkpoints).
+(`ppo_rnd.py` for Random Network Distillation.) Released experts are on the HF Hub, see [Checkpoints](#checkpoints).
 
 ### Offline BC
 
-Rolls out the PPO agent live at each update; windows crossing an episode boundary are masked out, the rest weighted by cumulative reward.
+Rolls out the PPO agent live at each update.
 
 ```bash
 python main.py --mode offline --ppo-checkpoint /path/to/ppo_checkpoint
@@ -103,7 +86,7 @@ python main.py --mode offline --ppo-checkpoint /path/to/ppo_checkpoint \
 
 ### Online DAgger
 
-Trained from scratch. Per iteration: a mixed policy (expert vs learner, ratio `beta`, exponentially decayed) rolls out; the expert labels every visited state; the model trains on the aggregated buffer with the MDLM ELBO.
+Trained from scratch. Per iteration a mixed expert/learner policy rolls out, the expert labels every visited state, and the model trains on the aggregated buffer.
 
 ```bash
 python main.py --mode online --ppo-checkpoint /path/to/ppo_checkpoint
@@ -143,7 +126,7 @@ python main.py --mode online --ppo-checkpoint /path/to/ppo_checkpoint \
 
 The DAgger replay buffer is not persisted; it refills within a few iterations. The cosine LR schedule spans the full `num_updates`, with the step counter offset so the LR resumes exactly where it stopped. With a metadata sidecar, `resume_step` and `resume_wandb_run_id` are auto-detected; without one, pass `--resume-step`.
 
-`--resume` restores the optimiser state, so it needs a checkpoint written by the current optimiser chain (AdamW, from 2026-08-16). Resuming an older checkpoint fails loudly on the optimiser-state structure; no compatibility path is provided (author decision). Use `--checkpoint` instead — it restores parameters only and warm-starts a fresh run.
+`--resume` restores the optimiser state, so it needs a checkpoint written by the current AdamW chain; an older one fails loudly on the optimiser-state structure, and there is no compatibility path. Use `--checkpoint` instead — parameters only, warm-starting a fresh run.
 
 ## Evaluation from a checkpoint
 
@@ -190,11 +173,10 @@ python main.py --mode online --ppo-checkpoint <ppo> --config configs/classic_exp
 python main.py --mode online --ppo-checkpoint <ppo> --config configs/classic_exp_d_850K_model.yaml
 ```
 
-`{classic,craftax}_exp_{a,b,c}` isolate the DAgger recipe changes (beta fix, larger model, training dynamics); `*_exp_d_*` are the model-size scaling sweeps.
 
 ### RL fine-tuning ablation suite
 
-25 registered ablations (same names as in the minihack repo). The suite trains on the current policy's own rollouts, so it needs only the pretrained diffusion checkpoint — there is no `--ppo-checkpoint`. See `experiments/README.md`.
+25 registered ablations (same names as in the minihack repo). See `experiments/README.md`.
 
 ```bash
 python experiments/rl_finetuning/run_ablations.py --list
@@ -215,7 +197,7 @@ One YAML config holds the experiment; the CLI holds the run.
 
 Precedence, lowest to highest: `configs/defaults.yaml` < `--config` file < `--override` and run flags.
 
-**`defaults.yaml` is the final Craftax Classic recipe, not a neutral baseline.** Run `main.py` with no `--config` and you get the paper's Classic DAgger run: a 384-dim, 6-layer model over 100M env frames. The per-cluster files hold only what genuinely differs between machines, which is `num_envs` and `seed`.
+**`defaults.yaml` is the final Craftax Classic recipe, not a neutral baseline.** Run `main.py` with no `--config` and you get the paper's Classic DAgger run: a 384-dim, 6-layer model over 100M env frames.
 
 **Presets hold only deltas, never restate a value they would inherit.** A key belongs in a preset only if its value differs from `defaults.yaml`. Restating one is not harmless duplication: it silently pins the preset when the recipe later moves. `tests/test_config.py` enforces this.
 
@@ -241,7 +223,7 @@ python main.py --mode offline --ppo-checkpoint <ppo> --no-jit --override num_env
 
 Within each family the two cluster configs differ only in `num_envs` and `seed`. Nothing in the loader enforces that: the guard is `test_cluster_siblings_differ_only_in_num_envs_and_seed`. **A Full Craftax hyperparameter change must be made in both `final_craftax_*` files**, since with no inheritance those 11 keys are duplicated verbatim in each; a Classic one belongs in `defaults.yaml`.
 
-Fairness-critical values are env-frame denominated (the six keys above) and rescaled by `resolve_scaled_hyperparams()` at load, so one recipe runs on any hardware tier: the Classic recipe resolves to 8138 updates on QMUL's 96 envs and 1525 on UCL's 512. Key hyperparameters are documented inline in `configs/defaults.yaml`; the [appendix](#key-hyperparameters) tabulates them. Ablation-suite hyperparameters live in `experiments/rl_finetuning/configs/`, loaded by `run_ablations.py`, not `main.py`.
+Fairness-critical values are env-frame denominated (the six keys above) and rescaled by `resolve_scaled_hyperparams()` at load, so one recipe runs on any hardware tier. Key hyperparameters are documented inline in `configs/defaults.yaml`; the [appendix](#key-hyperparameters) tabulates them. Ablation-suite hyperparameters live in `experiments/rl_finetuning/configs/`, loaded by `run_ablations.py`, not `main.py`.
 
 ## Checkpoints
 
@@ -249,7 +231,7 @@ With `save_policy: true` (the default), training saves Orbax checkpoints to `pol
 
 **Pass the checkpoint directory, not the step subdirectory** — `CheckpointManager` resolves the latest step itself.
 
-Offline checkpoints save at the resolved env-frame budget, which is 99,942,400 for the Classic recipe at 512 envs (1525 updates × 512 × 128). The released Classic offline checkpoint's step subdirectory read `1000000000` under a convention that predates this one and was renamed on the Hub to match; the contents are unchanged and the restored parameters are identical.
+Offline checkpoints save at the resolved env-frame budget, which is 99,942,400 for the Classic recipe at 512 envs (1525 updates × 512 × 128).
 
 `checkpoints/` is gitignored; released weights live on the Hub at [`mathisweil/remdm-craftax-checkpoints`](https://huggingface.co/mathisweil/remdm-craftax-checkpoints), mirroring the layout below.
 
@@ -260,7 +242,7 @@ Offline checkpoints save at the resolved env-frame budget, which is 99,942,400 f
 | `checkpoints/ppo_agents/Craftax-Classic-Symbolic-v1-PPO_RNN-1000M` | Craftax Classic | PPO-RNN expert | 1e9 env frames |
 | `checkpoints/ppo_agents/Craftax-Symbolic-v1-PPO_RNN-1000M` | Full Craftax | PPO-RNN expert | 1e9 env frames |
 
-Full-Craftax diffusion planner checkpoints are not yet released (no full-Craftax training run has completed; the recipe budget is an open author decision — see the workspace step-9 report).
+Full-Craftax diffusion planner checkpoints are not released: no full-Craftax training run has completed.
 
 ```bash
 # All four (~470 MB); narrow the --include glob for a single checkpoint.
@@ -282,7 +264,7 @@ python main.py --mode online \
 
 ### Publishing to the Hub
 
-`scripts/hf_upload.py` rediscovers and uploads three things, each keeping its repo-relative path: `checkpoints/`, every `experiments/rl_finetuning/outputs/<run>/` holding a `results.json` (with `diagnosis.md`, `tables/`, `figures/`), and the eval JSONs in `results/inference/`. It drops wandb environment metadata, shortens absolute paths and regenerates the model card.
+`scripts/hf_upload.py` rediscovers and uploads three things, each keeping its repo-relative path: `checkpoints/`, every `experiments/rl_finetuning/outputs/<run>/` holding a `results.json` (with `diagnosis.md`, `tables/`, `figures/`), and the eval JSONs in `results/inference/`. It drops W&B and hub config keys, shortens absolute paths and regenerates the model card.
 
 ```bash
 HF_TOKEN=hf_xxx uv run python scripts/hf_upload.py --repo-id mathisweil/remdm-craftax-checkpoints --dry-run
@@ -290,7 +272,7 @@ HF_TOKEN=hf_xxx uv run python scripts/hf_upload.py --repo-id mathisweil/remdm-cr
 
 `--dry-run` prints the staged tree and card without uploading; drop it to upload. Also `--inference-results <FILE|DIR> ...` (eval JSONs kept elsewhere), `--private`, `--yes`.
 
-**Checkpoint discovery expects the released layout**, `checkpoints/<role>/<name>/<step>/` — the layout the Hub repo mirrors. A training run writes elsewhere, so copy its `wandb.run.dir/policies` directory to `checkpoints/{offline,online}/<name>` first, or nothing is staged. `checkpoints/hf/` is skipped: that is where a Hub *download* lands, and publishing from it would push already-published artefacts back up into a nested `checkpoints/hf/checkpoints/...` tree. The sibling `minihack-ReMDM-planner` repo has the same requirement and the same exclusion.
+**Checkpoint discovery expects the released layout**, `checkpoints/<role>/<name>/<step>/` — the layout the Hub repo mirrors. A training run writes elsewhere, so copy its `wandb.run.dir/policies` directory to `checkpoints/{offline,online}/<name>` first, or nothing is staged. `checkpoints/hf/` is skipped: that is where a Hub *download* lands, and publishing from it would push already-published artefacts back up into a nested `checkpoints/hf/checkpoints/...` tree.
 
 ## Results, citation, licence
 
@@ -418,14 +400,11 @@ Controlled by the `remask_strategy` key. All strategies operate on top of the th
 
 ### Persistent compilation cache
 
-The whole training run is one `jax.jit`, so every process pays a single large
-compilation before any work happens: about 52 s for `final_classic_ucl.yaml` on
-a 4070 Ti. Multi-seed runs launched as separate processes, resumed runs and the
-RL fine-tuning ablation suite all repeat it. Setting `jax_compilation_cache_dir`
-makes the second and later runs of the same graph skip it.
-
-The cache is keyed on the lowered HLO, so a hit is bit-identical to a miss; it
-changes no numerics. Point it at local disk, not an NFS home:
+The whole training run is one `jax.jit`, so every process pays one large
+compilation before any work happens, and multi-seed runs, resumed runs and the
+ablation suite each repeat it. `jax_compilation_cache_dir` makes the second and
+later runs of the same graph skip it. The cache is keyed on the lowered HLO, so
+a hit is bit-identical to a miss. **Point it at local disk, not an NFS home:**
 
 ```bash
 python main.py --mode online --ppo-checkpoint <ppo> \
@@ -452,12 +431,14 @@ Stack (identical for training and inference): `env -> LogWrapper -> AutoResetEnv
 uv run pytest
 ```
 
-A CPU-only suite (about two minutes). Tiny synthetic data and a shrunken model throughout — no real checkpoints, datasets or network calls, and nothing written outside `tmp_path`. The suite asserts that things **run**, not that results are correct.
+A CPU-only suite, 13 modules. Tiny synthetic data and a shrunken model throughout — no real checkpoints, datasets or network calls, and nothing written outside `tmp_path`. `conftest.py` forces `JAX_PLATFORMS=cpu` and disables W&B; there are no custom markers.
 
 | File | Covers |
 |---|---|
-| `tests/test_smoke_src.py` | `src/`: module imports, model built from the real config, forward pass, one gradient step, checkpoint round-trip, samplers, config resolvers, and every CLI entry point (including `--mode smoke` end to end) |
-| `tests/test_smoke_experiments.py` | `experiments/rl_finetuning/`: all 25 ablations' losses and optimizers, the LoRA path, diagnostics, and the analysis/report stage |
+| `test_smoke_src.py`, `test_smoke_experiments.py` | that things **run**: imports, model from the real config, a gradient step, checkpoint round-trip, samplers, resolvers, every CLI entry point, and all 25 ablations' losses and optimizers |
+| `test_spec_*.py`, `test_method_spec*.py` | that things are **correct**: each canonical statement of `research/spec-*.md` pinned against the implementation |
+| `test_config.py`, `test_recipe_values.py` | the preset, delta-only, cluster-sibling and poolability rules, and the shipped recipe values |
+| `test_gpu_agreement.py` | CPU/GPU agreement, skipped without a device |
 
 ## Implementation notes
 
@@ -476,4 +457,4 @@ A CPU-only suite (about two minutes). Tiny synthetic data and a shrunken model t
 | DAgger aggregation | Ross et al. (2011). A circular buffer accumulates `(obs, expert_plan)` across iterations; windows use a sliding stride so every visited state contributes a label. The expert receives correct `done` flags so its RNN state resets at episode boundaries. |
 | Best-checkpoint tracking | Highest-validation-return parameters are kept alongside the live ones and uploaded as `{env_name}-policy-best`.                                                                                                                                            |
 | Denoising indexing | Reverse scan runs `step_idx = 0 -> T-1`, mapping to `t = (T - step_idx) / T` (high to low noise).                                                                                                                                                          |
-| PPO experts | Training lives entirely in `Craftax_Baselines/`; planner modes only consume checkpoints. Released PPO checkpoints were saved on GPU and currently fail to restore on a CPU-only machine.                                                                   |
+| PPO experts | Training lives entirely in `Craftax_Baselines/`; planner modes only consume checkpoints. Released PPO checkpoints were saved on GPU and fail to restore on a CPU-only machine.                                                                   |
