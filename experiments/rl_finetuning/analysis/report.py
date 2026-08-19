@@ -24,12 +24,19 @@ import numpy as np
 from experiments.rl_finetuning.ablations.registry import REGISTRY
 from experiments.rl_finetuning.ablations.training import AblationHistory
 from experiments.rl_finetuning.analysis.tables import (
+    _MIN_METRIC_SCALE,
     baseline_rl_score_of,
+    metric_scale,
     verdict,
 )
 
 matplotlib.use("Agg")
 logger = logging.getLogger(__name__)
+
+# The margin an arm must clear to count as evidence for a hypothesis,
+# as a fraction of the metric scale. Scaled for the same reason the verdict
+# thresholds are: a flat margin is a different demand on each repo's metric.
+EVIDENCE_FRACTION = 0.01
 
 _DPI = 150
 
@@ -97,8 +104,15 @@ def _score_hypothesis(
 ) -> dict:
     """Score a hypothesis by how many of its supporting ablations succeeded.
 
-    An ablation "supports" a hypothesis if its score exceeds
-    ``max(pretrained_score, baseline_score) + 0.01``.
+    An ablation "supports" a hypothesis if its score clears
+    ``max(pretrained_score, baseline_score)`` by ``EVIDENCE_FRACTION`` of the
+    metric scale -- the same scaling, and the same scale, the verdict rule
+    uses. A flat ``+ 0.01`` meant a hundredth of a Craftax achievement score
+    against a hundredth of a MiniHack win rate: 0.4 % of a 2.6 baseline in
+    one repo and 1.5 % of a 0.65 baseline in the other, so the same margin
+    demanded four times the relative improvement on one side. With no scale
+    to measure against, nothing supports anything, which is what the verdict
+    rule calls NEUTRAL.
 
     Args:
         hyp_name:         Hypothesis name.
@@ -121,7 +135,8 @@ def _score_hypothesis(
         )
 
     baseline_score = results.get("baseline_rl", {}).get("score", pretrained_score)
-    threshold = max(pretrained_score, baseline_score) + 0.01
+    scale = metric_scale(baseline_score, pretrained_score)
+    threshold = max(pretrained_score, baseline_score) + EVIDENCE_FRACTION * scale
 
     n_tested = 0
     n_supporting = 0
@@ -132,7 +147,7 @@ def _score_hypothesis(
             continue
         n_tested += 1
         score = results[abl_name]["score"]
-        if score > threshold:
+        if scale >= _MIN_METRIC_SCALE and score > threshold:
             n_supporting += 1
             supporting_names.append(abl_name)
 
