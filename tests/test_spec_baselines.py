@@ -1,10 +1,9 @@
 """Supervision-source and released-artefact spec tests (step 8).
 
 Sources: research/spec-training.md §3.1 (PPO expert), research/
-spec-config.md §6.2/§6.4 (checkpoint metadata and published artefacts),
-step-7 findings N7 (no expert/env pre-check) and N3 (offline
-step-counter unit) as classified in
-verification/2026-08-15-executable-baseline.md §9.
+spec-config.md §6.1/§6.2/§6.4 (checkpoint metadata and published
+artefacts), which record both the missing expert/env pre-check and the
+offline step-counter unit that the released checkpoint was renamed to.
 
 The minihack twin file covers its in-repo SB3/DT baselines
 (spec-training §6.1); the PPO expert is craftax-only (PARITY

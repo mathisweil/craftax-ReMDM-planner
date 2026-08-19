@@ -4,10 +4,9 @@ One deterministic behavioural test per ablation mechanism of
 research/spec-ablations.md §2, with expected values from the pinned
 sources (SPG, Jaques 2017, Kirkpatrick 2017, Sun 2019, Hu 2021,
 Yu 2020, Kim 2025) or derivations written in the docstrings. The
-group-C trainable-set tests reuse the step-7 reproduction method
-(verification/2026-08-15-executable-baseline.md §3): apply the
-registry optimizer to all-ones gradients and classify parameters by
-non-zero update. xfail(strict=True) marks canonical-vs-implemented
+group-C trainable-set tests classify by reproduction: apply the
+registry optimizer to all-ones gradients and read off which
+parameters take a non-zero update. xfail(strict=True) marks canonical-vs-implemented
 disagreements from the defect register or the step-8 findings list.
 
 The minihack twin file carries the same mechanisms in its framework.
