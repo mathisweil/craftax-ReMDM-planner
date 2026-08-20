@@ -249,6 +249,27 @@ Full-Craftax diffusion planner checkpoints are not released: no full-Craftax tra
 uv run hf download mathisweil/remdm-craftax-checkpoints --include "checkpoints/**" --local-dir .
 ```
 
+### Experiment outputs
+
+Ablation figures, tables and `results.json` are **not in the repository** and never
+should be: they are regenerated output, and 244 MB of them was rewritten out of the
+history. `experiments/rl_finetuning/outputs/` and `results/inference/` are gitignored.
+
+Obtain them either way:
+
+```bash
+# Fetch the published run (figures, tables, results.json, diagnosis.md)
+uv run hf download mathisweil/remdm-craftax-checkpoints \
+    --include "experiments/rl_finetuning/outputs/**" --local-dir .
+
+# Or regenerate from a checkpoint; writes to outputs/{run_id}/
+python experiments/rl_finetuning/run_ablations.py --checkpoint $PRETRAINED_CKPT --all
+```
+
+`scripts/hf_upload_demo.py` reads `outputs/craftax_classic_final_results/{figures,tables}`
+from the working copy, so fetch or regenerate before running it. `demo_craftax.ipynb`
+needs no local copy — it reads them from its own `snapshot_download`.
+
 **Match the config to the checkpoint.** The model is built from the config, not the checkpoint, and a mismatch raises at restore. All released diffusion checkpoints are `d_model` 384, `n_heads` 8, `n_layers` 6, `d_ff` 768 — the architecture `defaults.yaml` also carries — so use the matching `final_*` config, which additionally sets the right `env_name` and recipe values:
 
 ```bash
