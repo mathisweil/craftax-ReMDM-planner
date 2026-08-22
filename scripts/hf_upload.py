@@ -181,10 +181,17 @@ def strip_wandb_block(config_yaml: Path) -> None:
 
 
 def scrub_abs_paths(resume_json: Path) -> None:
-    """Shorten absolute cluster paths in a staged config snapshot."""
+    """Shorten absolute cluster paths and drop provenance from the sidecar.
+
+    Shortening the snapshot alone left `wandb_run_id`, which
+    save_checkpoint_metadata writes at the top level, in every released
+    checkpoint's metadata. The sibling repo shipped the same id inside its
+    pickled `.pth` files; both now drop it.
+    """
     meta = json.loads(resume_json.read_text())
     meta["config_snapshot"] = shorten_paths(meta.get("config_snapshot", {}))
-    resume_json.write_text(json.dumps(meta, indent=2))
+    kept = {k: v for k, v in meta.items() if not is_environment_key(k)}
+    resume_json.write_text(json.dumps(kept, indent=2))
 
 
 # =============================================================================
