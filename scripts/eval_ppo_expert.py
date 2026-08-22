@@ -106,14 +106,27 @@ def main() -> None:
         ep_ach[i] = ach_np[: end + 1, i].max(axis=0)
         ep_lengths[i] = end + 1
 
+    # Completed-episode returns, matching src/planners/inference.py so the
+    # expert and the planner stay comparable on both statistics.
+    completed = []
+    for i in range(a.num_envs):
+        start = 0
+        for end in np.where(dones_np[:, i])[0]:
+            completed.append(rewards_np[start : end + 1, i].sum())
+            start = end + 1
+    completed = np.asarray(completed, dtype=float)
+    mean_completed = float(completed.mean()) if completed.size else float("nan")
+
     pct = ep_ach.mean(axis=0)
     ach_cls = ClassicAchievements if "Classic" in a.env_name else FullCraftaxAchievements
     ach_names = [ach.name.lower() for ach in ach_cls]
     n_ach = min(len(ach_names), pct.shape[0])
 
-    print(f"done in {elapsed:.1f}s | mean first-episode return "
-          f"{ep_rewards.mean():.4f} | best {ep_rewards.max():.4f} "
-          f"| mean length {ep_lengths.mean():.1f}")
+    print(f"done in {elapsed:.1f}s "
+          f"| mean return, completed episodes (n={completed.size}) "
+          f"{mean_completed:.4f} "
+          f"| mean return, first life {ep_rewards.mean():.4f} "
+          f"| best {ep_rewards.max():.4f} | mean length {ep_lengths.mean():.1f}")
 
     payload = {
         "checkpoint": a.path,
@@ -123,6 +136,9 @@ def main() -> None:
         "num_envs": a.num_envs,
         "steps": a.steps,
         "temperature": a.temperature,
+        "mean_return_completed_episodes": mean_completed,
+        "n_completed_episodes": int(completed.size),
+        "mean_return_first_life": float(ep_rewards.mean()),
         "mean_score": float(ep_rewards.mean()),
         "best_score": float(ep_rewards.max()),
         "mean_episode_length": float(ep_lengths.mean()),

@@ -137,10 +137,32 @@ def run_inference(config: dict[str, Any]) -> None:
 
     pct = ep_ach.mean(axis=0) * 100.0
 
+    # Completed-episode returns: every episode that terminated inside the
+    # rollout, not just the first life. This is what the LogWrapper reports as
+    # `returned_episode_returns` and what the ablation suite scores on, so it
+    # is the figure comparable with the ablation tables. The strict
+    # single-life number above is a different, harsher statistic and the two
+    # must not be quoted against one another.
+    completed = []
+    for i in range(num_envs):
+        start = 0
+        for end in np.where(dones_np[:, i])[0]:
+            completed.append(rewards_np[start : end + 1, i].sum())
+            start = end + 1
+    completed = np.asarray(completed, dtype=float)
+    mean_completed = float(completed.mean()) if completed.size else float("nan")
+
     print(f"\n{'=' * 50}")
     print(f"EVALUATION COMPLETE ({elapsed:.1f}s)")
     print(f"{'=' * 50}")
-    print(f"Average Score: {ep_rewards.mean():.1f}  |  Best: {ep_rewards.max():.1f}")
+    print(
+        f"Mean return, completed episodes (n={completed.size}): "
+        f"{mean_completed:.2f}"
+    )
+    print(
+        f"Mean return, first life only (strict single-life): "
+        f"{ep_rewards.mean():.2f}  |  Best: {ep_rewards.max():.2f}"
+    )
 
     ach_cls = ClassicAchievements if "Classic" in env_name else FullCraftaxAchievements
     ach_names = [(a.name.replace("_", " ").title(), a.name.lower()) for a in ach_cls]
@@ -169,6 +191,11 @@ def run_inference(config: dict[str, Any]) -> None:
             "diffusion_steps_eval": int(diffusion_steps),
             "temperature": float(temperature),
             "top_p": float(top_p),
+            "mean_return_completed_episodes": mean_completed,
+            "n_completed_episodes": int(completed.size),
+            "mean_return_first_life": float(ep_rewards.mean()),
+            # `mean_score` stays the strict single-life figure for backwards
+            # compatibility with previously published inference JSONs.
             "mean_score": float(ep_rewards.mean()),
             "best_score": float(ep_rewards.max()),
             "mean_episode_length": float(ep_lengths.mean()),
