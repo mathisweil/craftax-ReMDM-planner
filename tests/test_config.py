@@ -874,3 +874,23 @@ def test_the_reachability_scan_sees_config_reads_through_an_attribute():
         "via_self_subscript",
         "via_self_getattr",
     }
+
+
+def test_inference_does_not_require_a_wandb_account_by_default() -> None:
+    """A bare --mode inference run must not touch W&B.
+
+    run_inference calls wandb.init() only after the evaluation has
+    finished, so inheriting the training default (use_wandb: true) meant a
+    user without an account hit a login prompt at the end of a long run,
+    and a user with one silently created a stray run. Training modes keep
+    the default; inference is opt-in.
+    """
+    assert _build(["--mode", "inference"])["USE_WANDB"] is False
+    assert _build(
+        ["--mode", "inference", "--override", "use_wandb=true"]
+    )["USE_WANDB"] is True
+
+    for mode in ("offline", "online"):
+        assert _build(["--mode", mode])["USE_WANDB"] is True, (
+            f"--mode {mode} must keep the configured W&B default"
+        )

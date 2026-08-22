@@ -163,6 +163,15 @@ def build_config() -> dict[str, Any]:
     if args.resume_wandb_run_id is not None:
         config["RESUME_WANDB_RUN_ID"] = args.resume_wandb_run_id
 
+    # use_wandb: true in defaults.yaml is a training default. --mode inference
+    # is a bare evaluation, so W&B stays opt-in there: run_inference calls
+    # wandb.init() only after the evaluation has finished, and inheriting the
+    # training default meant a user without an account hit a login prompt at
+    # the end of a long run, and a user with one silently created a stray run.
+    # Opt in with --override use_wandb=true.
+    if args.mode == "inference" and "use_wandb" not in overrides:
+        config["USE_WANDB"] = False
+
     if args.checkpoint is not None:
         if args.mode == "inference":
             config["CHECKPOINT_PATH"] = args.checkpoint
