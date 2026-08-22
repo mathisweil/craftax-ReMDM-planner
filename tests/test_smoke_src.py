@@ -432,30 +432,30 @@ def test_dagger_sizing_defaults_to_one_train_pass(real_config) -> None:
 # geometry = update_epochs 8 * num_minibatches 8 = 64):
 #   NUM_UPDATES = 1e8 // fpu; LR_WARMUP_STEPS = (1_638_400 // fpu) * 64;
 #   DAGGER_BUFFER_MAX = round(0.76294 or 1.90735 cycles * fpu).
-#   classic_ucl  (fpu 65_536): 1525;  25*64 = 1600;  round(1.90735*65536) = 125_000
-#   classic_qmul (fpu 12_288): 8138; 133*64 = 8512;  round(1.90735*12288) = 23_438
-#   craftax_ucl  (fpu 57_344): 1743;  28*64 = 1792;  round(0.76294*57344) = 43_750
-#   craftax_qmul (fpu  8_192): 12_207; 200*64 = 12_800; round(0.76294*8192) = 6_250
+#   classic_gpu_24gb  (fpu 65_536): 1525;  25*64 = 1600;  round(1.90735*65536) = 125_000
+#   classic_gpu_h200 (fpu 12_288): 8138; 133*64 = 8512;  round(1.90735*12288) = 23_438
+#   craftax_gpu_24gb  (fpu 57_344): 1743;  28*64 = 1792;  round(0.76294*57344) = 43_750
+#   craftax_gpu_h200 (fpu  8_192): 12_207; 200*64 = 12_800; round(0.76294*8192) = 6_250
 FINAL_CONFIG_DERIVATIONS = {
-    "configs/final_craftax_classic_ucl.yaml": {
+    "configs/final_craftax_classic_gpu_24gb.yaml": {
         "NUM_ENVS": 512,
         "NUM_UPDATES": 1525,
         "LR_WARMUP_STEPS": 1600,
         "DAGGER_BUFFER_MAX": 125_000,
     },
-    "configs/final_craftax_ucl.yaml": {
+    "configs/final_craftax_gpu_24gb.yaml": {
         "NUM_ENVS": 448,
         "NUM_UPDATES": 1743,
         "LR_WARMUP_STEPS": 1792,
         "DAGGER_BUFFER_MAX": 43_750,
     },
-    "configs/final_craftax_classic_qmul.yaml": {
+    "configs/final_craftax_classic_gpu_h200.yaml": {
         "NUM_ENVS": 96,
         "NUM_UPDATES": 8138,
         "LR_WARMUP_STEPS": 8512,
         "DAGGER_BUFFER_MAX": 23_438,
     },
-    "configs/final_craftax_qmul.yaml": {
+    "configs/final_craftax_gpu_h200.yaml": {
         "NUM_ENVS": 64,
         "NUM_UPDATES": 12_207,
         "LR_WARMUP_STEPS": 12_800,

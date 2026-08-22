@@ -98,7 +98,7 @@ def resolve_num_updates(config: dict[str, Any], mode: str) -> None:
     Budgets are denominated in env frames because that is invariant under
     ``num_envs`` changes — the same value yields the same total environment
     experience regardless of hardware sizing, which makes cross-hardware
-    fairness studies (e.g. UCL 4096-env vs QMUL 96-env) trivially fair
+    fairness studies (e.g. GPU-24GB 4096-env vs GPU-H200 96-env) trivially fair
     without manual scaling.
 
     The function is idempotent: calling it twice with the same config has

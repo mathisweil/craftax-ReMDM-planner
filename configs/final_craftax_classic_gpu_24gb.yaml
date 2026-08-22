@@ -1,12 +1,12 @@
 # =============================================================================
-# Final Craftax Classic DAgger — UCL RTX 3090 Ti 24 GB - EXP B - 9M model
+# Final Craftax Classic DAgger — RTX 3090 Ti 24 GB - EXP B - 9M model
 # Big transformer + slow beta decay. Produces the Classic DAgger checkpoint
 # used by the RL fine-tuning ablation suite.
 # -----------------------------------------------------------------------------
 # The recipe itself lives in configs/defaults.yaml. Only what differs between
 # the two clusters lives here, which is the rollout width and the seed.
 #
-# Nothing enforces that this file and final_craftax_classic_qmul.yaml stay in step: the
+# Nothing enforces that this file and final_craftax_classic_gpu_h200.yaml stay in step: the
 # guard is test_cluster_siblings_differ_only_in_num_envs_and_seed. A
 # hyperparameter change meant for both belongs in defaults.yaml, not here.
 #

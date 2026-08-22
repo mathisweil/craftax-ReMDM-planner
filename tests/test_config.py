@@ -47,10 +47,10 @@ def _build(argv: list[str]) -> dict:
 @pytest.mark.parametrize(
     ("preset", "expected"),
     [
-        ("configs/final_craftax_ucl.yaml", {"NUM_ENVS": 448, "SEED": 42}),
-        ("configs/final_craftax_qmul.yaml", {"NUM_ENVS": 64, "SEED": 43}),
-        ("configs/final_craftax_classic_ucl.yaml", {"NUM_ENVS": 512, "SEED": 42}),
-        ("configs/final_craftax_classic_qmul.yaml", {"NUM_ENVS": 96, "SEED": 43}),
+        ("configs/final_craftax_gpu_24gb.yaml", {"NUM_ENVS": 448, "SEED": 42}),
+        ("configs/final_craftax_gpu_h200.yaml", {"NUM_ENVS": 64, "SEED": 43}),
+        ("configs/final_craftax_classic_gpu_24gb.yaml", {"NUM_ENVS": 512, "SEED": 42}),
+        ("configs/final_craftax_classic_gpu_h200.yaml", {"NUM_ENVS": 96, "SEED": 43}),
     ],
 )
 def test_preset_resolves_over_the_defaults(preset, expected) -> None:
@@ -67,9 +67,9 @@ def test_cluster_siblings_differ_only_in_num_envs_and_seed(family) -> None:
     """No inheritance links the pair, so this is the only thing holding them
     together. For craftax it matters most: eleven keys are duplicated verbatim
     across the two files and would otherwise drift apart silently."""
-    ucl = _build(["--mode", "online", "--config", f"configs/final_{family}_ucl.yaml"])
-    qmul = _build(["--mode", "online", "--config", f"configs/final_{family}_qmul.yaml"])
-    differing = {k for k in ucl.keys() & qmul.keys() if ucl[k] != qmul[k]}
+    gpu_24gb = _build(["--mode", "online", "--config", f"configs/final_{family}_gpu_24gb.yaml"])
+    gpu_h200 = _build(["--mode", "online", "--config", f"configs/final_{family}_gpu_h200.yaml"])
+    differing = {k for k in gpu_24gb.keys() & gpu_h200.keys() if gpu_24gb[k] != gpu_h200[k]}
     assert differing == {"NUM_ENVS", "SEED"}, differing
 
 
@@ -90,7 +90,7 @@ def test_base_loads_as_itself() -> None:
 def test_machine_config_inherits_the_full_base_key_set() -> None:
     base = yaml.safe_load(_ABL_DEFAULT.read_text())
     merged = _load_ablation_config(
-        str(_ABL_CONFIGS / "ablations_final_craftax_ucl.yaml")
+        str(_ABL_CONFIGS / "ablations_final_craftax_gpu_24gb.yaml")
     )
     assert set(merged) == set(base)
     assert merged["d_model"] == 384  # own delta
@@ -123,7 +123,7 @@ def test_ablation_suite_sees_the_main_defaults() -> None:
 def test_fast_overlay_preserves_machine_config_deltas() -> None:
     """Layered like a config, the base would drag these back to its own values."""
     base = yaml.safe_load(_ABL_DEFAULT.read_text())
-    path = _ABL_CONFIGS / "ablations_final_craftax_ucl.yaml"
+    path = _ABL_CONFIGS / "ablations_final_craftax_gpu_24gb.yaml"
     own = yaml.safe_load(path.read_text())
     fast = yaml.safe_load((_ABL_CONFIGS / "ablations_fast.yaml").read_text())
 
@@ -137,7 +137,7 @@ def test_fast_overlay_preserves_machine_config_deltas() -> None:
 
 
 def test_fast_overlay_shrinks_only_its_own_keys() -> None:
-    path = _ABL_CONFIGS / "ablations_final_craftax_ucl.yaml"
+    path = _ABL_CONFIGS / "ablations_final_craftax_gpu_24gb.yaml"
     before = _to_upper(_load_ablation_config(str(path)))
     after = _apply_fast_overrides(before)
     fast = yaml.safe_load((_ABL_CONFIGS / "ablations_fast.yaml").read_text())
@@ -190,7 +190,7 @@ def test_ablation_config_restates_no_inherited_value(preset) -> None:
 # `run_ablations.py --merge` averages seeds of the same ablation across
 # results.json files, so pooling two machine configs is only sound when they
 # agree on everything that changes the trained model or the measured score.
-# Each family's UCL config is its reference (the minihack twin applies the
+# Each family's GPU-24GB config is its reference (the minihack twin applies the
 # same policy to its single family).
 # ---------------------------------------------------------------------------
 
@@ -200,8 +200,8 @@ def test_ablation_config_restates_no_inherited_value(preset) -> None:
 
 #: Reference config per family.
 _REFERENCE_CONFIG = {
-    "classic": "ablations_final_craftax_classic_ucl.yaml",
-    "craftax": "ablations_final_craftax_ucl.yaml",
+    "classic": "ablations_final_craftax_classic_gpu_24gb.yaml",
+    "craftax": "ablations_final_craftax_gpu_24gb.yaml",
 }
 
 #: Configs whose runs may be merged with their family's reference.
@@ -210,7 +210,7 @@ _POOLABLE = set(_REFERENCE_CONFIG.values())
 #: Configs that must NOT be merged with the reference, mapped to the
 #: result-affecting keys on which they are known to diverge.
 _NOT_POOLABLE = {
-    "ablations_final_craftax_classic_qmul.yaml": frozenset(
+    "ablations_final_craftax_classic_gpu_h200.yaml": frozenset(
         {
             "num_envs",  # 64 vs 192: less rollout diversity per iteration
             "batch_size",  # 256 vs 1024: ~4x per-update SNR
@@ -218,7 +218,7 @@ _NOT_POOLABLE = {
             "mixed_replay_buffer_size",  # 10000 vs 20000
         }
     ),
-    "ablations_final_craftax_qmul.yaml": frozenset(
+    "ablations_final_craftax_gpu_h200.yaml": frozenset(
         {
             "num_envs",  # 64 vs 128
             "batch_size",  # 512 vs 1024
@@ -352,13 +352,13 @@ def test_merge_refuses_a_cross_family_pair(tmp_path) -> None:
         _results_file(
             tmp_path,
             "classic.json",
-            _recorded("ablations_final_craftax_classic_ucl.yaml"),
+            _recorded("ablations_final_craftax_classic_gpu_24gb.yaml"),
             [1.0],
         ),
         _results_file(
             tmp_path,
             "craftax.json",
-            _recorded("ablations_final_craftax_ucl.yaml"),
+            _recorded("ablations_final_craftax_gpu_24gb.yaml"),
             [2.0],
         ),
     ]
@@ -372,7 +372,7 @@ def test_merge_refuses_a_file_that_records_no_config(tmp_path) -> None:
 
     paths = [
         _results_file(
-            tmp_path, "ref.json", _recorded("ablations_final_craftax_ucl.yaml"), [1.0]
+            tmp_path, "ref.json", _recorded("ablations_final_craftax_gpu_24gb.yaml"), [1.0]
         ),
         _results_file(tmp_path, "bare.json", {}, [2.0]),
     ]
@@ -401,10 +401,10 @@ def test_a_merged_config_is_one_input_file_and_the_merge_is_recorded(tmp_path) -
         _results_to_json,
     )
 
-    config_a = _recorded("ablations_final_craftax_ucl.yaml")
-    config_a["WANDB_PROJECT"] = "run-on-ucl"
+    config_a = _recorded("ablations_final_craftax_gpu_24gb.yaml")
+    config_a["WANDB_PROJECT"] = "run-on-gpu-24gb"
     config_b = dict(config_a)
-    config_b["WANDB_PROJECT"] = "run-on-qmul"
+    config_b["WANDB_PROJECT"] = "run-on-gpu-h200"
     paths = [
         _results_file(tmp_path, "a.json", config_a, [1.0, 2.0]),
         _results_file(tmp_path, "b.json", config_b, [3.0]),
@@ -413,7 +413,7 @@ def test_a_merged_config_is_one_input_file_and_the_merge_is_recorded(tmp_path) -
 
     # The whole of the first file's config, not a key-by-key blend.
     assert merged_config == config_a
-    assert merged_config["WANDB_PROJECT"] == "run-on-ucl"
+    assert merged_config["WANDB_PROJECT"] == "run-on-gpu-24gb"
     assert _merge_result_files(paths[::-1])[3] == config_b
 
     # And the merge itself is on the record.
@@ -433,7 +433,7 @@ def test_merge_still_pools_two_runs_of_the_same_config(tmp_path) -> None:
     the same values it did before the guard existed."""
     from experiments.rl_finetuning.run_ablations import _merge_result_files
 
-    config = _recorded("ablations_final_craftax_ucl.yaml")
+    config = _recorded("ablations_final_craftax_gpu_24gb.yaml")
     paths = [
         _results_file(tmp_path, "a.json", config, [1.0, 2.0]),
         _results_file(tmp_path, "b.json", config, [3.0]),

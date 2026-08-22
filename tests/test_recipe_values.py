@@ -74,7 +74,7 @@ _FULL_CRAFTAX_DELTA = {
 }
 
 
-@pytest.mark.parametrize("preset", ["final_craftax_ucl", "final_craftax_qmul"])
+@pytest.mark.parametrize("preset", ["final_craftax_gpu_24gb", "final_craftax_gpu_h200"])
 def test_full_craftax_recipe_deltas(preset):
     """The Full-Craftax recipe's 8 documented departure keys carry the
     spec-config §5.2 values in both cluster siblings."""
@@ -104,8 +104,8 @@ def test_full_craftax_recipe_deltas(preset):
 # ---------------------------------------------------------------------------
 
 _FINALS = [
-    "final_craftax_classic_ucl", "final_craftax_classic_qmul",
-    "final_craftax_ucl", "final_craftax_qmul",
+    "final_craftax_classic_gpu_24gb", "final_craftax_classic_gpu_h200",
+    "final_craftax_gpu_24gb", "final_craftax_gpu_h200",
 ]
 
 
@@ -143,16 +143,16 @@ def test_num_updates_formula_and_resnap(preset):
 @pytest.mark.parametrize(
     ("preset", "n_documented", "decay_documented"),
     [
-        ("final_craftax_classic_qmul", 8138, 0.9998689),
-        ("final_craftax_classic_ucl", 1525, 0.9993005),
+        ("final_craftax_classic_gpu_h200", 8138, 0.9998689),
+        ("final_craftax_classic_gpu_24gb", 1525, 0.9993005),
     ],
 )
 def test_classic_beta_decay_resolves_to_documented(preset, n_documented, decay_documented):
     """beta decay = (beta_final / beta_init)^(1/N) at the documented N.
 
     Source: spec-config §2 (resolution rule) and §4 (documented
-    quantities: 8138 updates / decay 0.9998689 on QMUL, 1525 / 0.9993005
-    on UCL). Hand derivation: 0.344^(1/8138) = exp(-1.067114/8138) =
+    quantities: 8138 updates / decay 0.9998689 on GPU-H200, 1525 / 0.9993005
+    on GPU-24GB). Hand derivation: 0.344^(1/8138) = exp(-1.067114/8138) =
     0.99986888; 0.344^(1/1525) = exp(-1.067114/1525) = 0.99930049.
     """
     config = _resolved(preset)
@@ -171,8 +171,8 @@ def test_classic_beta_decay_resolves_to_documented(preset, n_documented, decay_d
 @pytest.mark.parametrize(
     ("preset", "n_documented", "decay_documented"),
     [
-        ("final_craftax_ucl", 1743, 0.9994525),
-        ("final_craftax_qmul", 12_207, 0.9999218),
+        ("final_craftax_gpu_24gb", 1743, 0.9994525),
+        ("final_craftax_gpu_h200", 12_207, 0.9999218),
     ],
 )
 def test_full_craftax_beta_decay_resolves_to_documented(
@@ -195,10 +195,10 @@ def test_full_craftax_beta_decay_resolves_to_documented(
 @pytest.mark.parametrize(
     ("preset", "warmup_steps", "buffer_max"),
     [
-        ("final_craftax_classic_ucl", 1600, 125_000),
-        ("final_craftax_classic_qmul", 8512, 23_438),
-        ("final_craftax_ucl", 1792, 43_750),
-        ("final_craftax_qmul", 12_800, 6_250),
+        ("final_craftax_classic_gpu_24gb", 1600, 125_000),
+        ("final_craftax_classic_gpu_h200", 8512, 23_438),
+        ("final_craftax_gpu_24gb", 1792, 43_750),
+        ("final_craftax_gpu_h200", 12_800, 6_250),
     ],
 )
 def test_budget_independent_quantities(preset, warmup_steps, buffer_max):
@@ -254,7 +254,7 @@ def test_short_budget_fails_fast_when_warmup_exceeds_it():
     informative error at config resolution, not crash deep in optax.
 
     Source: step-7 finding N1 classification (correctness defect: missing
-    guard, symptom of §8.11). Reproduction: final_craftax_ucl with
+    guard, symptom of §8.11). Reproduction: final_craftax_gpu_24gb with
     online_total_timesteps = one update (57344 frames) resolves
     LR_WARMUP_STEPS=1371 > 64 total gradient steps and later dies with
     optax's `decay_steps=-1243`.
@@ -263,7 +263,7 @@ def test_short_budget_fails_fast_when_warmup_exceeds_it():
 
     config = {
         **load_config("configs/defaults.yaml"),
-        **load_config("configs/final_craftax_ucl.yaml"),
+        **load_config("configs/final_craftax_gpu_24gb.yaml"),
     }
     config["ONLINE_TOTAL_TIMESTEPS"] = 448 * 128  # one update
     with pytest.raises(ValueError, match="[Ww]armup"):

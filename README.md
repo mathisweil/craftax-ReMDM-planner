@@ -135,7 +135,7 @@ python main.py --mode inference --checkpoint /path/to/checkpoint --output result
 
 # Released checkpoints need their matching config (see Checkpoints)
 python main.py --mode inference \
-    --config configs/final_craftax_classic_ucl.yaml \
+    --config configs/final_craftax_classic_gpu_24gb.yaml \
     --checkpoint checkpoints/online/Craftax-Classic-Symbolic-v1-OnlineDiffusion-DAgger-100M
 ```
 
@@ -218,8 +218,8 @@ python main.py --mode offline --ppo-checkpoint <ppo> --no-jit --override num_env
 | `configs/{classic,craftax}_exp_c_full_recipe.yaml` | DAgger — beta + big model + training dynamics |
 | `configs/classic_exp_d_{100K,250K,850K,3M}_model.yaml` | Craftax Classic model-size scaling sweep |
 | `configs/craftax_exp_d_{500K,1M,3M,7M}_model.yaml` | Full Craftax model-size scaling sweep |
-| `configs/final_craftax_classic_{qmul,ucl}.yaml` | Final Classic DAgger — `num_envs` and `seed` only; the recipe is `defaults.yaml` |
-| `configs/final_craftax_{qmul,ucl}.yaml` | Final Full Craftax DAgger — the 11 keys where Full Craftax departs from the Classic recipe, plus `num_envs` and `seed` |
+| `configs/final_craftax_classic_{gpu_h200,gpu_24gb}.yaml` | Final Classic DAgger — `num_envs` and `seed` only; the recipe is `defaults.yaml` |
+| `configs/final_craftax_{gpu_h200,gpu_24gb}.yaml` | Final Full Craftax DAgger — the 11 keys where Full Craftax departs from the Classic recipe, plus `num_envs` and `seed` |
 
 Within each family the two cluster configs differ only in `num_envs` and `seed`. Nothing in the loader enforces that: the guard is `test_cluster_siblings_differ_only_in_num_envs_and_seed`. **A Full Craftax hyperparameter change must be made in both `final_craftax_*` files**, since with no inheritance those 11 keys are duplicated verbatim in each; a Classic one belongs in `defaults.yaml`.
 
@@ -274,12 +274,12 @@ needs no local copy — it reads them from its own `snapshot_download`.
 
 ```bash
 python main.py --mode inference \
-    --config configs/final_craftax_classic_ucl.yaml \
+    --config configs/final_craftax_classic_gpu_24gb.yaml \
     --checkpoint checkpoints/online/Craftax-Classic-Symbolic-v1-OnlineDiffusion-DAgger-100M
 
 # Train a new planner against the released Full Craftax PPO expert
 python main.py --mode online \
-    --config configs/final_craftax_ucl.yaml \
+    --config configs/final_craftax_gpu_24gb.yaml \
     --ppo-checkpoint checkpoints/ppo_agents/Craftax-Symbolic-v1-PPO_RNN-1000M
 ```
 
@@ -429,7 +429,7 @@ a hit is bit-identical to a miss. **Point it at local disk, not an NFS home:**
 
 ```bash
 python main.py --mode online --ppo-checkpoint <ppo> \
-    --config configs/final_craftax_classic_ucl.yaml \
+    --config configs/final_craftax_classic_gpu_24gb.yaml \
     --override jax_compilation_cache_dir=/var/tmp/$USER/jax-cache
 ```
 

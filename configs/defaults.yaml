@@ -4,7 +4,7 @@
 # -----------------------------------------------------------------------------
 # This file IS the paper's Classic DAgger recipe, not a neutral baseline: run
 # main.py with no --config and you get it. The per-cluster configs
-# (final_craftax_classic_{qmul,ucl}.yaml) hold only what genuinely differs between the
+# (final_craftax_classic_{gpu_h200,gpu_24gb}.yaml) hold only what genuinely differs between the
 # two machines, which is num_envs and seed.
 #
 # Two consequences worth knowing before editing:
@@ -74,12 +74,12 @@ weight_decay: 0.0
 #                     * num_minibatches (* dagger_train_passes online)
 # Canonical value 1,638,400 frames (author decision 2026-08-15: the
 # corrected effective warmup; the earlier nominal 1.048576e8 exceeded the
-# whole budget). Resolves to 8512 gradient steps on QMUL's 96 envs, 1600
-# on UCL's 512. Set to 0 to disable warmup.
+# whole budget). Resolves to 8512 gradient steps on GPU-H200's 96 envs, 1600
+# on GPU-24GB's 512. Set to 0 to disable warmup.
 lr_warmup_frames: 1.6384e6          # env-frame warmup budget
 
 # ── Rollout (shared by offline + online) ─────────────────────────────────────
-num_envs: 1024                      # overridden per cluster: 96 QMUL, 512 UCL
+num_envs: 1024                      # overridden per cluster: 96 GPU-H200, 512 GPU-24GB
 num_steps: 128
 num_minibatches: 8
 update_epochs: 8
@@ -99,13 +99,13 @@ dagger_beta_init: 1.0               # initial expert mixing probability beta_1
 # dagger_beta_final is the env-frame-invariant target mixing ratio at the
 # end of training; the per-update decay is derived via:
 #   decay = (beta_final / beta_init) ** (1 / num_updates)
-# Resolves to decay 0.9998689 over QMUL's 8138 updates, 0.9993005 over UCL's 1525.
+# Resolves to decay 0.9998689 over GPU-H200's 8138 updates, 0.9993005 over GPU-24GB's 1525.
 dagger_beta_final: 0.344            # target final beta
 # dagger_buffer_cycles measures buffer capacity in *update cycles of history*
 # (1 cycle = num_envs * num_steps frames), invariant under num_envs:
 #   buffer_max = round(cycles * fpu)
 # Cycle-denominated by author decision (2026-08-15): retention stays
-# hardware-invariant. Resolves to 23,438 samples on QMUL, 125,000 on UCL.
+# hardware-invariant. Resolves to 23,438 samples on GPU-H200, 125,000 on GPU-24GB.
 dagger_buffer_cycles: 1.90735       # buffer capacity in update cycles
 # B1: passes per update over the aggregated buffer.  Each pass redraws a
 # fresh sample of size samples_per_update from D, so total samples seen

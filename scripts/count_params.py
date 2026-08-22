@@ -10,7 +10,7 @@ Usage:
   uv run python scripts/count_params.py
   uv run python scripts/count_params.py --verify-checkpoint \
       checkpoints/offline/Craftax-Classic-Symbolic-v1-OfflineDiffusion-BC-100M/100000000 \
-      --config configs/final_craftax_classic_ucl.yaml
+      --config configs/final_craftax_classic_gpu_24gb.yaml
 """
 from __future__ import annotations
 
@@ -36,8 +36,8 @@ DEFAULT_CONFIGS = [
     "configs/craftax_exp_d_1M_model.yaml",
     "configs/craftax_exp_d_3M_model.yaml",
     "configs/craftax_exp_d_7M_model.yaml",
-    "configs/final_craftax_classic_ucl.yaml",
-    "experiments/rl_finetuning/configs/ablations_final_craftax_ucl.yaml",
+    "configs/final_craftax_classic_gpu_24gb.yaml",
+    "experiments/rl_finetuning/configs/ablations_final_craftax_gpu_24gb.yaml",
 ]
 
 _ENV_CACHE: dict[str, tuple] = {}

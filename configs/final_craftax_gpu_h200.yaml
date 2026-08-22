@@ -1,10 +1,10 @@
 # =============================================================================
-# Final Full Craftax DAgger — QMUL H200 8 GB partition - EXP C - 15M model
-# Env-frame-matched second seed of final_craftax_ucl.yaml.
+# Final Full Craftax DAgger — H200 8 GB partition - EXP C - 15M model
+# Env-frame-matched second seed of final_craftax_gpu_24gb.yaml.
 # -----------------------------------------------------------------------------
 # configs/defaults.yaml holds the Classic recipe. Full Craftax departs from it
 # in eight places, listed below, and those eight are DUPLICATED verbatim in
-# final_craftax_ucl.yaml: with no inheritance between configs there is nowhere
+# final_craftax_gpu_24gb.yaml: with no inheritance between configs there is nowhere
 # else to put them. Only num_envs and seed genuinely differ between the two.
 #
 # So: a Full Craftax hyperparameter change must be made in BOTH files. The

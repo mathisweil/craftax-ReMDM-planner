@@ -101,7 +101,7 @@ def _load_yaml(path: str | None) -> dict:
 def _load_ablation_config(path: str | None) -> dict:
     """Load an ablations config, layered on ``ablations_default.yaml``.
 
-    Machine-specific configs (e.g. ``ablations_final_craftax_ucl.yaml``) carry
+    Machine-specific configs (e.g. ``ablations_final_craftax_gpu_24gb.yaml``) carry
     only the keys they change; everything else comes from the base. Exactly two
     layers, and a config never inherits from another config.
 

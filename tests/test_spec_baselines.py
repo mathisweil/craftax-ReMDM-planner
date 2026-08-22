@@ -130,7 +130,7 @@ def test_new_online_checkpoints_use_the_frame_denominated_step():
 
     config = {
         **load_config("configs/defaults.yaml"),
-        **load_config("configs/final_craftax_classic_ucl.yaml"),
+        **load_config("configs/final_craftax_classic_gpu_24gb.yaml"),
     }
     resolve_num_updates(config, "online")
     fpu = int(config["NUM_ENVS"]) * int(config["NUM_STEPS"])
@@ -191,7 +191,7 @@ def test_new_offline_checkpoints_use_the_frame_denominated_step():
 
     config = {
         **load_config("configs/defaults.yaml"),
-        **load_config("configs/final_craftax_classic_ucl.yaml"),
+        **load_config("configs/final_craftax_classic_gpu_24gb.yaml"),
     }
     resolve_num_updates(config, "offline")
     assert int(config["OFFLINE_TOTAL_TIMESTEPS"]) == 99_942_400

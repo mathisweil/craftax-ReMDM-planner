@@ -1,29 +1,25 @@
 # =============================================================================
-# RL Fine-Tuning Ablation Suite — Full Craftax, UCL hardware
-# Matches checkpoints produced by: configs/final_craftax_ucl.yaml
+# RL Fine-Tuning Ablation Suite — Craftax Classic, GPU-24GB hardware
+# Matches checkpoint produced by: configs/final_craftax_classic_gpu_24gb.yaml
 #   (d_model=384, n_heads=8, n_layers=6, d_ff=768, plan_horizon=32, seed 42)
-# Target hardware: UCL reference machine (GPU model unrecorded) (24 GB VRAM)
+# Target hardware: GPU-24GB RTX 3090 Ti (24 GB VRAM)
 # That shape is the ablations_default.yaml architecture, so it is inherited
 # rather than restated here. This file holds only its own deltas; every
 # other key comes from the base, which is layered on automatically.
 # =============================================================================
 
-# ── Environment ───────────────────────────────────────────────────────────────
-env_name: "Craftax-Symbolic-v1"
-
-# ── Reverse sampling (eval) ──────────────────────────────────────────────────
-val_diffusion_steps: 25
-temperature: 0.3
-
-# ── Training loop (24 GB VRAM — obs_dim=8268, ~6x Classic memory per env) ────
-num_envs: 128                 # 2x default (conservative: obs is 6x larger)
-batch_size: 1024              # 2x default
+# ── Training loop (24 GB VRAM — 192/2048 OOM'd on EWC at 19.4 GiB) ──────────
+num_envs: 192                 # 3x default; keeps rollout diversity high
+batch_size: 1024              # halved; EWC/LoRA carry extra param-sized buffers
 
 # ── Evaluation ────────────────────────────────────────────────────────────────
 eval_steps: 1024              # longer eval for less noisy metrics
 
 # ── Diagnostic frequencies ────────────────────────────────────────────────────
-cka_batch_size: 128
+cka_batch_size: 256
+
+# ── Group A: Regularisation / Constraint Methods ─────────────────────────────
+mixed_replay_buffer_size: 20000
 
 # ── Output / Logging ──────────────────────────────────────────────────────────
 use_wandb: true

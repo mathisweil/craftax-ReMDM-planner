@@ -34,10 +34,10 @@ rl_finetuning/
 └── configs/
     ├── ablations_default.yaml              # Base hyperparameters for every ablation run
     ├── ablations_fast.yaml                 # Smoke-test overlay (50 iterations, 16 envs)
-    ├── ablations_final_craftax_classic_ucl.yaml    # Matches configs/final_craftax_classic_ucl.yaml   (UCL 3090 Ti, seed 42)
-    ├── ablations_final_craftax_classic_qmul.yaml   # Matches configs/final_craftax_classic_qmul.yaml  (QMUL H200, seed 43)
-    ├── ablations_final_craftax_ucl.yaml    # Matches configs/final_craftax_ucl.yaml   (UCL reference machine (GPU model unrecorded),   seed 42)
-    └── ablations_final_craftax_qmul.yaml   # Matches configs/final_craftax_qmul.yaml  (QMUL H200, seed 43)
+    ├── ablations_final_craftax_classic_gpu_24gb.yaml    # Matches configs/final_craftax_classic_gpu_24gb.yaml   (RTX 3090 Ti, seed 42)
+    ├── ablations_final_craftax_classic_gpu_h200.yaml   # Matches configs/final_craftax_classic_gpu_h200.yaml  (H200, seed 43)
+    ├── ablations_final_craftax_gpu_24gb.yaml    # Matches configs/final_craftax_gpu_24gb.yaml   (GPU-24GB reference machine (GPU model unrecorded),   seed 42)
+    └── ablations_final_craftax_gpu_h200.yaml   # Matches configs/final_craftax_gpu_h200.yaml  (H200, seed 43)
 ```
 
 `ablations_default.yaml` carries the transformer architecture of the released DAgger checkpoints — 384-dim, 8 heads, 6 layers, `d_ff` 768, `plan_horizon` 32, the same for Classic and Full — so the `ablations_final_*` presets need not restate it. A run against a differently-shaped checkpoint must override those keys, or the model build fails on a shape mismatch.
@@ -94,9 +94,9 @@ python experiments/rl_finetuning/run_ablations.py \
 
 **Full suite against a pinned `final_*` checkpoint:**
 ```bash
-# Craftax Classic, UCL hardware (seed 42 checkpoint)
+# Craftax Classic, GPU-24GB hardware (seed 42 checkpoint)
 python experiments/rl_finetuning/run_ablations.py \
-    --ablations-config experiments/rl_finetuning/configs/ablations_final_craftax_classic_ucl.yaml \
+    --ablations-config experiments/rl_finetuning/configs/ablations_final_craftax_classic_gpu_24gb.yaml \
     --all --num-seeds 3 \
     --checkpoint wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy-best:latest \
     --use-wandb
@@ -133,10 +133,10 @@ python experiments/rl_finetuning/run_ablations.py \
 **`--merge` only pools runs from configs that agree on result-affecting keys.**
 It compares the configs the results files recorded and refuses, naming every
 diverging key with both values; a file that records no config is refused too.
-Each family's UCL config is its reference, and the QMUL sibling is **not
+Each family's GPU-24GB config is its reference, and the GPU-H200 sibling is **not
 poolable** with it:
 
-| Key | Classic UCL | Classic QMUL | Craftax UCL | Craftax QMUL | Effect |
+| Key | Classic GPU-24GB | Classic GPU-H200 | Craftax GPU-24GB | Craftax GPU-H200 | Effect |
 |---|---|---|---|---|---|
 | `num_envs` | 192 | 64 | 128 | 64 | rollout diversity per iteration |
 | `batch_size` | 1024 | 256 | 1024 | 512 | per-update SNR |
@@ -149,8 +149,8 @@ Differences in diagnostic cadence (`eval_every`, `cka_every`,
 
 `tests/test_config.py` enforces this: every `ablations_final_*.yaml` must be
 declared poolable or not, configs declared poolable must match their family
-reference on the result-affecting keys, and the recorded QMUL divergences must
-stay accurate. Aligning a QMUL config later fails the test until it is moved to
+reference on the result-affecting keys, and the recorded GPU-H200 divergences must
+stay accurate. Aligning a GPU-H200 config later fails the test until it is moved to
 the poolable set. The key set itself is declared once, in
 `run_ablations._RESULT_AFFECTING`, so the classification the tests check and
 the refusal `--merge` performs are the same policy.
