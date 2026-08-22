@@ -110,8 +110,20 @@ def abstract_init(init_fn: Callable[[], Any]) -> Any:
     Uses ``jax.eval_shape`` so no parameter memory is allocated; the result
     is a pytree of ``jax.ShapeDtypeStruct`` leaves suitable as an Orbax
     restore target.
+
+    Each leaf is given a concrete single-device sharding. ``jax.eval_shape``
+    leaves carry ``sharding=None``, which orbax-checkpoint >= 0.12 rejects at
+    deserialisation ("sharding ... should be specified, concrete"). Sharding
+    is placement only and does not affect restored values.
     """
-    return jax.eval_shape(init_fn)
+    abstract = jax.eval_shape(init_fn)
+    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    return jax.tree.map(
+        lambda x: jax.ShapeDtypeStruct(
+            x.shape, x.dtype, sharding=getattr(x, "sharding", None) or sharding
+        ),
+        abstract,
+    )
 
 
 def restore_latest(path: str, args: Any) -> tuple[Any, int]:
@@ -181,13 +193,39 @@ def restore_latest_params(path: str, abstract_params_tree: Any) -> tuple[Any, in
         ValueError: If the restored parameters do not match the shapes
             of ``abstract_params_tree`` (checkpoint/config mismatch).
     """
-    restored, step = restore_latest(
-        path,
-        ocp.args.PyTreeRestore(
-            item={"params": abstract_params_tree},
-            partial_restore=True,
+    target = {"params": abstract_params_tree}
+    # orbax >= 0.12 refuses to deserialise unless each leaf has a concrete
+    # sharding ("sharding ... should be specified, concrete"), and under
+    # partial_restore it rebuilds restore args from checkpoint metadata, which
+    # carries none. Supply sharding explicitly.
+    _sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    restore_args = jax.tree.map(
+        lambda leaf: ocp.ArrayRestoreArgs(
+            sharding=getattr(leaf, "sharding", None) or _sharding
         ),
+        target,
     )
+    try:
+        restored, step = restore_latest(
+            path,
+            ocp.args.PyTreeRestore(
+                item=target,
+                restore_args=restore_args,
+                partial_restore=True,
+            ),
+        )
+    except ValueError as exc:
+        # Supplying restore_args also makes orbax enforce the target shapes, so
+        # an architecture mismatch now surfaces here rather than in
+        # _validate_restored_tree below. Keep the message that callers and
+        # tests expect (README §Checkpoints).
+        if "not compatible with the stored shape" not in str(exc):
+            raise
+        raise ValueError(
+            f"Checkpoint at '{path}' does not match the model built from "
+            "the config (match the config to the checkpoint, README "
+            f"§Checkpoints): {exc}"
+        ) from exc
     _validate_restored_tree(restored["params"], abstract_params_tree, path)
     return restored["params"], step
 

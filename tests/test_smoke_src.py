@@ -870,3 +870,53 @@ def test_smoke_budget_resolves_to_a_short_run() -> None:
     )
     assert config["DAGGER_BUFFER_MAX"] >= samples_per_update
     assert config["LR_WARMUP_STEPS"] == 0, "warmup would eat the whole smoke run"
+
+
+def test_checkpoint_restores_in_a_fresh_process(params, tmp_path) -> None:
+    """Restore must work in a process that never saw the live arrays.
+
+    Every other checkpoint test saves and restores inside one process, where
+    orbax infers sharding from the arrays still in memory. Released
+    checkpoints are always loaded cold, and orbax >= 0.12 rejects the
+    ``sharding=None`` leaves ``jax.eval_shape`` produces, so only a process
+    boundary exercises the path README §Checkpoints documents.
+
+    The ``_sharding`` file is deleted first: orbax only writes it from 0.12
+    on, and when it is present orbax recovers the sharding from it and the
+    restore succeeds regardless. The released checkpoints predate the
+    upgrade and carry no such file, so removing it is what reproduces the
+    failure they actually hit.
+    """
+    import subprocess
+    import sys
+
+    ckpt_dir = tmp_path / "ckpt"
+    with ocp.CheckpointManager(str(ckpt_dir)) as mgr:
+        mgr.save(0, args=ocp.args.PyTreeSave({"params": params}))
+        mgr.wait_until_finished()
+
+    sharding_files = list(ckpt_dir.rglob("_sharding"))
+    assert sharding_files, "expected orbax to write a _sharding file"
+    for f in sharding_files:
+        f.unlink()
+
+    script = f"""
+import jax
+from tests.conftest import TINY_ARCH
+from src.planners.model import build_model, load_checkpoint
+
+config = {{**TINY_ARCH, "NUM_ACTIONS": {NUM_ACTIONS}}}
+model = build_model(config, {NUM_ACTIONS})
+load_checkpoint(
+    model, jax.random.PRNGKey({SEED}), {OBS_DIM}, {PLAN_HORIZON}, {str(ckpt_dir)!r}
+)
+print("RESTORED")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert result.returncode == 0, f"cold restore failed:\n{result.stderr}"
+    assert "RESTORED" in result.stdout
