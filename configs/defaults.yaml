@@ -136,6 +136,16 @@ layer_size: 512
 # ── Inference (--mode inference) ─────────────────────────────────────────────
 eval_steps: 10000
 eval_num_envs: 32
+# Sampler used by --mode inference:
+#   sample_plan  replan from scratch every eval_replan steps, conditioned only
+#                on the current observation. What build_eval_fn does, and the
+#                protocol behind every published number.
+#   inpainting   replan every step with each executed action locked as an
+#                inpainting prefix. An ablation on the planning-as-inpainting
+#                design choice, not the source of any published number; it
+#                scores far lower on the same weights.
+inference_sampler: sample_plan
+eval_replan: 8                      # env steps executed per plan (sample_plan)
 
 # ── Checkpointing ────────────────────────────────────────────────────────────
 save_policy: true

@@ -1,4 +1,18 @@
-"""Evaluation: run a trained diffusion planner with MPC + historical inpainting."""
+"""Evaluation: run a trained diffusion planner under receding-horizon control.
+
+Two samplers are selectable via ``INFERENCE_SAMPLER``:
+
+``sample_plan`` (default)
+    Replan from scratch every ``EVAL_REPLAN`` steps, conditioned only on the
+    current observation. This is what ``build_eval_fn`` in the ablation
+    harness does, and therefore the protocol behind every published number.
+
+``inpainting``
+    Replan every step with each already-executed action locked as an
+    inpainting prefix (Diffuser Sec. 3.3). Kept runnable as an ablation on
+    the planning-as-inpainting design choice; it is not the source of any
+    published number and scores far lower on the same weights.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +27,7 @@ from craftax.craftax.constants import Achievement as FullCraftaxAchievements
 from craftax.craftax_classic.constants import Achievement as ClassicAchievements
 from craftax.craftax_env import make_craftax_env_from_name
 
-from src.diffusion.sampling import sample_plan_inpainting
+from src.diffusion.sampling import sample_plan, sample_plan_inpainting
 from src.diffusion.schedules import SCHEDULE_MAP
 
 from .model import build_model, load_checkpoint, make_apply_fns
@@ -39,6 +53,19 @@ def run_inference(config: dict[str, Any]) -> None:
     use_loop = config.get("USE_LOOP", True)
     t_on = config.get("T_ON", 0.7)
     t_off = config.get("T_OFF", 0.3)
+
+    sampler = str(config.get("INFERENCE_SAMPLER", "sample_plan")).lower()
+    if sampler not in {"sample_plan", "inpainting"}:
+        raise ValueError(
+            f"INFERENCE_SAMPLER must be 'sample_plan' or 'inpainting', "
+            f"got {sampler!r}"
+        )
+    eval_replan = int(config.get("EVAL_REPLAN", 8))
+    if not 1 <= eval_replan <= plan_horizon:
+        raise ValueError(
+            f"EVAL_REPLAN must be in [1, PLAN_HORIZON={plan_horizon}], "
+            f"got {eval_replan}"
+        )
 
     model = build_model(config, num_actions)
     apply_eval, _ = make_apply_fns(model)
@@ -101,23 +128,97 @@ def run_inference(config: dict[str, Any]) -> None:
             state_next.achievements,
         )
 
-    print(f"\nRunning {num_envs} agents in {env_name} for {eval_steps} steps...")
+    def _env_step(carry, action):
+        obs, state, rng = carry
+        rng, env_rng = jax.random.split(rng)
+        obs_next, state_next, reward, done, _info = jax.vmap(
+            env.step, in_axes=(0, 0, 0, None)
+        )(
+            jax.random.split(env_rng, num_envs),
+            state,
+            action,
+            env_params,
+        )
+        return (obs_next, state_next, rng), (
+            reward,
+            done,
+            state_next.achievements,
+        )
+
+    @jax.jit
+    def replan_cycle(carry, _cycle_idx):
+        """One plan, then EVAL_REPLAN executed actions from it.
+
+        Mirrors ``build_eval_fn``'s ``_cycle``: each plan is sampled fresh
+        with no locked prefix, conditioned only on the current observation.
+        """
+        obs, state, rng = carry
+        rng, plan_rng = jax.random.split(rng)
+        plan = sample_plan(
+            apply_eval,
+            model_params,
+            plan_rng,
+            obs,
+            num_actions,
+            plan_horizon,
+            num_steps=diffusion_steps,
+            schedule_fn=schedule_fn,
+            remask_strategy=remask_strategy,
+            eta=eta,
+            use_loop=use_loop,
+            t_on=t_on,
+            t_off=t_off,
+            temperature=temperature,
+            top_p=top_p,
+        )
+        return jax.lax.scan(_env_step, (obs, state, rng), plan[:, :eval_replan].T)
 
     rng, env_rng = jax.random.split(rng)
     obs, state = jax.vmap(env.reset, in_axes=(0, None))(
         jax.random.split(env_rng, num_envs),
         env_params,
     )
-    history = jnp.full((num_envs, plan_horizon), num_actions, dtype=jnp.int32)
-    hist_len = jnp.zeros(num_envs, dtype=jnp.int32)
 
-    t0 = time.time()
-    _, (rewards, dones, achievements) = jax.lax.scan(
-        mpc_step,
-        (obs, state, rng, history, hist_len),
-        jnp.arange(eval_steps),
-    )
-    elapsed = time.time() - t0
+    if sampler == "inpainting":
+        print(
+            f"\nRunning {num_envs} agents in {env_name} for {eval_steps} steps "
+            f"(inpainting ablation: replan every step, prefix locked)..."
+        )
+        history = jnp.full((num_envs, plan_horizon), num_actions, dtype=jnp.int32)
+        hist_len = jnp.zeros(num_envs, dtype=jnp.int32)
+        t0 = time.time()
+        _, (rewards, dones, achievements) = jax.lax.scan(
+            mpc_step,
+            (obs, state, rng, history, hist_len),
+            jnp.arange(eval_steps),
+        )
+        elapsed = time.time() - t0
+    else:
+        n_cycles = eval_steps // eval_replan
+        if n_cycles < 1:
+            raise ValueError(
+                f"EVAL_STEPS={eval_steps} is shorter than EVAL_REPLAN={eval_replan}"
+            )
+        actual_steps = n_cycles * eval_replan
+        if actual_steps != eval_steps:
+            print(
+                f"Note: EVAL_STEPS={eval_steps} is not a multiple of "
+                f"EVAL_REPLAN={eval_replan}; running {actual_steps} steps."
+            )
+        eval_steps = actual_steps
+        print(
+            f"\nRunning {num_envs} agents in {env_name} for {eval_steps} steps "
+            f"(replanning every {eval_replan})..."
+        )
+        t0 = time.time()
+        _, cycle_out = jax.lax.scan(
+            replan_cycle, (obs, state, rng), jnp.arange(n_cycles)
+        )
+        elapsed = time.time() - t0
+        # [n_cycles, eval_replan, ...] -> [n_cycles * eval_replan, ...]
+        rewards, dones, achievements = jax.tree.map(
+            lambda x: x.reshape(-1, *x.shape[2:]), cycle_out
+        )
 
     # First-episode extraction (strict single-life evaluation)
     rewards_np = np.array(rewards)

@@ -139,7 +139,16 @@ python main.py --mode inference \
     --checkpoint checkpoints/online/Craftax-Classic-Symbolic-v1-Online-Diffusion-DAgger-100M
 ```
 
-Prints mean episode return, completed episodes, steps per second, and per-achievement unlock counts; `--output` also writes them as JSON. Uses historical inpainting: the first `hist_len` plan positions are locked to observed history. Evaluation length is set by the `eval_steps` / `eval_num_envs` config keys.
+Prints steps per second, per-achievement unlock counts, and two returns that must not be quoted against one another; `--output` also writes both as JSON:
+
+| Reported | JSON key | Meaning |
+|---|---|---|
+| Mean return, completed episodes | `mean_return_completed_episodes` (with `n_completed_episodes`) | Mean over every episode that terminated inside the rollout — the `returned_episode_returns` statistic the ablation tables and the paper report |
+| Mean return, first life only | `mean_return_first_life`, and `mean_score` for backwards compatibility | Strict single-life return: the first episode of each env only. A harsher statistic |
+
+By default this replans from scratch every `eval_replan` (8) steps, conditioned only on the current observation — the same sampler and cadence as `build_eval_fn` in the ablation harness, so it is the protocol behind the published numbers. Evaluation length is set by the `eval_steps` / `eval_num_envs` config keys.
+
+`--override inference_sampler=inpainting` switches to the historical-inpainting sampler, which replans every step with each executed action locked as a fixed prefix (Diffuser Sec. 3.3). At step *k* of a `plan_horizon` window only `plan_horizon - k` positions are still free, so execution tends towards open-loop with a periodic reset. It is kept as an ablation on the planning-as-inpainting design choice and **scores far lower on the same weights**; no published number comes from it.
 
 Write eval JSONs into `results/inference/` (created for you): `scripts/hf_upload.py` publishes every JSON it finds there.
 

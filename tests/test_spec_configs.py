@@ -13,7 +13,14 @@ from __future__ import annotations
 import jax
 import orbax.checkpoint as ocp
 import pytest
-from tests.conftest import NUM_ACTIONS, OBS_DIM, PLAN_HORIZON, SEED, TINY_ARCH
+from tests.conftest import (
+    NUM_ACTIONS,
+    OBS_DIM,
+    PLAN_HORIZON,
+    SEED,
+    TINY_ARCH,
+    load_config,
+)
 
 from src.config import cast_override, validate_keys
 
@@ -171,3 +178,28 @@ def test_suite_wandb_init_takes_project_and_entity_from_the_config():
     src = inspect.getsource(main)
     assert 'project=merged.get("WANDB_PROJECT")' in src or 'merged["WANDB_PROJECT"]' in src
     assert 'entity=merged.get("WANDB_ENTITY")' in src
+
+
+def test_inference_defaults_to_the_sampler_the_paper_evaluates_with() -> None:
+    """--mode inference must use the harness sampler, not inpainting.
+
+    Every published number comes from build_eval_fn, which calls
+    sample_plan with no locked prefix and replans every EVAL_REPLAN steps.
+    run_inference previously used sample_plan_inpainting, which locks each
+    executed action as a fixed prefix and scores far lower on the same
+    weights, so the README sent readers to a different agent than the one
+    the paper reports. Inpainting stays reachable as an explicit ablation.
+    """
+    import inspect
+
+    from src.planners import inference
+
+    config = load_config("configs/defaults.yaml")
+    assert config["INFERENCE_SAMPLER"] == "sample_plan"
+    assert config["EVAL_REPLAN"] == 8
+
+    src = inspect.getsource(inference.run_inference)
+    assert "sample_plan(" in src, "the default path must call sample_plan"
+    assert "sample_plan_inpainting(" in src, (
+        "the inpainting ablation must stay reachable"
+    )
