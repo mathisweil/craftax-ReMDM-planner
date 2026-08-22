@@ -9,7 +9,7 @@ via load_checkpoint and asserts its parameter count equals the config's.
 Usage:
   uv run python scripts/count_params.py
   uv run python scripts/count_params.py --verify-checkpoint \
-      checkpoints/offline/Craftax-Classic-Symbolic-v1-OfflineDiffusion-BC-100M/100000000 \
+      checkpoints/offline/Craftax-Classic-Symbolic-v1-Offline-Diffusion-BC-100M/100000000 \
       --config configs/final_craftax_classic_gpu_24gb.yaml
 """
 from __future__ import annotations

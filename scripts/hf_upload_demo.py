@@ -56,8 +56,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # Checkpoint subdirectories — paths are preserved verbatim in the bundle so
 # the notebook can read them at the same relative locations the project uses.
 CHECKPOINT_DIRS: list[str] = [
-    "checkpoints/offline/Craftax-Classic-Symbolic-v1-OfflineDiffusion-BC-100M",
-    "checkpoints/online/Craftax-Classic-Symbolic-v1-OnlineDiffusion-DAgger-50M",
+    "checkpoints/offline/Craftax-Classic-Symbolic-v1-Offline-Diffusion-BC-100M",
+    "checkpoints/online/Craftax-Classic-Symbolic-v1-Online-Diffusion-DAgger-100M",
     "checkpoints/ppo_agents/Craftax-Classic-Symbolic-v1-PPO_RNN-1000M",
     "checkpoints/ppo_agents/Craftax-Symbolic-v1-PPO_RNN-1000M",
 ]

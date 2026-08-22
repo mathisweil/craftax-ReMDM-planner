@@ -136,7 +136,7 @@ python main.py --mode inference --checkpoint /path/to/checkpoint --output result
 # Released checkpoints need their matching config (see Checkpoints)
 python main.py --mode inference \
     --config configs/final_craftax_classic_gpu_24gb.yaml \
-    --checkpoint checkpoints/online/Craftax-Classic-Symbolic-v1-OnlineDiffusion-DAgger-100M
+    --checkpoint checkpoints/online/Craftax-Classic-Symbolic-v1-Online-Diffusion-DAgger-100M
 ```
 
 Prints mean episode return, completed episodes, steps per second, and per-achievement unlock counts; `--output` also writes them as JSON. Uses historical inpainting: the first `hist_len` plan positions are locked to observed history. Evaluation length is set by the `eval_steps` / `eval_num_envs` config keys.
@@ -275,7 +275,7 @@ needs no local copy — it reads them from its own `snapshot_download`.
 ```bash
 python main.py --mode inference \
     --config configs/final_craftax_classic_gpu_24gb.yaml \
-    --checkpoint checkpoints/online/Craftax-Classic-Symbolic-v1-OnlineDiffusion-DAgger-100M
+    --checkpoint checkpoints/online/Craftax-Classic-Symbolic-v1-Online-Diffusion-DAgger-100M
 
 # Train a new planner against the released Full Craftax PPO expert
 python main.py --mode online \
