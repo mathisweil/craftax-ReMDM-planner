@@ -17,7 +17,6 @@ Implements **25 ablations**: a baseline plus four groups (A: Regularisation, B: 
 ```
 rl_finetuning/
 ├── run_ablations.py          # CLI entry point
-├── measure_gdelta.py         # Measures the return term g_delta of the decomposition (no training)
 ├── ablations/
 │   ├── losses.py             # All loss/objective variants as factory functions
 │   ├── optimizers.py         # LLRD, LoRA, gradient surgery, param masking
@@ -29,6 +28,7 @@ rl_finetuning/
 │   └── timestep.py           # t-bin gradient norms, per-t loss decomposition
 ├── analysis/
 │   ├── action_distribution.py # Pre- vs post-finetuning action dist divergences + plots
+│   ├── gdelta.py             # Return term g_delta of the decomposition (no training)
 │   ├── plots.py              # All matplotlib figure generators
 │   ├── tables.py             # Summary tables as polars DataFrames + LaTeX export
 │   └── report.py             # diagnosis.md + decision tree figure
@@ -161,7 +161,7 @@ the refusal `--merge` performs are the same policy.
 python experiments/rl_finetuning/run_ablations.py --list
 ```
 
-### Measuring the return term (`measure_gdelta.py`)
+### Measuring the return term (`--measure-gdelta`)
 
 Loads the pretrained checkpoint, collects one on-policy batch from it, and evaluates
 `grad L_BC`, `g_delta` and `grad L_RW` on that batch at those parameters under a shared
@@ -171,23 +171,32 @@ for the four weighting ablations (`baseline_rl`, `advantage_clip`, `normalized_a
 shuffled-`delta` null that keeps the weight multiset and destroys its association with each
 window's return. No training and no optimiser step occur; it runs on a laptop CPU.
 
-`--config` accepts a `results.json` from the ablation suite or a plain config dict. Output
-defaults to `experiments/rl_finetuning/outputs/{run_id}/gdelta_seed{seed}.json`.
+Results land in `gdelta/` under the run's own output directory, beside `results.json`, and
+the aggregate additionally produces `tables/gdelta.{csv,tex}`. With `--emit-tex-macros`,
+the analysis pass picks the aggregate up and emits the measured quantities as `\rwGdelta*`
+macros. Those are kept separate from the `\rwCvA*` macros, which recover `CV_A` from the
+ESS logged during training: the two are measured on different batches and do not agree.
 
-**Reproduction (three rollout seeds, then aggregate):**
+Config comes from `--results-path`, so the weight transforms measured are the ones that run
+trained under; without it the standard layering applies.
+
+**Reproduction (three rollout seeds, aggregated in one pass):**
 ```bash
-for s in 0 1 2; do
-  python experiments/rl_finetuning/measure_gdelta.py \
-      --ckpt results/checkpoints/online/Craftax-Classic-Symbolic-v1-Online-Diffusion-DAgger-100M \
-      --config results/experiments/rl_finetuning/outputs/craftax_classic_ablations/results.json \
-      --seed ${s} --run-id gdelta
-done
-python experiments/rl_finetuning/measure_gdelta.py --aggregate --run-id gdelta \
-    --inputs experiments/rl_finetuning/outputs/gdelta/gdelta_seed{0,1,2}.json
+python experiments/rl_finetuning/run_ablations.py --measure-gdelta --gdelta-seeds 0 1 2 \
+    --checkpoint results/checkpoints/online/Craftax-Classic-Symbolic-v1-Online-Diffusion-DAgger-100M \
+    --results-path results/experiments/rl_finetuning/outputs/craftax_classic_ablations/results.json \
+    --output-dir experiments/rl_finetuning/outputs/craftax_classic_ablations
 ```
 
-A single run's `ratio_std_draws` / `cos_std_draws` are dispersions over that seed's eight
-`(z_t, t)` draws. `--aggregate` averages the per-seed means and reports the standard
+Seeds run on separate machines are aggregated afterwards with `--gdelta-inputs`, the
+counterpart to `--merge`:
+```bash
+python experiments/rl_finetuning/run_ablations.py --run-id gdelta \
+    --gdelta-inputs experiments/rl_finetuning/outputs/gdelta/gdelta_seed{0,1,2}.json
+```
+
+A single seed's `ratio_std_draws` / `cos_std_draws` are dispersions over that seed's eight
+`(z_t, t)` draws. The aggregate averages the per-seed means and reports the standard
 deviation **across seeds**, which is what the paper's table prints.
 
 ### Ablations
@@ -227,6 +236,9 @@ experiments/rl_finetuning/outputs/{run_id}/
 ├── results.json               # All histories + final scores (machine-readable; see schema below)
 ├── diagnosis.md               # Human-readable verdict + evidence + recommendations
 ├── checkpoint_{name}/         # Per-ablation fine-tuned params, last seed (Orbax)
+├── gdelta/                    # --measure-gdelta only
+│   ├── gdelta_seed{n}.json    # Per rollout seed; +/- within is across that seed's draws
+│   └── gdelta_aggregate.json  # Across seeds; the dispersion the paper's table prints
 ├── figures/
 │   ├── curves_{name}.png                  # Per-ablation training curves (2×3 grid)
 │   ├── final_score_comparison.png
@@ -256,6 +268,7 @@ experiments/rl_finetuning/outputs/{run_id}/
     ├── forgetting_analysis.{csv,tex}
     ├── hypothesis_verdict.{csv,tex}
     ├── achievement_summary.{csv,tex}      # Per-achievement final unlock rates
+    ├── gdelta.{csv,tex}                   # --measure-gdelta only: the decomposition per weight transform
     └── results.tex                        # --emit-tex-macros only: \newcommand per headline number
 ```
 

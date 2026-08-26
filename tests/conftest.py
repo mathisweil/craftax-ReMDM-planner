@@ -154,6 +154,12 @@ ENTRY_POINTS = {
         # run_ablations creates its output dir before validating arguments.
         "--output-dir", "<TMP>",
     ],
+    # The gdelta mode needs a checkpoint too, and must say so rather than
+    # tracebacking on a missing CHECKPOINT_PATH.
+    "run_ablations --measure-gdelta no-checkpoint": [
+        "experiments/rl_finetuning/run_ablations.py", "--measure-gdelta",
+        "--output-dir", "<TMP>",
+    ],
 }
 
 

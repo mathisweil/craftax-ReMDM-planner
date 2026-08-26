@@ -1,13 +1,11 @@
 """Tests for the g_delta measurement behind the paper's gradient decomposition.
 
 Checkpoint-free: the algebra is exercised on a tiny model and a synthetic
-batch. The expensive part of ``measure_gdelta.py`` is the checkpoint restore
+batch. The expensive part of ``analysis/gdelta.py`` is the checkpoint restore
 and the on-policy rollout, and neither is what could be wrong.
 """
 
 from __future__ import annotations
-
-import json
 
 import jax
 import jax.numpy as jnp
@@ -15,7 +13,7 @@ import pytest
 
 from tests.conftest import NUM_ACTIONS, OBS_DIM, PLAN_HORIZON, SEED, import_or_skip
 
-gd = import_or_skip("experiments.rl_finetuning.measure_gdelta")
+gd = import_or_skip("experiments.rl_finetuning.analysis.gdelta")
 
 WEIGHT_BATCH = 32
 
@@ -227,16 +225,15 @@ def _fake_seed_blob(seed: int, ratio: float, cos: float, abar: float) -> dict:
     }
 
 
-def test_aggregate_reports_dispersion_across_seeds(tmp_path):
-    paths = []
-    for seed, (ratio, cos, abar) in enumerate(
-        [(0.40, 0.00, 0.30), (0.50, 0.02, 0.32), (0.60, 0.04, 0.34)]
-    ):
-        p = tmp_path / f"gdelta_seed{seed}.json"
-        p.write_text(json.dumps(_fake_seed_blob(seed, ratio, cos, abar)))
-        paths.append(str(p))
+def test_aggregate_reports_dispersion_across_seeds():
+    blobs = [
+        _fake_seed_blob(seed, ratio, cos, abar)
+        for seed, (ratio, cos, abar) in enumerate(
+            [(0.40, 0.00, 0.30), (0.50, 0.02, 0.32), (0.60, 0.04, 0.34)]
+        )
+    ]
 
-    agg = gd.aggregate(paths)
+    agg = gd.aggregate(blobs)
     rec = agg["variants"]["baseline_clipped_ratio"]
 
     assert agg["n_seeds"] == 3
@@ -249,8 +246,6 @@ def test_aggregate_reports_dispersion_across_seeds(tmp_path):
     assert agg["eq4_residual_max"] == pytest.approx(3e-5)
 
 
-def test_aggregate_refuses_an_aggregate_input(tmp_path):
-    p = tmp_path / "agg.json"
-    p.write_text(json.dumps({"aggregate": True, "variants": {}}))
-    with pytest.raises(SystemExit):
-        gd.aggregate([str(p)])
+def test_aggregate_refuses_an_aggregate_input():
+    with pytest.raises(ValueError, match="already an aggregate"):
+        gd.aggregate([{"aggregate": True, "variants": {}}])
