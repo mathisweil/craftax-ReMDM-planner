@@ -101,6 +101,85 @@ def test_headline_quantities_are_covered(emitted):
     assert required <= names, f"missing macros: {sorted(required - names)}"
 
 
+GDELTA_AGGREGATE = (
+    ROOT / "experiments/rl_finetuning/outputs/gdelta_verification"
+    "/gdelta_aggregate.json"
+)
+
+
+@pytest.fixture(scope="module")
+def gdelta_agg() -> dict:
+    """The shipped three-seed aggregate, or skip."""
+    if not GDELTA_AGGREGATE.exists():
+        pytest.skip(f"no gdelta aggregate at {GDELTA_AGGREGATE}")
+    import orjson
+
+    return orjson.loads(GDELTA_AGGREGATE.read_bytes())
+
+
+@pytest.fixture(scope="module")
+def emitted_with_gdelta(suite, gdelta_agg, tmp_path_factory) -> str:
+    results, pretrained, config = suite
+    out = tmp_path_factory.mktemp("tex_gd") / "results.tex"
+    tables.write_tex_macros(
+        results, pretrained, out, config=config, gdelta=gdelta_agg
+    )
+    return out.read_text()
+
+
+def test_gdelta_macros_are_emitted_and_tagged_by_ablation(emitted_with_gdelta):
+    """Measured quantities appear, tagged by ablation name not variant name."""
+    names = set(macro_names(emitted_with_gdelta))
+    required = {
+        "rwGdeltaNSeeds",
+        "rwGdeltaBcSelfCos",
+        "rwGdeltaRandomCosSd",
+        "rwGdeltaEqFourResidual",
+        # baseline_clipped_ratio tags as BaselineRl, matching rwScoreBaselineRl.
+        "rwGdeltaCvABaselineRl",
+        "rwGdeltaRatioBaselineRl",
+        "rwGdeltaAbarBaselineRl",
+        "rwGdeltaCosAdvantageClip",
+        "rwGdeltaRatioShufBcWins",
+    }
+    assert required <= names, f"missing macros: {sorted(required - names)}"
+    assert not any(n.endswith("BaselineClippedRatio") for n in names)
+
+
+def macro_values(text: str) -> dict[str, str]:
+    """Every macro in *text* as a name -> value mapping."""
+    out = {}
+    for line in text.splitlines():
+        match = DEFINITION.match(line)
+        if match:
+            out[match.group(1)] = line.split("}{", 1)[1].rstrip("}")
+    return out
+
+
+def test_gdelta_cv_a_does_not_displace_the_ess_derived_one(
+    emitted, emitted_with_gdelta
+):
+    """The two CV_A macros are different quantities and must both survive.
+
+    ``rwCvABaselineRl`` recovers CV_A from the ESS logged during training;
+    ``rwGdeltaCvABaselineRl`` is measured on the measurement batches at the
+    pretrained checkpoint. The manuscript quotes both, and they do not agree.
+    """
+    _path, plain = emitted
+    before = macro_values(plain)
+    after = macro_values(emitted_with_gdelta)
+
+    assert {"rwCvABaselineRl", "rwGdeltaCvABaselineRl"} <= set(after)
+    # Adding the measurement must not perturb a macro that was already defined.
+    assert {k: after[k] for k in before} == before
+
+
+def test_gdelta_macros_omitted_when_not_measured(emitted):
+    """A run with no measurement emits no gdelta macros at all."""
+    _path, text = emitted
+    assert not [n for n in macro_names(text) if n.startswith("rwGdelta")]
+
+
 def test_digits_are_spelled_out():
     """Condition names carrying digits must mangle to letters-only."""
     assert tables._macro_name("layer_ablation_top1") == "LayerAblationTopOne"

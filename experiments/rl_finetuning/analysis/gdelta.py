@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Measure the return term g_delta of the return-weighted ELBO decomposition.
 
 Implements the measurement behind Eq. 8 and Table 6 of the paper. Writing the
@@ -9,12 +8,12 @@ decomposes exactly as
     g_delta    =  (1/B) sum_i delta_i grad l_i,     delta_i = A_i/Abar - 1,
 
 so g_delta carries the entire directional contribution of the return and Abar
-is the scalar step-size rescaling. This script loads a pretrained checkpoint,
-collects one on-policy batch from it, and evaluates grad L_BC, g_delta and
-grad L_RW on that batch at those parameters under a shared (z_t, t) draw, so
-the only difference between the three is the weight vector. It repeats for
-every weight transform the ablation suite uses, and reports three references
-the cosine column needs:
+is the scalar step-size rescaling. :func:`measure` loads a pretrained
+checkpoint, collects one on-policy batch from it, and evaluates grad L_BC,
+g_delta and grad L_RW on that batch at those parameters under a shared
+(z_t, t) draw, so the only difference between the three is the weight vector.
+It repeats for every weight transform the ablation suite uses, and reports
+three references the cosine column needs:
 
   * the random-direction null, cos ~ N(0, 1/sqrt(D)) for D parameters;
   * cos(grad L_BC, grad L_BC) across two independent noise draws, which is the
@@ -27,43 +26,24 @@ the cosine column needs:
 
 No training and no optimiser step occur. Runs on CPU in a few minutes.
 
-Usage, from the repository root:
-
-    python experiments/rl_finetuning/measure_gdelta.py \
-        --ckpt path/to/pretrained_checkpoint \
-        --config path/to/results.json \
-        --seed 0
-
-`--config` accepts the `results.json` emitted by `run_ablations.py` (the script
-reads its "config" entry) or a plain JSON dict of the same keys. With no
-`--out`, the per-seed JSON lands under
-`experiments/rl_finetuning/outputs/{run_id}/gdelta_seed{seed}.json`.
-
-The per-draw standard deviations a single run reports are *within* one rollout
+The per-draw standard deviations a single seed reports are *within* one rollout
 seed. The figure Table 6 prints is the standard deviation across rollout seeds,
-which needs the aggregation pass over the per-seed files:
+which :func:`aggregate` computes over the per-seed records.
 
-    python experiments/rl_finetuning/measure_gdelta.py --aggregate \
-        --inputs gdelta_seed0.json gdelta_seed1.json gdelta_seed2.json
+Driven by ``run_ablations.py --measure-gdelta``; see :func:`run_gdelta`.
 """
 
 from __future__ import annotations
 
-import argparse
-import datetime
-import json
-import os
-import sys
+import logging
 from pathlib import Path
 
 import numpy as np
+import orjson
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT))
+logger = logging.getLogger(__name__)
 
-DEFAULT_OUTPUT_ROOT = REPO_ROOT / "experiments" / "rl_finetuning" / "outputs"
-
-# The variant -> ablation mapping this script assumes. Each entry names the
+# The variant -> ablation mapping this module assumes. Each entry names the
 # registry key, the loss factory that key must still use, and its wins_only
 # flag. verify_registry() fails loudly if the suite drifts away from it, so a
 # registry edit cannot silently desynchronise the measurement.
@@ -76,6 +56,13 @@ REGISTRY_RULES = {
 
 BASELINE = "baseline_clipped_ratio"
 
+GDELTA_DIRNAME = "gdelta"
+AGGREGATE_FILENAME = "gdelta_aggregate.json"
+
+
+class RegistryDriftError(RuntimeError):
+    """The ablation registry no longer matches the variants measured here."""
+
 
 def verify_registry() -> None:
     """Fail if the ablation registry no longer matches the assumed variants."""
@@ -84,17 +71,17 @@ def verify_registry() -> None:
     for variant, (name, factory, wins_only) in REGISTRY_RULES.items():
         spec = REGISTRY.get(name)
         if spec is None:
-            raise SystemExit(
+            raise RegistryDriftError(
                 f"registry has no ablation {name!r}; variant {variant!r} is stale"
             )
         if spec.loss_factory.__name__ != factory:
-            raise SystemExit(
+            raise RegistryDriftError(
                 f"ablation {name!r} now uses {spec.loss_factory.__name__}, "
                 f"not {factory}; variant {variant!r} measures a weighting the "
                 "trainer no longer applies"
             )
         if bool(spec.wins_only) != wins_only:
-            raise SystemExit(
+            raise RegistryDriftError(
                 f"ablation {name!r} has wins_only={spec.wins_only}, expected "
                 f"{wins_only}; variant {variant!r} is stale"
             )
@@ -161,13 +148,6 @@ def effective_sample_size(weights) -> float:
     return total ** 2 / (sq * weights.shape[0])
 
 
-def load_config(path: str) -> dict:
-    """Read an ablation config, accepting a results.json or a bare dict."""
-    with open(path) as fh:
-        blob = json.load(fh)
-    return dict(blob.get("config", blob))
-
-
 def restore_params(net, rng, obs_dim, plan_horizon, ckpt: str):
     """Restore Orbax parameters with an explicit single-device sharding.
 
@@ -202,25 +182,31 @@ def restore_params(net, rng, obs_dim, plan_horizon, ckpt: str):
     return params, step
 
 
-def aggregate(paths: list[str]) -> dict:
-    """Combine per-seed JSONs, reporting the standard deviation across seeds.
+def aggregate(blobs: list[dict], inputs: list[str] | None = None) -> dict:
+    """Combine per-seed records, reporting the standard deviation across seeds.
 
     Each input contributes one number per variant per column -- its own mean
     over the ``(z_t, t)`` draws. The dispersion reported here is over those
     per-seed means, which is the quantity the paper's table claims.
+
+    Args:
+        blobs:  Per-seed records, as returned by :func:`measure`.
+        inputs: Optional provenance paths recorded in the output.
+
+    Returns:
+        The aggregate record.
     """
-    blobs = []
-    for path in paths:
-        with open(path) as fh:
-            blobs.append(json.load(fh))
-    for blob, path in zip(blobs, paths, strict=True):
+    labels = inputs if inputs is not None else [
+        f"seed{b.get('seed', i)}" for i, b in enumerate(blobs)
+    ]
+    for blob, label in zip(blobs, labels, strict=True):
         if blob.get("aggregate"):
-            raise SystemExit(f"{path} is already an aggregate")
+            raise ValueError(f"{label} is already an aggregate")
 
     names = list(blobs[0]["variants"])
-    for blob, path in zip(blobs, paths, strict=True):
+    for blob, label in zip(blobs, labels, strict=True):
         if list(blob["variants"]) != names:
-            raise SystemExit(f"{path} has a different variant set")
+            raise ValueError(f"{label} has a different variant set")
 
     def across(values):
         arr = np.array(values, dtype=float)
@@ -228,7 +214,7 @@ def aggregate(paths: list[str]) -> dict:
 
     out = {
         "aggregate": True,
-        "inputs": [str(p) for p in paths],
+        "inputs": [str(p) for p in labels],
         "seeds": [int(b["seed"]) for b in blobs],
         "n_seeds": len(blobs),
         "n_draws_per_seed": [int(b["n_draws"]) for b in blobs],
@@ -279,7 +265,29 @@ def print_aggregate(agg: dict) -> None:
               f"{flag}")
 
 
-def measure(args) -> dict:
+def measure(
+    config: dict,
+    ckpt: str,
+    *,
+    seed: int = 0,
+    n_draws: int = 8,
+    num_envs: int | None = None,
+    batch_size: int | None = None,
+) -> dict:
+    """Measure the decomposition at one rollout seed.
+
+    Args:
+        config:     UPPERCASE config dict; the run's own, so the weight
+                    transforms match the ones it trained under.
+        ckpt:       Orbax checkpoint directory of the pretrained planner.
+        seed:       Rollout seed. Also fixes the ``(z_t, t)`` draws.
+        n_draws:    Independent ``(z_t, t)`` draws to average over.
+        num_envs:   Override ``NUM_ENVS``; ``None`` keeps the config value.
+        batch_size: Override ``BATCH_SIZE``; ``None`` keeps the config value.
+
+    Returns:
+        The per-seed record.
+    """
     import jax
     import jax.numpy as jnp
 
@@ -294,11 +302,11 @@ def measure(args) -> dict:
 
     verify_registry()
 
-    cfg = load_config(args.config)
-    if args.num_envs is not None:
-        cfg["NUM_ENVS"] = args.num_envs
-    if args.batch_size is not None:
-        cfg["BATCH_SIZE"] = args.batch_size
+    cfg = dict(config)
+    if num_envs is not None:
+        cfg["NUM_ENVS"] = num_envs
+    if batch_size is not None:
+        cfg["BATCH_SIZE"] = batch_size
 
     env, env_params = make_env(cfg, cfg["NUM_ENVS"])
     num_actions = env.action_space(env_params).n
@@ -309,12 +317,12 @@ def measure(args) -> dict:
     net = build_model(cfg, num_actions)
     apply_eval, apply_train = make_apply_fns(net)
 
-    rng = jax.random.PRNGKey(args.seed)
+    rng = jax.random.PRNGKey(seed)
     # A separate stream for the shuffled-delta null, so adding the control
     # leaves every draw of the real measurement bit-for-bit unchanged.
-    perm_rng = jax.random.PRNGKey(args.seed + 10_000)
+    perm_rng = jax.random.PRNGKey(seed + 10_000)
     rng, key = jax.random.split(rng)
-    params, step = restore_params(net, key, obs_dim, cfg["PLAN_HORIZON"], args.ckpt)
+    params, step = restore_params(net, key, obs_dim, cfg["PLAN_HORIZON"], ckpt)
     n_params = sum(int(np.prod(x.shape)) for x in jax.tree.leaves(params))
     random_cos_sd = 1.0 / np.sqrt(n_params)
     print(f"checkpoint step {step}, D = {n_params/1e6:.2f}M, "
@@ -384,7 +392,7 @@ def measure(args) -> dict:
     acc = {name: {"ratio": [], "cos": [], "ratio_shuf": [], "cos_shuf": []}
            for name in variants}
     bc_self, residuals = [], []
-    for draw in range(args.n_draws):
+    for draw in range(n_draws):
         rng, key = jax.random.split(rng)
         g_bc = gradient(None, key)
         norm_bc = float(jnp.linalg.norm(g_bc))
@@ -419,7 +427,7 @@ def measure(args) -> dict:
                     jnp.linalg.norm(g_rw - stats[name]["abar"] * (g_bc + g_delta))
                     / (jnp.linalg.norm(g_rw) + 1e-12)
                 ))
-        print(f"  draw {draw + 1}/{args.n_draws}", flush=True)
+        print(f"  draw {draw + 1}/{n_draws}", flush=True)
 
     out = {
         "aggregate": False,
@@ -427,8 +435,8 @@ def measure(args) -> dict:
         "n_params": int(n_params),
         "random_cos_sd": float(random_cos_sd),
         "batch": int(batch),
-        "seed": args.seed,
-        "n_draws": args.n_draws,
+        "seed": seed,
+        "n_draws": n_draws,
         "bc_self_cos_mean": float(np.mean(bc_self)),
         "bc_self_cos_std": float(np.std(bc_self)),
         "eq4_residual_max": float(np.max(residuals)),
@@ -438,8 +446,8 @@ def measure(args) -> dict:
           f"{np.mean(bc_self):.3f} +/- {np.std(bc_self):.3f}   [same-objective reference]")
     print(f"random-direction null: cos ~ N(0, {random_cos_sd:.2e})")
     print(f"Eq. 4 identity, max relative residual = {np.max(residuals):.2e}")
-    print("+/- below is across the 8 (z_t, t) draws of this one seed, "
-          "not across seeds; use --aggregate for that\n")
+    print(f"+/- below is across the {n_draws} (z_t, t) draws of this one seed, "
+          "not across seeds\n")
     print(f"{'weight transform':26s} {'CV_A':>7s} {'Abar':>8s} {'Abar/base':>10s} "
           f"{'ESS/B':>7s} {'ratio':>16s} {'cos':>16s} "
           f"{'ratio(shuf)':>16s} {'cos(shuf)':>16s}")
@@ -466,55 +474,75 @@ def measure(args) -> dict:
     return out
 
 
-def default_out(args) -> Path:
-    run_id = args.run_id or f"gdelta_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    stem = "gdelta_aggregate" if args.aggregate else f"gdelta_seed{args.seed}"
-    return DEFAULT_OUTPUT_ROOT / run_id / f"{stem}.json"
-
-
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--ckpt", help="Orbax checkpoint directory")
-    ap.add_argument("--config", help="results.json or config JSON")
-    ap.add_argument("--out", default=None,
-                    help="output JSON path; default is under "
-                         "experiments/rl_finetuning/outputs/{run_id}/")
-    ap.add_argument("--run-id", default=None,
-                    help="output subdirectory name; default is a timestamp")
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--num-envs", type=int, default=None,
-                    help="override NUM_ENVS; default is the config value")
-    ap.add_argument("--batch-size", type=int, default=None,
-                    help="override BATCH_SIZE; default is the config value")
-    ap.add_argument("--n-draws", type=int, default=8,
-                    help="independent (z_t, t) draws to average over")
-    ap.add_argument("--aggregate", action="store_true",
-                    help="combine per-seed JSONs given by --inputs and report "
-                         "the standard deviation across seeds")
-    ap.add_argument("--inputs", nargs="+", default=None,
-                    help="per-seed JSON files to aggregate")
-    args = ap.parse_args()
-
-    os.chdir(REPO_ROOT)
-
-    if args.aggregate:
-        if not args.inputs:
-            ap.error("--aggregate needs --inputs")
-        out = aggregate(args.inputs)
-        print_aggregate(out)
-    else:
-        if args.inputs:
-            ap.error("--inputs is only meaningful with --aggregate")
-        if not args.ckpt or not args.config:
-            ap.error("--ckpt and --config are required unless --aggregate")
-        out = measure(args)
-
-    path = Path(args.out) if args.out else default_out(args)
+def _write(path: Path, blob: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as fh:
-        json.dump(out, fh, indent=1)
-    print(f"\nwrote {path}")
+    path.write_bytes(orjson.dumps(blob, option=orjson.OPT_INDENT_2))
+    logger.info("Wrote %s", path)
 
 
-if __name__ == "__main__":
-    main()
+def load_gdelta_aggregate(output_dir: Path) -> dict | None:
+    """The aggregate record for a run, or ``None`` if it was never measured."""
+    path = Path(output_dir) / GDELTA_DIRNAME / AGGREGATE_FILENAME
+    if not path.is_file():
+        return None
+    return orjson.loads(path.read_bytes())
+
+
+def run_gdelta(
+    config: dict,
+    ckpt: str,
+    output_dir: Path,
+    *,
+    seeds: list[int],
+    n_draws: int = 8,
+    num_envs: int | None = None,
+    batch_size: int | None = None,
+) -> dict:
+    """Measure every seed and write the per-seed and aggregate records.
+
+    Artifacts land in ``output_dir/gdelta/``, beside the run's ``results.json``,
+    so one run directory holds the suite's scores and the gradient measurement
+    taken at the checkpoint they started from.
+
+    Args:
+        config:     UPPERCASE config dict.
+        ckpt:       Orbax checkpoint directory of the pretrained planner.
+        output_dir: The run's root output directory.
+        seeds:      Rollout seeds to measure.
+        n_draws:    Independent ``(z_t, t)`` draws per seed.
+        num_envs:   Override ``NUM_ENVS``; ``None`` keeps the config value.
+        batch_size: Override ``BATCH_SIZE``; ``None`` keeps the config value.
+
+    Returns:
+        The aggregate record.
+    """
+    gdelta_dir = Path(output_dir) / GDELTA_DIRNAME
+    blobs, labels = [], []
+    for seed in seeds:
+        logger.info("Measuring g_delta at rollout seed %d", seed)
+        blob = measure(
+            config,
+            ckpt,
+            seed=seed,
+            n_draws=n_draws,
+            num_envs=num_envs,
+            batch_size=batch_size,
+        )
+        path = gdelta_dir / f"gdelta_seed{seed}.json"
+        _write(path, blob)
+        blobs.append(blob)
+        labels.append(str(path))
+
+    agg = aggregate(blobs, labels)
+    _write(gdelta_dir / AGGREGATE_FILENAME, agg)
+    print_aggregate(agg)
+    return agg
+
+
+def aggregate_files(paths: list[str], output_dir: Path) -> dict:
+    """Aggregate per-seed records written elsewhere, e.g. by another machine."""
+    blobs = [orjson.loads(Path(p).read_bytes()) for p in paths]
+    agg = aggregate(blobs, [str(p) for p in paths])
+    _write(Path(output_dir) / GDELTA_DIRNAME / AGGREGATE_FILENAME, agg)
+    print_aggregate(agg)
+    return agg

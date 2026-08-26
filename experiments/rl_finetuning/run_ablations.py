@@ -71,9 +71,16 @@ from experiments.rl_finetuning.ablations.training import AblationHistory, run_ab
 from experiments.rl_finetuning.analysis.action_distribution import (
     run_action_distribution_analysis,
 )
+from experiments.rl_finetuning.analysis.gdelta import (
+    aggregate_files,
+    run_gdelta,
+)
 from experiments.rl_finetuning.analysis.plots import generate_all_plots
 from experiments.rl_finetuning.analysis.report import generate_diagnosis_report
-from experiments.rl_finetuning.analysis.tables import generate_summary_tables
+from experiments.rl_finetuning.analysis.tables import (
+    generate_summary_tables,
+    write_gdelta_table,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -241,6 +248,38 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="Merge multiple results.json files from multi-GPU runs, "
         "recompute statistics, and regenerate analysis.",
+    )
+    p.add_argument(
+        "--measure-gdelta",
+        action="store_true",
+        help=(
+            "Measure the return term g_delta of the return-weighted ELBO "
+            "decomposition at the pretrained checkpoint. No training and no "
+            "optimiser step; runs on CPU in minutes. Writes "
+            "gdelta/gdelta_seed{n}.json plus gdelta/gdelta_aggregate.json "
+            "under the output directory."
+        ),
+    )
+    p.add_argument(
+        "--gdelta-seeds",
+        type=int,
+        nargs="+",
+        default=[0],
+        metavar="N",
+        help="Rollout seeds to measure. The reported +/- is across these.",
+    )
+    p.add_argument(
+        "--gdelta-draws",
+        type=int,
+        default=8,
+        help="Independent (z_t, t) draws averaged within each rollout seed.",
+    )
+    p.add_argument(
+        "--gdelta-inputs",
+        nargs="+",
+        metavar="PATH",
+        help="Aggregate existing per-seed gdelta JSONs instead of measuring, "
+        "for seeds run on separate machines. The counterpart to --merge.",
     )
 
     # Output
@@ -722,6 +761,51 @@ def main(argv: list[str] | None = None) -> None:
         generate_all_plots(results, pretrained_score, output_dir, ach_rates_arg)
         generate_diagnosis_report(results, pretrained_score, tables, output_dir)
         logger.info("Merge complete. Outputs in %s", output_dir)
+        return
+
+    if args.measure_gdelta or args.gdelta_inputs:
+        if args.gdelta_inputs:
+            agg = aggregate_files(args.gdelta_inputs, output_dir)
+        else:
+            # The run's own recorded config where one is given, so the weight
+            # transforms measured are the ones that run trained under; the
+            # standard layered chain otherwise.
+            if args.results_path:
+                gd_cfg = _results_from_json(args.results_path)[3]
+                logger.info("Config taken from %s", args.results_path)
+            else:
+                gd_cfg = _to_upper(
+                    _merge_configs(
+                        _load_yaml(
+                            args.config
+                            or str(_PROJECT_ROOT / "configs" / "defaults.yaml")
+                        ),
+                        _load_ablation_config(args.ablations_config),
+                    )
+                )
+            gd_cfg = _apply_cli_overrides(gd_cfg, args)
+
+            ckpt = gd_cfg.get("CHECKPOINT_PATH")
+            if not ckpt:
+                parser.error("--measure-gdelta requires --checkpoint.")
+            if isinstance(ckpt, str) and ckpt.startswith("wandb:"):
+                from src.planners.model import resolve_checkpoint_path
+
+                ckpt = resolve_checkpoint_path(
+                    ckpt, gd_cfg.get("WANDB_DOWNLOAD_DIR")
+                )
+
+            # NUM_ENVS and BATCH_SIZE already carry any CLI override.
+            agg = run_gdelta(
+                gd_cfg,
+                ckpt,
+                output_dir,
+                seeds=args.gdelta_seeds,
+                n_draws=args.gdelta_draws,
+            )
+
+        write_gdelta_table(agg, output_dir)
+        logger.info("Gradient measurement complete. Outputs in %s", output_dir)
         return
 
     if args.analyze_only:
