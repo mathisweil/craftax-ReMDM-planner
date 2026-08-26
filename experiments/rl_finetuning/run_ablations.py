@@ -275,6 +275,17 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--wandb-project", type=str, default=None)
     p.add_argument("--wandb-entity", type=str, default=None)
 
+    p.add_argument(
+        "--emit-tex-macros",
+        action="store_true",
+        help=(
+            "Also write tables/results.tex: one \\newcommand per headline "
+            "quantity (pretrained score, per-condition score and sd, group "
+            "means, pooled seed sd, CV_A, ESS), so the manuscript can cite "
+            "generated numbers instead of retyping them."
+        ),
+    )
+
     # Config overrides (passed directly to merged config)
     p.add_argument("--max-iter", type=int, default=None)
     p.add_argument("--num-envs", type=int, default=None)
@@ -355,6 +366,15 @@ def _history_finals(history: AblationHistory) -> dict:
     return finals
 
 
+def _mean_ach_rates(per_seed: list[dict[str, float]]) -> dict[str, float]:
+    """Per-achievement rate averaged over seeds, over the union of keys."""
+    seeds = [d for d in per_seed if d]
+    if not seeds:
+        return {}
+    keys = sorted({k for d in seeds for k in d})
+    return {k: float(np.mean([d.get(k, 0.0) for d in seeds])) for k in keys}
+
+
 def _results_to_json(
     results: dict[str, dict],
     pretrained_score: float,
@@ -396,7 +416,14 @@ def _results_to_json(
                 # seeds, wall clock and per-seed finals when present
                 **{
                     k: res[k]
-                    for k in ("base_seed", "seeds", "wall_clock_s", "per_seed_finals")
+                    for k in (
+                        "base_seed",
+                        "seeds",
+                        "wall_clock_s",
+                        "per_seed_finals",
+                        "final_ach_rates",
+                        "all_final_ach_rates",
+                    )
                     if k in res
                 },
             }
@@ -434,6 +461,8 @@ def _results_from_json(path: str) -> tuple[dict, float, dict[str, float], dict]:
             "seeds",
             "wall_clock_s",
             "per_seed_finals",
+            "final_ach_rates",
+            "all_final_ach_rates",
         ):
             if _k in res_data:
                 results[name][_k] = res_data[_k]
@@ -592,14 +621,24 @@ def _merge_result_files(
                     # carry seed, wall-clock and per-seed final records
                     **{
                         k: list(res[k])
-                        for k in ("seeds", "wall_clock_s", "per_seed_finals")
+                        for k in (
+                            "seeds",
+                            "wall_clock_s",
+                            "per_seed_finals",
+                            "all_final_ach_rates",
+                        )
                         if k in res
                     },
                     **({"base_seed": res["base_seed"]} if "base_seed" in res else {}),
                 }
             else:
                 merged_results[name]["all_scores"].extend(res["all_scores"])
-                for _k in ("seeds", "wall_clock_s", "per_seed_finals"):
+                for _k in (
+                    "seeds",
+                    "wall_clock_s",
+                    "per_seed_finals",
+                    "all_final_ach_rates",
+                ):
                     if _k in res:
                         merged_results[name].setdefault(_k, []).extend(res[_k])
 
@@ -608,6 +647,8 @@ def _merge_result_files(
         scores = res["all_scores"]
         res["score"] = float(np.mean(scores))
         res["score_std"] = float(np.std(scores))
+        if res.get("all_final_ach_rates"):
+            res["final_ach_rates"] = _mean_ach_rates(res["all_final_ach_rates"])
 
     pretrained_score = float(np.mean(pretrained_scores))
     logger.info(
@@ -671,7 +712,12 @@ def main(argv: list[str] | None = None) -> None:
         logger.info("Wrote merged results to %s", merged_path)
         # Regenerate analysis
         tables = generate_summary_tables(
-            results, pretrained_score, output_dir, ach_rates_arg
+            results,
+            pretrained_score,
+            output_dir,
+            ach_rates_arg,
+            emit_tex_macros=args.emit_tex_macros,
+            config=config,
         )
         generate_all_plots(results, pretrained_score, output_dir, ach_rates_arg)
         generate_diagnosis_report(results, pretrained_score, tables, output_dir)
@@ -693,7 +739,12 @@ def main(argv: list[str] | None = None) -> None:
             )
         ach_rates_arg = pretrained_ach_rates if pretrained_ach_rates else None
         tables = generate_summary_tables(
-            results, pretrained_score, output_dir, ach_rates_arg
+            results,
+            pretrained_score,
+            output_dir,
+            ach_rates_arg,
+            emit_tex_macros=args.emit_tex_macros,
+            config=config,
         )
         generate_all_plots(results, pretrained_score, output_dir, ach_rates_arg)
         generate_diagnosis_report(results, pretrained_score, tables, output_dir)
@@ -824,6 +875,7 @@ def main(argv: list[str] | None = None) -> None:
         spec = REGISTRY[abl_name]
         seed_scores: list[float] = []
         seed_histories: list[AblationHistory] = []
+        seed_ach: list[dict[str, float]] = []
         seeds_used: list[int] = []
         seed_times: list[float] = []
         last_seed_params: Any = None
@@ -844,7 +896,7 @@ def main(argv: list[str] | None = None) -> None:
                 )
 
                 _t0 = time.monotonic()
-                history, final_score, final_params = run_ablation(
+                history, final_score, final_params, final_ach = run_ablation(
                     spec=spec,
                     config=merged,
                     pretrained_params=pretrained_params,
@@ -865,6 +917,7 @@ def main(argv: list[str] | None = None) -> None:
                 )  # per-seed wall clock
                 seed_scores.append(final_score)
                 seed_histories.append(history)
+                seed_ach.append(final_ach)
                 last_seed_params = final_params
         except Exception:
             logger.exception("Ablation '%s' FAILED - skipping to next.", abl_name)
@@ -890,6 +943,11 @@ def main(argv: list[str] | None = None) -> None:
             "seeds": seeds_used,
             "wall_clock_s": seed_times,  # per-seed wall clock
             "per_seed_finals": [_history_finals(h) for h in seed_histories],
+            # Achievement detail of the same post-loop evaluations that give
+            # `all_scores`, averaged over seeds exactly as `score` is, so the
+            # achievement tables and the headline score are one measurement.
+            "final_ach_rates": _mean_ach_rates(seed_ach),
+            "all_final_ach_rates": seed_ach,
             "final_params": last_seed_params,  # in-memory; also written below
         }
 
@@ -936,7 +994,12 @@ def main(argv: list[str] | None = None) -> None:
     logger.info("Generating plots and tables...")
     ach_rates_arg = pretrained_ach_rates if pretrained_ach_rates else None
     tables = generate_summary_tables(
-        results, pretrained_score, output_dir, ach_rates_arg
+        results,
+        pretrained_score,
+        output_dir,
+        ach_rates_arg,
+        emit_tex_macros=args.emit_tex_macros,
+        config=merged,
     )
     generate_all_plots(results, pretrained_score, output_dir, ach_rates_arg)
     report_path = generate_diagnosis_report(

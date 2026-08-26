@@ -100,6 +100,26 @@ def baseline_rl_score_of(results: dict[str, dict], pretrained_score: float) -> f
     return results.get("baseline_rl", {}).get("score", pretrained_score)
 
 
+def final_ach_rates(res: dict) -> dict[str, float]:
+    """Per-achievement rates of the evaluation that produced ``score``.
+
+    ``final_ach_rates`` is the detail of the post-loop evaluation the headline
+    score comes from, so tables built on it reconcile with the score by
+    construction. Suite runs from before that field existed wrote the same
+    evaluation over the last in-loop history entry; those are read from there.
+
+    Args:
+        res: One entry of a results dict.
+
+    Returns:
+        ``{achievement: rate}``, empty when neither source has any.
+    """
+    if res.get("final_ach_rates"):
+        return res["final_ach_rates"]
+    rates = res["history"].per_achievement_rates
+    return rates[-1] if rates else {}
+
+
 def _latex_escape(text: str) -> str:
     """Escape LaTeX special characters in a string.
 
@@ -267,12 +287,12 @@ def write_significance_test(results: dict[str, dict], out_dir: Path) -> None:
         f"bootstrap 95% CI of the difference (10000 resamples, seed 0): "
         f"[{lo:.4f}, {hi:.4f}]\n"
         + (
-            f"arms excluded from the max (seed count != {n_b}): "
-            f"{', '.join(dropped)}\n"
+            f"arms excluded from the max (seed count != {n_b}): {', '.join(dropped)}\n"
             if dropped
             else ""
         )
     )
+
 
 def make_main_results_table(
     results: dict[str, dict],
@@ -592,8 +612,7 @@ def make_per_env_table(
     """
     ablation_finals: dict[str, dict[str, float]] = {}
     for name, res in results.items():
-        rates = res["history"].per_achievement_rates
-        ablation_finals[name] = rates[-1] if rates else {}
+        ablation_finals[name] = final_ach_rates(res)
 
     all_keys: list[str] = sorted(
         set(pretrained_ach_rates) | {k for d in ablation_finals.values() for k in d}
@@ -645,9 +664,7 @@ def make_hypothesis_verdict_table(
         result = verdict(score, baseline_rl_score, pretrained_score)
         conclusion = {
             "IMPROVEMENT": "Hypothesis SUPPORTED — this intervention helps",
-            "COLLAPSE": (
-                "Hypothesis REFUTED — intervention did not prevent collapse"
-            ),
+            "COLLAPSE": ("Hypothesis REFUTED — intervention did not prevent collapse"),
             "NEUTRAL": "Inconclusive — no significant change",
         }[result]
 
@@ -685,8 +702,7 @@ def make_achievement_table(
     # Collect final achievement rates for every ablation.
     ablation_finals: dict[str, dict[str, float]] = {}
     for name, res in results.items():
-        rates = res["history"].per_achievement_rates
-        ablation_finals[name] = rates[-1] if rates else {}
+        ablation_finals[name] = final_ach_rates(res)
 
     # Union of all achievement keys.
     all_keys: list[str] = sorted(
@@ -709,11 +725,163 @@ def make_achievement_table(
     return pl.DataFrame(rows)
 
 
+_DIGIT_WORDS = ("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven",
+                "Eight", "Nine")
+
+
+def _macro_name(*parts: str) -> str:
+    """A TeX-legal control sequence name built from arbitrary identifiers.
+
+    ``\\newcommand`` names may contain letters only, so underscores and
+    hyphens become word boundaries and digits are spelled out:
+    ``layer_ablation_top1`` -> ``LayerAblationTopOne``.
+    """
+    out = []
+    for part in parts:
+        for word in str(part).replace("-", "_").split("_"):
+            if not word:
+                continue
+            chars = [_DIGIT_WORDS[int(c)] if c.isdigit() else c for c in word]
+            joined = "".join(chars)
+            out.append(joined[0].upper() + joined[1:])
+    return "".join(out)
+
+
+def _cv_a(ess: float, batch: int) -> float:
+    """Weight dispersion recovered from an effective sample size."""
+    if not batch or ess <= 0:
+        return float("nan")
+    return float(np.sqrt(max(batch / ess - 1.0, 0.0)))
+
+
+def write_tex_macros(
+    results: dict[str, dict],
+    pretrained_score: float,
+    out_path: Path,
+    config: dict | None = None,
+    prefix: str = "rw",
+    scale: float = 1.0,
+) -> Path:
+    """Write ``\\newcommand`` definitions for every headline quantity.
+
+    The paper workspace expects generated numbers to reach the manuscript
+    through macros so each is traceable to the run that produced it, rather
+    than being retyped as a literal.
+
+    Each quantity is emitted at the number of decimals the manuscript prints
+    it with, not at a uniform significant-figure count. A macro is a literal
+    substitution: ``%.4g`` would render ``\\rwGroupMeanA`` as ``9.744`` where
+    the paper prints ``9.74``, silently changing the displayed precision at
+    every site. Scores, standard deviations and group statistics take two
+    decimals; effective sample size takes none, which is how Section 6.4
+    quotes it.
+
+    Args:
+        results:          Dict mapping ablation_name -> result entry.
+        pretrained_score: Pretrained model eval score.
+        out_path:         File to write, conventionally ``results.tex``.
+        config:           The run's config, read for ``BATCH_SIZE`` so
+                          :math:`\\mathrm{CV}_A` and ESS can be emitted.
+        prefix:           Macro-name prefix, keeping these out of the way of
+                          LaTeX's own names. Two suites sharing one
+                          ``results.tex`` need different prefixes.
+        scale:            Multiplier on score-like quantities before
+                          formatting, for a suite whose metric is a fraction
+                          the paper reports as a percentage. Never applied to
+                          ESS or :math:`\\mathrm{CV}_A`, which are unitless.
+
+    Returns:
+        The path written.
+    """
+    cfg = config or {}
+    batch = int(cfg.get("BATCH_SIZE") or cfg.get("batch_size") or 0)
+
+    def score(value: float, decimals: int = 2) -> str:
+        return f"{float(value) * scale:.{decimals}f}"
+
+    lines = [
+        "% Generated by experiments/rl_finetuning/analysis/tables.py.",
+        "% Do not hand-edit: regenerate with --emit-tex-macros.",
+        "",
+        f"\\newcommand{{\\{prefix}PretrainedScore}}{{{score(pretrained_score)}}}",
+    ]
+    if batch:
+        lines.append(f"\\newcommand{{\\{prefix}BatchSize}}{{{batch}}}")
+
+    within_seed_var: list[float] = []
+    baseline = (
+        float(results["baseline_rl"]["score"]) if "baseline_rl" in results else None
+    )
+    for name in sorted(results):
+        res = results[name]
+        tag = _macro_name(name)
+        lines.append(
+            f"\\newcommand{{\\{prefix}Score{tag}}}{{{score(res['score'])}}}"
+        )
+        # Magnitude only: the manuscript carries the sign as $-$ / $+$.
+        lines.append(
+            f"\\newcommand{{\\{prefix}DeltaPretrained{tag}}}"
+            f"{{{score(abs(float(res['score']) - pretrained_score))}}}"
+        )
+        if baseline is not None:
+            lines.append(
+                f"\\newcommand{{\\{prefix}DeltaBaseline{tag}}}"
+                f"{{{score(abs(float(res['score']) - baseline))}}}"
+            )
+        lines.append(
+            f"\\newcommand{{\\{prefix}ScoreSd{tag}}}"
+            f"{{{score(res.get('score_std', 0.0))}}}"
+        )
+        scores = [float(s) for s in res.get("all_scores", [])]
+        if len(scores) >= 2:
+            within_seed_var.append(float(np.var(scores, ddof=1)))
+
+        ess_series = res["history"].effective_batch_size
+        if ess_series:
+            ess = float(np.mean(ess_series))
+            lines.append(f"\\newcommand{{\\{prefix}Ess{tag}}}{{{ess:.0f}}}")
+            if batch:
+                cv = float(np.mean([_cv_a(e, batch) for e in ess_series if e > 0]))
+                lines.append(f"\\newcommand{{\\{prefix}CvA{tag}}}{{{cv:.2f}}}")
+
+    # Pooled within-condition sd across seeds: the seed noise a single
+    # condition's score carries, not the spread between conditions.
+    if within_seed_var:
+        pooled = float(np.sqrt(np.mean(within_seed_var)))
+        lines.append(f"\\newcommand{{\\{prefix}PooledSeedSd}}{{{score(pooled)}}}")
+
+    group_df = make_group_summary_table(results)
+    for row in group_df.iter_rows(named=True):
+        tag = _macro_name(row["Group"])
+        for col, suffix in (
+            ("Mean", "GroupMean"),
+            ("Best", "GroupBest"),
+            ("Worst", "GroupWorst"),
+            ("StdDev", "GroupSd"),
+        ):
+            lines.append(
+                f"\\newcommand{{\\{prefix}{suffix}{tag}}}{{{score(row[col])}}}"
+            )
+        lines.append(f"\\newcommand{{\\{prefix}GroupN{tag}}}{{{int(row['N'])}}}")
+        if baseline is not None:
+            lines.append(
+                f"\\newcommand{{\\{prefix}GroupDelta{tag}}}"
+                f"{{{score(abs(float(row['Mean']) - baseline))}}}"
+            )
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text("\n".join(lines) + "\n")
+    logger.info("Saved %s (%d macros)", out_path, len(lines) - 3)
+    return out_path
+
+
 def generate_summary_tables(
     results: dict[str, dict],
     pretrained_score: float,
     output_dir: Path,
     pretrained_ach_rates: dict[str, float] | None = None,
+    emit_tex_macros: bool = False,
+    config: dict | None = None,
 ) -> dict[str, pl.DataFrame]:
     """Generate all summary tables and save to output_dir/tables/.
 
@@ -727,6 +895,11 @@ def generate_summary_tables(
         pretrained_ach_rates: Optional per-achievement unlock rates for the pretrained
                               baseline (keys = achievement name, values in [0, 1]).
                               When provided, a per-achievement summary table is generated.
+        emit_tex_macros:      Also write ``tables/results.tex``, one
+                              ``\\newcommand`` per headline quantity, for the
+                              manuscript to cite instead of a literal.
+        config:               The run's config, needed by the macro file for
+                              ``BATCH_SIZE``.
 
     Returns:
         Dict mapping table name -> polars DataFrame.
@@ -817,6 +990,11 @@ def generate_summary_tables(
                 caption="Per-environment (per-achievement) win rates at final eval.",
                 label="tab:per_env",
             )
+
+    if emit_tex_macros:
+        write_tex_macros(
+            results, pretrained_score, tables_dir / "results.tex", config=config
+        )
 
     logger.info("All tables saved to %s", tables_dir)
     return tables

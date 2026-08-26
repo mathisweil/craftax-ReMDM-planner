@@ -42,7 +42,7 @@ craftax-ReMDM-planner/
 ├── src/                     Model, diffusion, planner pipelines
 ├── experiments/
 │   └── rl_finetuning/       RL fine-tuning ablation suite (run_ablations.py)
-├── scripts/                 Param counter, PPO evaluator, HF upload utilities
+├── scripts/                 Param counter, PPO evaluator, paper figures, HF upload utilities
 ├── tests/                   Smoke suite — uv run pytest
 ├── checkpoints/             Gitignored — offline/, online/, ppo_agents/ (see Checkpoints)
 ├── results/inference/       Eval JSONs from --mode inference (published, see Checkpoints)
@@ -278,6 +278,23 @@ python experiments/rl_finetuning/run_ablations.py --checkpoint $PRETRAINED_CKPT 
 `scripts/hf_upload_demo.py` reads `outputs/craftax_classic_final_results/{figures,tables}`
 from the working copy, so fetch or regenerate before running it. `demo_craftax.ipynb`
 needs no local copy — it reads them from its own `snapshot_download`.
+
+### Paper figures
+
+The manuscript's figures put Craftax Classic and MiniHack in one figure, so they are
+built by `scripts/paper_figures.py` rather than by the single-environment
+`analysis/plots.py`. It reads both repositories' `results.json` and emits vector PDF
+at NeurIPS column width:
+
+```bash
+uv run python scripts/paper_figures.py \
+    --minihack-results ../minihack-ReMDM-planner/results/experiments/rl_finetuning/outputs/minihack_ablations/results.json \
+    --outdir results/paper_figures
+```
+
+The MiniHack path defaults to that sibling checkout. Pass `--emit-tex-macros` to
+`run_ablations.py` to also write `tables/results.tex`, one `\newcommand` per headline
+quantity, so the manuscript cites generated numbers instead of retyping them.
 
 **Match the config to the checkpoint.** The model is built from the config, not the checkpoint, and a mismatch raises at restore. All released diffusion checkpoints are `d_model` 384, `n_heads` 8, `n_layers` 6, `d_ff` 768 — the architecture `defaults.yaml` also carries — so use the matching `final_*` config, which additionally sets the right `env_name` and recipe values:
 

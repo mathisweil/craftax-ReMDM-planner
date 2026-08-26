@@ -1549,7 +1549,7 @@ def run_ablation(
     rng: jax.Array,
     wandb_run: Any = None,
     output_dir: Any = None,
-) -> tuple[AblationHistory, float, Any]:
+) -> tuple[AblationHistory, float, Any, dict[str, float]]:
     """Run one complete ablation (Python-level wrapper around make_run_ablation).
 
     Handles EWC Fisher estimation (which requires rollouts before JIT),
@@ -1572,7 +1572,9 @@ def run_ablation(
         output_dir:        Optional Path for per-iteration checkpoint saving.
 
     Returns:
-        Tuple of ``(history, final_score, final_params)``.
+        Tuple of ``(history, final_score, final_params, final_ach)``, where
+        ``final_ach`` is the per-achievement unlock rate of the same post-loop
+        evaluation that produced ``final_score``.
     """
     logger.info("=" * 60)
     logger.info("ABLATION: %s  [Group %s]", spec.name, spec.group)
@@ -1684,13 +1686,14 @@ def run_ablation(
         final_params = jax.device_get(final_carry.ema_params)
     final_score = float(final_info.get("returned_episode_returns", jnp.array(0.0)))
 
-    # Extract per-achievement unlock rates from final eval
+    # Per-achievement detail of the *same* evaluation that produced
+    # `final_score`. It is returned separately rather than written over the
+    # last entry of `history.per_achievement_rates`: that entry belongs to the
+    # last in-loop evaluation, a different draw, and overwriting it made the
+    # achievement tables and the headline score disagree by construction.
     final_ach = {
         k: float(v) / 100.0 for k, v in final_info.items() if "achievement" in k.lower()
     }
-    # Overwrite the empty dicts in history with final eval achievements
-    if history.per_achievement_rates:
-        history.per_achievement_rates[-1] = final_ach
 
     logger.info("  [%s] FINAL score: %.4f", spec.name, final_score)
 
@@ -1713,4 +1716,4 @@ def run_ablation(
                 }
             )
 
-    return history, final_score, final_params
+    return history, final_score, final_params, final_ach
