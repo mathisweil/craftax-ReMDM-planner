@@ -791,10 +791,12 @@ def plot_achievement_breakdown(
                               names, values in [0, 1]).
         output_dir:           Output directory for the figure.
     """
-    # Collect ablations that have at least two eval checkpoints.
+    # Collect ablations with at least two *populated* eval checkpoints. Empty
+    # entries are checkpoints where the scan could not return variable-key
+    # dicts, not evaluations that unlocked nothing.
     valid: list[tuple[str, dict[str, float], dict[str, float]]] = []
     for name, res in results.items():
-        rates = res["history"].per_achievement_rates
+        rates = [r for r in res["history"].per_achievement_rates if r]
         if len(rates) >= 2:
             valid.append((name, rates[0], rates[-1]))
 

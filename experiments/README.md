@@ -225,7 +225,8 @@ experiments/rl_finetuning/outputs/{run_id}/
     ├── t_distribution.{csv,tex}
     ├── forgetting_analysis.{csv,tex}
     ├── hypothesis_verdict.{csv,tex}
-    └── achievement_summary.{csv,tex}      # Per-achievement final unlock rates
+    ├── achievement_summary.{csv,tex}      # Per-achievement final unlock rates
+    └── results.tex                        # --emit-tex-macros only: \newcommand per headline number
 ```
 
 **`results.json` schema:**
@@ -239,6 +240,10 @@ experiments/rl_finetuning/outputs/{run_id}/
       "score": 0.1456,        // mean across seeds
       "score_std": 0.008,     // std across seeds (0.0 if num_seeds=1)
       "all_scores": [0.1456], // per-seed scores
+      "final_ach_rates": {"achievement_collect_wood": 0.40, ...},
+                              // achievement detail of the same post-loop
+                              // evaluations that produced all_scores, seed-averaged
+      "all_final_ach_rates": [{...}],   // per-seed, before averaging
       "history": { ... }      // AblationHistory serialised
     }
   }
