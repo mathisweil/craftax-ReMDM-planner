@@ -17,6 +17,7 @@ Implements **25 ablations**: a baseline plus four groups (A: Regularisation, B: 
 ```
 rl_finetuning/
 ├── run_ablations.py          # CLI entry point
+├── measure_gdelta.py         # Measures the return term g_delta of the decomposition (no training)
 ├── ablations/
 │   ├── losses.py             # All loss/objective variants as factory functions
 │   ├── optimizers.py         # LLRD, LoRA, gradient surgery, param masking
@@ -159,6 +160,35 @@ the refusal `--merge` performs are the same policy.
 ```bash
 python experiments/rl_finetuning/run_ablations.py --list
 ```
+
+### Measuring the return term (`measure_gdelta.py`)
+
+Loads the pretrained checkpoint, collects one on-policy batch from it, and evaluates
+`grad L_BC`, `g_delta` and `grad L_RW` on that batch at those parameters under a shared
+`(z_t, t)` draw, so the only difference between the three is the weight vector. It repeats
+for the four weighting ablations (`baseline_rl`, `advantage_clip`, `normalized_adv`,
+`bc_wins`) and reports `CV_A`, `Abar`, `ESS/B`, the norm ratio and the cosine, plus a
+shuffled-`delta` null that keeps the weight multiset and destroys its association with each
+window's return. No training and no optimiser step occur; it runs on a laptop CPU.
+
+`--config` accepts a `results.json` from the ablation suite or a plain config dict. Output
+defaults to `experiments/rl_finetuning/outputs/{run_id}/gdelta_seed{seed}.json`.
+
+**Reproduction (three rollout seeds, then aggregate):**
+```bash
+for s in 0 1 2; do
+  python experiments/rl_finetuning/measure_gdelta.py \
+      --ckpt results/checkpoints/online/Craftax-Classic-Symbolic-v1-Online-Diffusion-DAgger-100M \
+      --config results/experiments/rl_finetuning/outputs/craftax_classic_ablations/results.json \
+      --seed ${s} --run-id gdelta
+done
+python experiments/rl_finetuning/measure_gdelta.py --aggregate --run-id gdelta \
+    --inputs experiments/rl_finetuning/outputs/gdelta/gdelta_seed{0,1,2}.json
+```
+
+A single run's `ratio_std_draws` / `cos_std_draws` are dispersions over that seed's eight
+`(z_t, t)` draws. `--aggregate` averages the per-seed means and reports the standard
+deviation **across seeds**, which is what the paper's table prints.
 
 ### Ablations
 
