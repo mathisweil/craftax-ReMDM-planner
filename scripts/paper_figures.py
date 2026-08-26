@@ -9,8 +9,8 @@ Usage::
 
     uv run python scripts/paper_figures.py --outdir results/paper_figures
 
-Copy the emitted PDFs into ``papers/myopic-planner/src/figures/`` and change
-the ``\\includegraphics`` extensions.
+Copy the emitted PDFs into ``papers/current/src/figures/`` and change the
+``\\includegraphics`` extensions.
 
 Conventions that must not drift, because published numbers depend on them:
 
@@ -25,10 +25,27 @@ Conventions that must not drift, because published numbers depend on them:
   ``advantage_clip`` and ``normalized_adv`` carry their own logged
   pre-transform value, not the baseline's.
 
-Two defects in the published PNGs are corrected here: the ``fig9``
-"pretrained" annotation now sits on the checkpoint line it labels rather than
-beside the lowest-scoring point, and ``normalized_adv`` is inside the scatter
-y-limits rather than silently clipped away.
+Defects in the published PNGs corrected here:
+
+* ``fig9``: the "pretrained" annotation sits on the checkpoint line it labels
+  rather than beside the lowest-scoring point, and ``normalized_adv`` is
+  inside the scatter y-limits rather than silently clipped away.
+* ``fig8``: baseline RL is drawn last and larger. Its data was always present;
+  at equal zorder four conditions within a marker width of it -- two pixels,
+  for ``mixed_replay`` -- painted over it, so the legend's black swatch
+  pointed at nothing the reader could find. The legend now uses marker
+  swatches rather than line swatches, and the log exponents are legible.
+* ``fig2``: LoRA's Craftax drift is exactly 0 at every probe, which a log axis
+  drops silently, taking the curve the caption's low end refers to with it. It
+  is now pinned to ``KL_FLOOR`` and drawn dotted with markers, so it reads as
+  pinned rather than measured there.
+* ``fig6``: ``collect_diamond`` is the only tier-4 achievement and runs at
+  0.001 before and 0 after, so its bars were sub-pixel and the tier-4 legend
+  colour appeared nowhere. Near-zero bars are drawn at a floor height with
+  their true value annotated.
+* ``fig2``, ``fig3``, ``fig4``: the conditions the manuscript names in prose
+  are labelled, since these panels otherwise encode 25 conditions in five
+  group colours.
 """
 
 from __future__ import annotations
@@ -129,6 +146,21 @@ ACHIEVEMENT_TIER = {
 # decade below the smallest non-zero value in the panel; the appendix already
 # warns that its drift figures are not comparable with the others.
 KL_FLOOR = 1e-4
+
+# Conditions the manuscript singles out by name ("excluding LoRA",
+# "normalised advantages aside"). These get a leader-line label in the
+# group-coloured trace panels so the reader can find the line being discussed.
+NAMED_IN_PROSE = ("lora", "normalized_adv")
+
+# Minimum drawn bar height in fig6, as a fraction of the 0-1 rate axis. A
+# rate below this is drawn as a floor stub with its true value annotated:
+# without it a tier whose only achievement runs at ~0 is invisible, and the
+# tier legend points at a colour the reader cannot find.
+BAR_FLOOR = 0.012
+
+# Marker area in pt^2 for the score-vs-KL scatter, shared with its legend so
+# the swatch is the same size as the mark it stands for.
+SCATTER_AREA = 18
 
 COLUMN_WIDTH_IN = 5.5  # NeurIPS \linewidth
 
@@ -239,16 +271,42 @@ def figure_legend(
     )
 
 
-def group_legend_handles(*, baseline: bool = True, pretrained: bool = False) -> tuple:
+def _marker_handle(color: str) -> Line2D:
+    """A swatch that matches a plotted scatter mark, not a line."""
+    return Line2D(
+        [],
+        [],
+        linestyle="none",
+        marker="o",
+        markerfacecolor=color,
+        markeredgecolor="white",
+        markeredgewidth=0.3,
+        markersize=math.sqrt(SCATTER_AREA),
+    )
+
+
+def group_legend_handles(
+    *, baseline: bool = True, pretrained: bool = False, marker: bool = False
+) -> tuple:
+    """Group swatches. ``marker=True`` for a scatter plot, where a line
+    swatch matches nothing the reader can see."""
     handles, labels = [], []
     if pretrained:
         handles.append(Line2D([], [], color="#404040", linestyle="--", linewidth=1.0))
         labels.append("Pretrained")
     if baseline:
-        handles.append(Line2D([], [], color="black", linewidth=1.6))
+        handles.append(
+            _marker_handle("black")
+            if marker
+            else Line2D([], [], color="black", linewidth=1.6)
+        )
         labels.append("Baseline RL")
     for key, label in GROUP_LABEL.items():
-        handles.append(Line2D([], [], color=GROUP_COLOR[key], linewidth=1.0))
+        handles.append(
+            _marker_handle(GROUP_COLOR[key])
+            if marker
+            else Line2D([], [], color=GROUP_COLOR[key], linewidth=1.0)
+        )
         labels.append(label)
     return handles, labels
 
@@ -319,23 +377,76 @@ def fig1_finetuning_trajectories(data: dict, outdir: Path) -> Path:
     return save(fig, outdir, "fig1_finetuning_trajectories")
 
 
-def _annotate_condition(ax: plt.Axes, entry: dict | None, label: str) -> None:
-    """Label a named trace at its final point with a short leader line."""
+def _annotate_condition(
+    ax: plt.Axes,
+    entry: dict | None,
+    label: str,
+    *,
+    key_x: str = "eval_iters",
+    key_y: str = "eval_score",
+    offset: tuple[float, float] = (-46, 26),
+    y_override: float | None = None,
+) -> None:
+    """Label a named trace at its final point with a short leader line.
+
+    The manuscript singles conditions out by name, but these panels encode by
+    group colour only -- five colours for 25 conditions -- so a named
+    condition is otherwise unfindable.
+    """
     if entry is None:
         return
-    x, y = series(entry, "eval_iters"), series(entry, "eval_score")
-    if not x.size:
+    x, y = series(entry, key_x), series(entry, key_y)
+    if not x.size or not y.size:
         return
+    yv = y[-1] if y_override is None else y_override
+    if not np.isfinite(yv):
+        return
+    dx, dy = offset
+    # Flip the label below the point when the point sits high in the panel,
+    # so the text stays inside the axes instead of running into the title.
+    frac = ax.transAxes.inverted().transform(ax.transData.transform((x[-1], yv)))[1]
+    if (dy > 0 and frac > 0.62) or (dy < 0 and frac < 0.2):
+        dy = -dy
     ax.annotate(
         label,
-        xy=(x[-1], y[-1]),
-        xytext=(-46, 26),
+        xy=(x[-1], yv),
+        xytext=(dx, dy),
         textcoords="offset points",
         fontsize=6,
-        color="#555555",
+        color="#333333",
         ha="center",
+        va="center",
+        # These panels are dense: without a backing box the label is
+        # unreadable wherever it lands among the traces.
+        bbox={"facecolor": "white", "edgecolor": "none", "pad": 0.8, "alpha": 0.85},
         arrowprops={"arrowstyle": "-", "linewidth": 0.4, "color": "#999999"},
+        zorder=10,
     )
+
+
+def _annotate_named(
+    ax: plt.Axes,
+    res: dict,
+    key_x: str,
+    key_y: str,
+    *,
+    pinned: frozenset[str] = frozenset(),
+) -> None:
+    """Label every condition the prose names, where the panel has data.
+
+    A pinned series carries no real endpoint to point at, so its label is
+    anchored to the floor the curve was drawn at.
+    """
+    for i, name in enumerate(NAMED_IN_PROSE):
+        _annotate_condition(
+            ax,
+            res["ablations"].get(name),
+            name,
+            key_x=key_x,
+            key_y=key_y,
+            offset=(-46, 26) if i == 0 else (-46, -26),
+            y_override=KL_FLOOR if name in pinned else None,
+        )
 
 
 def _trace_panel(
@@ -346,14 +457,39 @@ def _trace_panel(
     *,
     logy: bool = False,
     zero_line: bool = False,
-) -> None:
-    """All conditions faint by group, baseline RL bold in black."""
+    pin_zero: bool = False,
+) -> frozenset[str]:
+    """All conditions faint by group, baseline RL bold in black.
+
+    With ``pin_zero`` a series holding non-positive values -- which matplotlib
+    drops silently from a log axis, taking the whole curve with it -- is
+    redrawn at ``KL_FLOOR``, dotted and marked so it reads as pinned rather
+    than measured there. Returns the names that were pinned.
+    """
+    pinned: list[str] = []
     for name, entry in res["ablations"].items():
         if name == "baseline_rl":
             continue
+        y = series(entry, key_y)
+        is_pinned = pin_zero and y.size and bool(np.any(y <= 0))
+        if is_pinned:
+            pinned.append(name)
+            ax.plot(
+                series(entry, key_x),
+                np.where(y <= 0, KL_FLOOR, y),
+                color=condition_color(name),
+                linewidth=0.9,
+                linestyle=":",
+                marker="v",
+                markersize=2.2,
+                markevery=2,
+                alpha=0.95,
+                zorder=4,
+            )
+            continue
         ax.plot(
             series(entry, key_x),
-            series(entry, key_y),
+            y,
             color=condition_color(name),
             linewidth=0.7,
             alpha=0.7,
@@ -370,18 +506,46 @@ def _trace_panel(
         ax.axhline(0.0, linestyle=":", color="#777777", linewidth=0.6)
     if logy:
         ax.set_yscale("log")
+    return frozenset(pinned)
 
 
 def fig2_repr_drift(data: dict, outdir: Path) -> Path:
     """KL from the pretrained checkpoint over fine-tuning, log scale."""
     fig, axes = new_figure(2, 2.3)
+    any_pinned = False
     for ax, env in zip(axes, ("craftax", "minihack"), strict=True):
-        _trace_panel(ax, data[env], "repr_drift_iters", "repr_drift_kl", logy=True)
+        pinned = _trace_panel(
+            ax, data[env], "repr_drift_iters", "repr_drift_kl", logy=True, pin_zero=True
+        )
+        if pinned:
+            any_pinned = True
+            print(
+                f"  fig2 [{env}]: pinned to KL_FLOOR={KL_FLOOR:g} (exact zero, "
+                f"absent from a log axis): {', '.join(sorted(pinned))}",
+                file=sys.stderr,
+            )
+        _annotate_named(
+            ax, data[env], "repr_drift_iters", "repr_drift_kl", pinned=pinned
+        )
         ax.set_title(ENV_TITLE[env])
         ax.set_xlabel("Fine-tuning iteration")
         ax.set_ylabel("KL from pretrained")
     fig.tight_layout()
-    figure_legend(fig, *group_legend_handles(), ncol=5, y=0.02)
+    handles, labels = group_legend_handles()
+    if any_pinned:
+        handles.append(
+            Line2D(
+                [],
+                [],
+                color="#777777",
+                linestyle=":",
+                linewidth=0.9,
+                marker="v",
+                markersize=2.2,
+            )
+        )
+        labels.append(f"pinned at {KL_FLOOR:g} (exact 0)")
+    figure_legend(fig, handles, labels, ncol=6, y=0.02)
     return save(fig, outdir, "fig2_repr_drift")
 
 
@@ -391,6 +555,7 @@ def fig3_cka(data: dict, outdir: Path) -> Path:
     for ax, env in zip(axes, ("craftax", "minihack"), strict=True):
         _trace_panel(ax, data[env], "cka_iters", "cka_similarity")
         ax.set_ylim(0.0, 1.02)
+        _annotate_named(ax, data[env], "cka_iters", "cka_similarity")
         ax.set_title(ENV_TITLE[env])
         ax.set_xlabel("Fine-tuning iteration")
         ax.set_ylabel("CKA vs pretrained")
@@ -405,6 +570,7 @@ def fig4_grad_alignment(data: dict, outdir: Path) -> Path:
     for ax, env in zip(axes, ("craftax", "minihack"), strict=True):
         _trace_panel(ax, data[env], "grad_align_iters", "grad_align", zero_line=True)
         ax.set_ylim(-1.0, 1.0)
+        _annotate_named(ax, data[env], "grad_align_iters", "grad_align")
         ax.set_title(ENV_TITLE[env])
         ax.set_xlabel("Fine-tuning iteration")
         ax.set_ylabel("cos(RL grad, BC grad)")
@@ -472,24 +638,38 @@ def fig6_achievements(data: dict, outdir: Path) -> Path:
     width = 0.4
     for i, name in enumerate(ordered):
         color = TIER_COLOR[ACHIEVEMENT_TIER[name]]
-        ax_bar.bar(
-            i - width / 2,
-            pre.get(name, 0.0),
-            width,
-            color=color,
-            alpha=0.95,
-            linewidth=0,
-        )
-        ax_bar.bar(
-            i + width / 2,
-            post.get(name, 0.0),
-            width,
-            color=color,
-            alpha=0.35,
-            hatch="///",
-            edgecolor=color,
-            linewidth=0.4,
-        )
+        # collect_diamond is the only tier-4 achievement and runs at 0.001
+        # before and 0.000 after, so at this axis height its bars are
+        # sub-pixel: the legend advertised a tier colour that appeared
+        # nowhere. Draw a floor stub instead, and mark the true value, so the
+        # colour is findable without misreporting the rate.
+        for offset, value, faint in (
+            (-width / 2, pre.get(name, 0.0), False),
+            (+width / 2, post.get(name, 0.0), True),
+        ):
+            stub = value < BAR_FLOOR
+            ax_bar.bar(
+                i + offset,
+                BAR_FLOOR if stub else value,
+                width,
+                color=color,
+                alpha=0.35 if faint else 0.95,
+                hatch="///" if faint else None,
+                edgecolor=color,
+                linewidth=0.4 if faint else 0,
+            )
+            if stub:
+                ax_bar.annotate(
+                    f"{value:.3f}".rstrip("0").rstrip(".") if value else "0",
+                    xy=(i + offset, BAR_FLOOR),
+                    xytext=(0, 1.5),
+                    textcoords="offset points",
+                    ha="center",
+                    va="bottom",
+                    rotation=90,
+                    fontsize=4.5,
+                    color=color,
+                )
     ax_bar.set_xticks(range(len(ordered)))
     ax_bar.set_xticklabels(
         [n.replace("_", " ") for n in ordered], rotation=45, ha="right", fontsize=6
@@ -590,33 +770,71 @@ def fig7_tbin_gradients(data: dict, outdir: Path) -> Path:
     return save(fig, outdir, "fig7_tbin_gradients")
 
 
+def _kl_point(
+    ax: plt.Axes,
+    name: str,
+    entry: dict,
+    *,
+    size: float = SCATTER_AREA,
+    edge: float = 0.3,
+    zorder: int = 3,
+) -> None:
+    """One condition's (final KL, final score) mark, zero pinned to the floor."""
+    ax.scatter(
+        max(float(series(entry, "repr_drift_kl")[-1]), KL_FLOOR),
+        entry["score"],
+        s=size,
+        color=condition_color(name),
+        edgecolor="white",
+        linewidth=edge,
+        zorder=zorder,
+    )
+
+
 def fig8_score_vs_kl(data: dict, outdir: Path) -> Path:
-    """Final score against final KL from the checkpoint, log x."""
+    """Final score against final KL from the checkpoint, log x.
+
+    Baseline RL is drawn last at a higher zorder. Several conditions land
+    within a marker width of it -- ``mixed_replay`` is under two pixels away
+    at print size -- and at equal zorder the later scatter call painted over
+    it, which is why the published figure has no locatable black point.
+    """
     fig, axes = new_figure(2, 2.3)
     for ax, env in zip(axes, ("craftax", "minihack"), strict=True):
         res = data[env]
+
+        skipped = []
         for name, entry in res["ablations"].items():
-            kl = series(entry, "repr_drift_kl")
-            if not kl.size:
+            if not series(entry, "repr_drift_kl").size:
+                skipped.append(name)
                 continue
-            ax.scatter(
-                max(float(kl[-1]), KL_FLOOR),
-                entry["score"],
-                s=18,
-                color=condition_color(name),
-                edgecolor="white",
-                linewidth=0.3,
-                zorder=3,
+            if name == "baseline_rl":
+                continue
+            _kl_point(ax, name, entry)
+        if skipped:
+            print(
+                f"  fig8 [{env}]: no repr_drift_kl, point not plotted: "
+                f"{', '.join(sorted(skipped))}",
+                file=sys.stderr,
+            )
+        base = res["ablations"]["baseline_rl"]
+        if series(base, "repr_drift_kl").size:
+            _kl_point(
+                ax, "baseline_rl", base, zorder=6, size=SCATTER_AREA + 6, edge=0.5
             )
         ax.axhline(
             res["pretrained_score"], linestyle="--", color="#404040", linewidth=1.0
         )
         ax.set_xscale("log")
+        # The mathtext exponent renders at ~0.7x the tick size; at the 6.5 pt
+        # default that is 4.55 pt, the smallest text in the figure set.
+        ax.tick_params(axis="x", labelsize=8.0)
         ax.set_title(ENV_TITLE[env])
         ax.set_xlabel("Final KL from pretrained")
         ax.set_ylabel(SCORE_LABEL[env])
     fig.tight_layout()
-    handles, labels = group_legend_handles(pretrained=True)
+    # Marker swatches: this is a scatter, so a line swatch matches nothing.
+    handles, labels = group_legend_handles(pretrained=True, marker=True)
     figure_legend(fig, handles, labels, ncol=6, y=0.02)
     return save(fig, outdir, "fig8_score_vs_kl")
 
