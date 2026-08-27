@@ -144,7 +144,8 @@ poolable** with it:
 | `eval_steps` | 1024 | 512 | 1024 | 512 | noisier score |
 | `mixed_replay_buffer_size` | 20000 | 10000 | 10000 | 10000 | replay horizon |
 
-Differences in diagnostic cadence (`eval_every`, `cka_every`,
+Values above are post-layering: a config's own value, or what it inherits from
+`ablations_default.yaml`. Differences in diagnostic cadence (`eval_every`, `cka_every`,
 `cka_batch_size`, `per_layer_every`, `repr_drift_every`, `grad_align_every`,
 `t_analysis_every`) are wall-clock only and do not affect poolability.
 
@@ -252,6 +253,8 @@ experiments/rl_finetuning/outputs/{run_id}/
 │   ├── cka_similarity.png
 │   ├── t_distribution_analysis.png
 │   ├── t_bin_grad_norms_{name}.png
+│   ├── t_bin_norms_heatmap.png            # Per-t-bin gradient norms, final iteration
+│   ├── group_comparison.png              # Boxplot of scores by ablation group
 │   ├── win_rate_and_effective_batch_size.png
 │   ├── achievement_breakdown.png          # Start vs end achievement rates (stacked bars)
 │   ├── achievement_collapse_{name}.png    # Per-ablation achievement heatmap over time
@@ -264,8 +267,11 @@ experiments/rl_finetuning/outputs/{run_id}/
 └── tables/
     ├── main_results.{csv,tex}
     ├── significance_test.txt              # Max-statistic permutation test + p floor + bootstrap CI
+    ├── group_summary.{csv,tex}            # Group-level summary table
     ├── gradient_analysis.{csv,tex}
     ├── t_distribution.{csv,tex}
+    ├── repr_drift.{csv,tex}               # KL drift values at the final iteration
+    ├── per_env.{csv,tex}                  # Per-achievement rates; needs pretrained_ach_rates
     ├── forgetting_analysis.{csv,tex}
     ├── hypothesis_verdict.{csv,tex}
     ├── achievement_summary.{csv,tex}      # Per-achievement final unlock rates
@@ -286,12 +292,16 @@ completed.
 {
   "pretrained_score": 0.1234,
   "pretrained_ach_rates": {"achievement_collect_wood": 0.42, ...},
-  "config": {"MAX_ITER": 1000, ...},
+  "config": {"MAX_ITER": 1000, ...},   // the merged config, keys uppercase
+  "merge_provenance": { ... },         // --merge only: inputs + which supplied config
   "ablations": {
     "kl_penalty": {
       "score": 0.1456,        // mean across seeds
       "score_std": 0.008,     // std across seeds (0.0 if num_seeds=1)
       "all_scores": [0.1456], // per-seed scores
+      "base_seed": 42, "seeds": [42], // seeding actually used
+      "wall_clock_s": 812.4,
+      "per_seed_finals": [{...}],     // per-seed end-of-run metrics
       "final_ach_rates": {"achievement_collect_wood": 0.40, ...},
                               // achievement detail of the same post-loop
                               // evaluations that produced all_scores, seed-averaged

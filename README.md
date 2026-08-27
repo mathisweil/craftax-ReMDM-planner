@@ -42,12 +42,14 @@ craftax-ReMDM-planner/
 ├── src/                     Model, diffusion, planner pipelines
 ├── experiments/
 │   └── rl_finetuning/       RL fine-tuning ablation suite (run_ablations.py)
-├── scripts/                 Param counter, PPO evaluator, paper figures, HF upload utilities
+├── scripts/                 Param counter, PPO evaluator, paper figures, HF upload, provisioning
 ├── tests/                   Smoke suite — uv run pytest
 ├── checkpoints/             Gitignored — offline/, online/, ppo_agents/ (see Checkpoints)
-├── results/inference/       Eval JSONs from --mode inference (published, see Checkpoints)
+├── results/                 Gitignored, created on demand — inference/ eval JSONs and
+│                            paper_figures/ manuscript PDFs, both published (see Checkpoints)
 ├── demo_craftax.ipynb       Demo notebook
 ├── main.py                  CLI entry point
+├── RUNS.md                  Measurement runs and what they found
 └── pyproject.toml           uv project — deps, cuda12/cuda13 extras, dev group
 ```
 
@@ -185,7 +187,7 @@ python main.py --mode online --ppo-checkpoint <ppo> --config configs/classic_exp
 
 ### RL fine-tuning ablation suite
 
-25 registered ablations (same names as in the minihack repo). See `experiments/README.md`.
+26 registered ablations (same names as in the minihack repo). See `experiments/README.md`.
 
 ```bash
 python experiments/rl_finetuning/run_ablations.py --list
@@ -236,9 +238,9 @@ python main.py --mode offline --ppo-checkpoint <ppo> --no-jit --override num_env
 | `configs/classic_exp_d_{100K,250K,850K,3M}_model.yaml` | Craftax Classic model-size scaling sweep |
 | `configs/craftax_exp_d_{500K,1M,3M,7M}_model.yaml` | Full Craftax model-size scaling sweep |
 | `configs/final_craftax_classic_{gpu_h200,gpu_24gb}.yaml` | Final Classic DAgger — `num_envs` and `seed` only; the recipe is `defaults.yaml` |
-| `configs/final_craftax_{gpu_h200,gpu_24gb}.yaml` | Final Full Craftax DAgger — the 11 keys where Full Craftax departs from the Classic recipe, plus `num_envs` and `seed` |
+| `configs/final_craftax_{gpu_h200,gpu_24gb}.yaml` | Final Full Craftax DAgger — the 8 keys where Full Craftax departs from the Classic recipe, plus `num_envs` and `seed` |
 
-Within each family the two cluster configs differ only in `num_envs` and `seed`. Nothing in the loader enforces that: the guard is `test_cluster_siblings_differ_only_in_num_envs_and_seed`. **A Full Craftax hyperparameter change must be made in both `final_craftax_*` files**, since with no inheritance those 11 keys are duplicated verbatim in each; a Classic one belongs in `defaults.yaml`.
+Within each family the two cluster configs differ only in `num_envs` and `seed`. Nothing in the loader enforces that: the guard is `test_cluster_siblings_differ_only_in_num_envs_and_seed`. **A Full Craftax hyperparameter change must be made in both `final_craftax_*` files**, since with no inheritance those 8 keys are duplicated verbatim in each; a Classic one belongs in `defaults.yaml`.
 
 Fairness-critical values are env-frame denominated (the six keys above) and rescaled by `resolve_scaled_hyperparams()` at load, so one recipe runs on any hardware tier. Key hyperparameters are documented inline in `configs/defaults.yaml`; the [appendix](#key-hyperparameters) tabulates them. Ablation-suite hyperparameters live in `experiments/rl_finetuning/configs/`, loaded by `run_ablations.py`, not `main.py`.
 
@@ -293,7 +295,7 @@ needs no local copy — it reads them from its own `snapshot_download`.
 
 The manuscript's figures put Craftax Classic and MiniHack in one figure, so they are
 built by `scripts/paper_figures.py` rather than by the single-environment
-`analysis/plots.py`. It reads both repositories' `results.json` and emits vector PDF
+`experiments/rl_finetuning/analysis/plots.py`. It reads both repositories' `results.json` and emits vector PDF
 at NeurIPS column width:
 
 ```bash
@@ -321,7 +323,7 @@ python main.py --mode online \
 
 ### Publishing to the Hub
 
-`scripts/hf_upload.py` rediscovers and uploads three things, each keeping its repo-relative path: `checkpoints/`, every `experiments/rl_finetuning/outputs/<run>/` holding a `results.json` (with `diagnosis.md`, `tables/`, `figures/`), and the eval JSONs in `results/inference/`. It drops W&B and hub config keys, shortens absolute paths and regenerates the model card.
+`scripts/hf_upload.py` rediscovers and uploads four things, each keeping its repo-relative path: `checkpoints/`, every `experiments/rl_finetuning/outputs/<run>/` holding a `results.json` (with `diagnosis.md`, `tables/`, `figures/`, `gdelta/`), the eval JSONs in `results/inference/`, and the manuscript figure PDFs in `results/paper_figures/`. It drops W&B and hub config keys, shortens absolute paths and regenerates the model card.
 
 ```bash
 HF_TOKEN=hf_xxx uv run python scripts/hf_upload.py --repo-id mathisweil/remdm-craftax-checkpoints --dry-run
@@ -333,7 +335,7 @@ HF_TOKEN=hf_xxx uv run python scripts/hf_upload.py --repo-id mathisweil/remdm-cr
 
 ## Results, citation, licence
 
-Results tables and the full method description are in the accompanying paper (under submission); `demo_craftax.ipynb` reproduces the headline evaluation. Citation to be added on publication. Licence: MIT, see `LICENSE`.
+Results tables and the full method description are in *Return-Weighted ELBO Fine-Tuning Degrades Masked Diffusion Planners* (under submission); `demo_craftax.ipynb` reproduces the headline evaluation. Citation to be added on publication. Licence: MIT, see `LICENSE`.
 
 ---
 
@@ -488,13 +490,14 @@ Stack (identical for training and inference): `env -> LogWrapper -> AutoResetEnv
 uv run pytest
 ```
 
-A CPU-only suite, 13 modules. Tiny synthetic data and a shrunken model throughout — no real checkpoints, datasets or network calls, and nothing written outside `tmp_path`. `conftest.py` forces `JAX_PLATFORMS=cpu` and disables W&B; there are no custom markers.
+A CPU-only suite, 14 modules. Tiny synthetic data and a shrunken model throughout — no real checkpoints, datasets or network calls, and nothing written outside `tmp_path`. `conftest.py` forces `JAX_PLATFORMS=cpu` and disables W&B; there are no custom markers.
 
 | File | Covers |
 |---|---|
-| `test_smoke_src.py`, `test_smoke_experiments.py` | that things **run**: imports, model from the real config, a gradient step, checkpoint round-trip, samplers, resolvers, every CLI entry point, and all 25 ablations' losses and optimizers |
-| `test_spec_*.py`, `test_method_spec*.py` | that things are **correct**: each canonical statement of `research/spec-*.md` pinned against the implementation |
+| `test_smoke_src.py`, `test_smoke_experiments.py` | that things **run**: imports, model from the real config, a gradient step, checkpoint round-trip, samplers, resolvers, every CLI entry point, and all 26 ablations' losses and optimizers |
+| `test_spec_*.py`, `test_method_spec*.py` | that things are **correct**: each canonical statement of the parent workspace's `research/spec-*.md` pinned against the implementation |
 | `test_config.py`, `test_recipe_values.py` | the preset, delta-only, cluster-sibling and poolability rules, and the shipped recipe values |
+| `test_gdelta.py`, `test_tex_macros.py` | the `--measure-gdelta` decomposition, and the `--emit-tex-macros` output: definitions only, uniquely named, letters only |
 | `test_gpu_agreement.py` | CPU/GPU agreement, skipped without a device |
 
 ## Implementation notes
