@@ -5,6 +5,11 @@ through a macro, so it is traceable to the run that produced it. That only
 holds if the emitted file really is nothing but definitions and no name is
 ever defined twice -- a collision would file one condition's number under a
 name that reads as another's.
+
+The results-derived fixtures skip without a local ``results.json``, which
+``outputs/`` does not carry into a fresh checkout, so the structural
+invariants are additionally run against a synthetic results dict that needs
+no run artefact. The minihack twin carries the same fixture.
 """
 
 from __future__ import annotations
@@ -18,6 +23,8 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import ROOT, import_or_skip
+
+training = import_or_skip("experiments.rl_finetuning.ablations.training")
 
 tables = import_or_skip("experiments.rl_finetuning.analysis.tables")
 run_ablations = import_or_skip("experiments.rl_finetuning.run_ablations")
@@ -44,6 +51,79 @@ def macro_names(text: str) -> list[str]:
         assert match, f"line {lineno} is not a macro definition: {line!r}"
         names.append(match.group(1))
     return names
+
+
+# ---------------------------------------------------------------------------
+# Synthetic results: the structural invariants hold for any input, so they
+# run everywhere rather than only on a machine that has just finished a run.
+# ---------------------------------------------------------------------------
+
+
+def _synthetic_entry(score: float) -> dict:
+    history = training.AblationHistory()
+    history.effective_batch_size = [1000.0, 900.0]
+    return {
+        "score": score,
+        "score_std": 0.5,
+        "all_scores": [score - 0.1, score, score + 0.1],
+        "history": history,
+    }
+
+
+@pytest.fixture(scope="module")
+def synthetic() -> tuple[dict, float, dict]:
+    """One real condition per group, plus the baseline deltas are taken against.
+
+    The names must be registry names: the group summary reads each
+    condition's group from ``REGISTRY``, not from the entry, so an invented
+    name would land in no group and the GroupMean macros would not appear.
+    """
+    results = {
+        "baseline_rl": _synthetic_entry(8.3),
+        "kl_penalty": _synthetic_entry(7.9),
+        "advantage_clip": _synthetic_entry(5.1),
+        "frozen_backbone": _synthetic_entry(9.0),
+        "reward_filtering": _synthetic_entry(8.6),
+    }
+    return results, 11.9, {"BATCH_SIZE": 1024}
+
+
+@pytest.fixture(scope="module")
+def synthetic_emitted(synthetic, tmp_path_factory) -> str:
+    results, pretrained, config = synthetic
+    out = tmp_path_factory.mktemp("tex_syn") / "results.tex"
+    tables.write_tex_macros(results, pretrained, out, config=config)
+    return out.read_text()
+
+
+def test_synthetic_file_is_definitions_only(synthetic_emitted):
+    assert macro_names(synthetic_emitted), "no macros emitted"
+    assert "\\def" not in synthetic_emitted, "must emit \\newcommand, never \\def"
+
+
+def test_synthetic_macro_names_are_unique(synthetic_emitted):
+    names = macro_names(synthetic_emitted)
+    duplicates = {n for n in names if names.count(n) > 1}
+    assert not duplicates, f"macro defined more than once: {sorted(duplicates)}"
+
+
+def test_synthetic_macro_names_are_legal_control_sequences(synthetic_emitted):
+    for name in macro_names(synthetic_emitted):
+        assert name.isalpha(), f"{name!r} is not letters-only"
+
+
+def test_synthetic_headline_quantities_are_covered(synthetic_emitted):
+    """The quantities the manuscript reports must all have a macro."""
+    names = set(macro_names(synthetic_emitted))
+    required = {
+        "rwPooledSeedSd",
+        "rwScoreBaselineRl",
+        "rwScoreSdBaselineRl",
+        "rwEssBaselineRl",
+        "rwCvABaselineRl",
+        *(f"rwGroupMean{g}" for g in "ABCD"),
+    }
+    assert required <= names, f"missing macros: {sorted(required - names)}"
 
 
 @pytest.fixture(scope="module")
@@ -193,13 +273,16 @@ def test_mangling_is_collision_free_over_the_registry():
     assert len(set(tags)) == len(tags), "two conditions mangle to one macro name"
 
 
-def test_collision_raises_rather_than_overwriting(suite, tmp_path):
+def test_collision_raises_rather_than_overwriting(synthetic, tmp_path):
     """The lossy mangling can collide; that must fail loudly.
 
     ``top1`` and ``top_one`` are distinct conditions that both become
     ``TopOne``. Silently overwriting would publish one under the other's name.
+
+    Driven from the synthetic fixture so it runs without a results.json, as
+    the minihack twin does.
     """
-    results, pretrained, config = suite
+    results, pretrained, config = synthetic
     entry = next(iter(results.values()))
     colliding = {"layer_ablation_top1": entry, "layer_ablation_top_one": entry}
     with pytest.raises(ValueError, match="collision"):
