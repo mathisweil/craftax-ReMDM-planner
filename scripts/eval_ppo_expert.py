@@ -61,9 +61,12 @@ def main() -> None:
     num_actions = env.action_space(env_params).n
     obs_dim = env.observation_space(env_params).shape[0]
 
+    # ActorCriticRNN reads its widths straight off this dict, so LAYER_SIZE has
+    # to be in it: passing only SEED raised KeyError('LAYER_SIZE') during
+    # `network.init`, which made every documented invocation of this script fail.
     agent = load_ppo_agent(
         a.path, num_actions, obs_dim, a.layer_size, a.model_type,
-        config={"SEED": a.seed}, num_envs=a.num_envs,
+        config={"SEED": a.seed, "LAYER_SIZE": a.layer_size}, num_envs=a.num_envs,
     )
 
     rng = jax.random.PRNGKey(a.seed)
