@@ -31,6 +31,7 @@ from experiments.rl_finetuning.ablations.losses import (
     _ewc_penalty,
     make_loss_advantage_clip,
     make_loss_baseline,
+    make_loss_bc_all,
     make_loss_bc_wins,
     make_loss_entropy_bonus,
     make_loss_ewc,
@@ -196,6 +197,35 @@ def test_bc_wins_averages_uniformly_over_winning_windows():
     all_wins = float(loss_fn(None, acts, obs, valid, rng, mask([1.0, 2.0, 3.0, 4.0])))
     uniform = float(make_loss_baseline(ctx)(None, acts, obs, valid, rng, jnp.ones(B)))
     assert all_wins == pytest.approx(uniform, abs=0.0)
+
+
+# ---------------------------------------------------------------------------
+# bc_all -- the unweighted-rollout arm
+# ---------------------------------------------------------------------------
+
+
+def test_bc_all_ignores_the_advantages_and_averages_over_the_whole_batch():
+    """bc_all separates "trained on self-generated rollouts" from
+    "weighted those rollouts by return": it must discard whatever weight
+    vector the pipeline hands it and reduce to the plain uniform ELBO.
+
+    Three weight vectors a return-weighted arm would score differently --
+    all-ones, a spread of real advantages, and the explicit None the
+    factory forwards -- must all give the identical loss, and that loss
+    must equal the baseline's on uniform weights. Unlike bc_wins it keeps
+    the losing windows, so an all-zero weight vector still carries signal.
+    The minihack twin asserts the same four equalities.
+    """
+    ctx = _uniform_ctx()
+    loss_fn = make_loss_bc_all(ctx)
+    acts, obs, valid = _batch()
+    rng = jax.random.PRNGKey(SEED)
+
+    uniform = float(make_loss_baseline(ctx)(None, acts, obs, valid, rng, jnp.ones(B)))
+    for adv in (jnp.ones(B), jnp.array([10.0, 0.0, 1.0, 1.1]), None, jnp.zeros(B)):
+        got = float(loss_fn(None, acts, obs, valid, rng, adv))
+        assert got == pytest.approx(uniform, abs=0.0), adv
+    assert uniform != 0.0
 
 
 # ---------------------------------------------------------------------------

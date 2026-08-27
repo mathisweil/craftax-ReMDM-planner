@@ -216,7 +216,7 @@ deviation **across seeds**, which is what the paper's table prints.
 | | `advantage_clip` | PPO-style advantage clipping [1-ε, 1+ε] |
 | | `normalized_adv` | Std-normalised advantages |
 | | `bc_wins` | Uniform ELBO on win windows (no advantage weighting) |
-| | `bc_all` | Uniform ELBO on every rollout window (no advantage weighting) |
+| | `bc_all` | Uniform ELBO on all rollout windows (no advantage weighting) |
 | | `low_t` | ELBO restricted to low-t (fine-detail) regime |
 | **C: Architecture** | `frozen_backbone` | Train the action head + token embeddings (backbone frozen) |
 | | `head_only` | Train only the final action projection |
