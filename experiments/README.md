@@ -317,10 +317,14 @@ N of 26 ablations is fully valid and loadable by `--analyze-only --results-path`
 
 ### W&B logging
 
-All metrics are logged under `ablations/{method_name}/{metric}`, e.g.:
-- `ablations/kl_penalty/eval_score`
-- `ablations/gradient_surgery/grad_align`
-- `ablations/ewc/repr_drift_kl`
+Three metrics per ablation, logged under `ablations/{name}/` against `iteration`:
+`train_loss`, `env_score` (both every logged iteration) and `eval_score` (every
+`eval_every`). They are written after the arm finishes, not during it, and there is
+no `wandb.summary` write.
+
+Every other quantity in the table below — gradient alignment, per-layer norms, KL
+drift, CKA, the t-bin norms — is collected into `AblationHistory` and reaches
+`results.json` only. Read those from the run directory, not from W&B.
 
 ### Diagnostic metrics collected
 
