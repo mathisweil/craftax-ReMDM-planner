@@ -296,7 +296,7 @@ at NeurIPS column width:
 
 ```bash
 uv run python scripts/paper_figures.py \
-    --minihack-results ../minihack-ReMDM-planner/results/experiments/rl_finetuning/outputs/minihack_ablations/results.json \
+    --minihack-results ../minihack-ReMDM-planner/experiments/rl_finetuning/outputs/minihack_ablations/results.json \
     --outdir results/paper_figures
 ```
 

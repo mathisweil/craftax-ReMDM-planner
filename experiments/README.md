@@ -183,8 +183,8 @@ trained under; without it the standard layering applies.
 **Reproduction (three rollout seeds, aggregated in one pass):**
 ```bash
 python experiments/rl_finetuning/run_ablations.py --measure-gdelta --gdelta-seeds 0 1 2 \
-    --checkpoint results/checkpoints/online/Craftax-Classic-Symbolic-v1-Online-Diffusion-DAgger-100M \
-    --results-path results/experiments/rl_finetuning/outputs/craftax_classic_ablations/results.json \
+    --checkpoint checkpoints/online/Craftax-Classic-Symbolic-v1-Online-Diffusion-DAgger-100M \
+    --results-path experiments/rl_finetuning/outputs/craftax_classic_ablations/results.json \
     --output-dir experiments/rl_finetuning/outputs/craftax_classic_ablations
 ```
 

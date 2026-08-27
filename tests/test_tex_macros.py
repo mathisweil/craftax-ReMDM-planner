@@ -23,7 +23,7 @@ tables = import_or_skip("experiments.rl_finetuning.analysis.tables")
 run_ablations = import_or_skip("experiments.rl_finetuning.run_ablations")
 
 CRAFTAX_RESULTS = (
-    ROOT / "results/experiments/rl_finetuning/outputs/craftax_classic_ablations"
+    ROOT / "experiments/rl_finetuning/outputs/craftax_classic_ablations"
     "/results.json"
 )
 

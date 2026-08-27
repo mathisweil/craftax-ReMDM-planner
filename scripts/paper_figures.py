@@ -72,12 +72,12 @@ from experiments.rl_finetuning.ablations.registry import REGISTRY  # noqa: E402
 
 CRAFTAX_RESULTS = (
     REPO
-    / "results/experiments/rl_finetuning/outputs/craftax_classic_ablations/results.json"
+    / "experiments/rl_finetuning/outputs/craftax_classic_ablations/results.json"
 )
 MINIHACK_RESULTS = (
     REPO.parent
     / "minihack-ReMDM-planner"
-    / "results/experiments/rl_finetuning/outputs/minihack_ablations/results.json"
+    / "experiments/rl_finetuning/outputs/minihack_ablations/results.json"
 )
 
 # The B in CV_A = sqrt(B/ESS - 1). Read from each run's own recorded config;
