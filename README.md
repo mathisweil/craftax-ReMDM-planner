@@ -6,9 +6,9 @@ The sibling repository [`minihack-ReMDM-planner`](../minihack-ReMDM-planner) imp
 
 ## Method
 
-The planner starts from a fully-masked action sequence and iteratively unmasks tokens over `T` denoising steps; ReMDM extends MDLM with remasking strategies that let committed tokens be re-predicted, improving plan coherence. Two independent training pipelines are compared head-to-head in the accompanying paper (under submission; citation to follow), both supervised by a pre-trained PPO expert:
+The planner starts from a fully-masked action sequence and iteratively unmasks tokens over `T` denoising steps; ReMDM extends MDLM with remasking strategies that let committed tokens be re-predicted, improving plan coherence.
 
-One PPO expert checkpoint feeds both pipelines: `--mode offline` behaviour-clones from live expert rollouts, `--mode online` runs DAgger from scratch against expert labels. Either output is scored with `--mode inference`.
+Two independent training pipelines are compared head-to-head, both fed by one pre-trained PPO expert checkpoint: `--mode offline` behaviour-clones from live expert rollouts, `--mode online` runs DAgger from scratch against expert labels. Either output is scored with `--mode inference`.
 
 ## Setup
 
@@ -150,7 +150,7 @@ Prints steps per second, per-achievement unlock counts, and two returns that mus
 
 By default this replans from scratch every `eval_replan` (8) steps, conditioned only on the current observation — the same sampler and cadence as `build_eval_fn` in the ablation harness, so it is the protocol behind the published numbers. Evaluation length is set by the `eval_steps` / `eval_num_envs` config keys.
 
-`--override inference_sampler=inpainting` switches to the historical-inpainting sampler, which replans every step with each executed action locked as a fixed prefix (Diffuser Sec. 3.3). At step *k* of a `plan_horizon` window only `plan_horizon - k` positions are still free, so execution tends towards open-loop with a periodic reset. It is kept as an ablation on the planning-as-inpainting design choice and **scores far lower on the same weights**; no published number comes from it.
+`--override inference_sampler=inpainting` switches to the historical-inpainting sampler, which replans every step with the executed actions locked as a fixed prefix, leaving fewer free positions the further into a window it gets. It is kept as an ablation on the planning-as-inpainting design choice and **scores far lower on the same weights**; no published number comes from it.
 
 Write eval JSONs into `results/inference/` (created for you): `scripts/hf_upload.py` publishes every JSON it finds there.
 
@@ -268,15 +268,13 @@ Full-Craftax diffusion planner checkpoints are not released: no full-Craftax tra
 uv run hf download mathisweil/remdm-craftax-checkpoints --include "checkpoints/**" --local-dir .
 ```
 
-**Keep the `--include`.** The Hub repo carries its own `README.md` (the generated model card), `LICENSE` and `.gitattributes`, so dropping the glob and pulling everything into `--local-dir .` overwrites this repository's copies of all three. Publishing then pushed the overwritten `LICENSE` straight back up as current, which is how a superseded paper title reached the Hub. `hf_upload.py` now publishes `LICENSE` and the demo bundle's `README.md` from git rather than the working tree, so a clobbered tree no longer reaches the Hub — but the pull still overwrites your files. To fetch everything, add `--exclude "README.md" "LICENSE" ".gitattributes"`, or use a `--local-dir` of its own.
+**Keep the `--include`.** The Hub repo carries its own `README.md` (the generated model card), `LICENSE` and `.gitattributes`; dropping the glob and pulling into `--local-dir .` overwrites this repository's copies of all three. To fetch everything, add `--exclude "README.md" "LICENSE" ".gitattributes"`, or use a separate `--local-dir`. Publishing is safe either way — `hf_upload.py` stages `LICENSE` and the demo `README.md` from git, not the working tree.
 
 ### Experiment outputs
 
-Ablation figures, tables and `results.json` are **not in the repository** and never
-should be: they are regenerated output, and 244 MB of them was rewritten out of the
-history. `experiments/rl_finetuning/outputs/` and `results/inference/` are gitignored.
-
-Obtain them either way:
+Ablation figures, tables and `results.json` are regenerated output, so
+`experiments/rl_finetuning/outputs/` and `results/inference/` are gitignored. Obtain
+them either way:
 
 ```bash
 # Fetch the published run (figures, tables, results.json, diagnosis.md)
