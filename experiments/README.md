@@ -27,21 +27,23 @@ rl_finetuning/
 │   ├── representation.py     # KL drift, CKA similarity, activation norms
 │   └── timestep.py           # t-bin gradient norms, per-t loss decomposition
 ├── analysis/
-│   ├── action_distribution.py # Pre- vs post-finetuning action dist divergences + plots
 │   ├── gdelta.py             # Return term g_delta of the decomposition (no training)
-│   ├── plots.py              # All matplotlib figure generators
+│   ├── plots.py              # 16 matplotlib figure generators
 │   ├── tables.py             # Summary tables as polars DataFrames + LaTeX export
-│   └── report.py             # diagnosis.md + decision tree figure
+│   ├── report.py             # diagnosis.md + decision tree figure
+│   └── action_distribution.py  # Pre/post-RL action distribution analysis
 └── configs/
-    ├── ablations_default.yaml              # Base hyperparameters for every ablation run
-    ├── ablations_fast.yaml                 # Smoke-test overlay (50 iterations, 16 envs)
-    ├── ablations_final_craftax_classic_gpu_24gb.yaml    # Matches configs/final_craftax_classic_gpu_24gb.yaml   (RTX 3090 Ti, seed 42)
-    ├── ablations_final_craftax_classic_gpu_h200.yaml   # Matches configs/final_craftax_classic_gpu_h200.yaml  (H200, seed 43)
-    ├── ablations_final_craftax_gpu_24gb.yaml    # Matches configs/final_craftax_gpu_24gb.yaml   (GPU-24GB reference machine (GPU model unrecorded),   seed 42)
-    └── ablations_final_craftax_gpu_h200.yaml   # Matches configs/final_craftax_gpu_h200.yaml  (H200, seed 43)
+    ├── ablations_default.yaml   # Base: all ablation hyperparameters
+    ├── ablations_fast.yaml      # Smoke-test overlay (50 iterations, 16 envs)
+    ├── ablations_final_craftax_classic_gpu_24gb.yaml   # RTX 3090 Ti, seed 42 (reference)
+    ├── ablations_final_craftax_classic_gpu_h200.yaml   # H200, seed 43
+    ├── ablations_final_craftax_gpu_24gb.yaml           # Full Craftax, 24GB, seed 42
+    └── ablations_final_craftax_gpu_h200.yaml           # Full Craftax, H200, seed 43
 ```
 
-`ablations_default.yaml` carries the transformer architecture of the released DAgger checkpoints — 384-dim, 8 heads, 6 layers, `d_ff` 768, `plan_horizon` 32, the same for Classic and Full — so the `ablations_final_*` presets need not restate it. A run against a differently-shaped checkpoint must override those keys, or the model build fails on a shape mismatch.
+Each `ablations_final_*` matches the `configs/final_*` of the same name.
+
+`ablations_default.yaml` carries the released checkpoints' architecture — 384-dim, 8 heads, 6 layers, `d_ff` 768, `plan_horizon` 32, the same for Classic and Full — so the `ablations_final_*` presets need not restate it. A run against a differently-shaped checkpoint must override those keys or the model build fails on a shape mismatch.
 
 ### Config layering
 
@@ -70,9 +72,12 @@ jax_compilation_cache_dir: /var/tmp/your-user/jax-cache
 
 ### Usage
 
-The pretrained diffusion checkpoint can come from either offline training (`--mode offline`) or DAgger online training (`--mode online`). Use `--checkpoint` to point to it. For DAgger runs, either the final (`{env}-policy`) or best-validation (`{env}-policy-best`) artifact produced by `--mode online` can be consumed directly.
+`--checkpoint` takes the pretrained diffusion checkpoint from either `--mode offline` or `--mode online`; for DAgger, the final (`{env}-policy`) or best-validation (`{env}-policy-best`) artifact is consumed directly. It also accepts `wandb:team/project/artifact:latest` references, downloaded automatically before training begins.
 
-Checkpoint paths accept `wandb:` prefixed artifact references (e.g., `wandb:team/project/artifact:latest`), which are downloaded automatically before training begins.
+**List all ablations:**
+```bash
+python experiments/rl_finetuning/run_ablations.py --list
+```
 
 **Smoke test (2 ablations, fast config):**
 ```bash
@@ -108,13 +113,6 @@ python experiments/rl_finetuning/run_ablations.py \
 python experiments/rl_finetuning/run_ablations.py \
     --ablations ewc lora gradient_surgery trust_region_kl \
     --checkpoint $PRETRAINED_CKPT
-```
-
-**From a W&B artifact:**
-```bash
-python experiments/rl_finetuning/run_ablations.py \
-    --ablations baseline_rl \
-    --checkpoint wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy:latest
 ```
 
 **Re-plot from saved results (no training):**
@@ -157,11 +155,6 @@ the poolable set. The key set itself is declared once, in
 `run_ablations._RESULT_AFFECTING`, so the classification the tests check and
 the refusal `--merge` performs are the same policy.
 
-**List all ablations:**
-```bash
-python experiments/rl_finetuning/run_ablations.py --list
-```
-
 ### Ablations
 
 | Group | Name | Tests |
@@ -200,9 +193,6 @@ experiments/rl_finetuning/outputs/{run_id}/
 ├── results.json               # All histories + final scores (machine-readable; see schema below)
 ├── diagnosis.md               # Human-readable verdict + evidence + recommendations
 ├── checkpoint_{name}/         # Per-ablation fine-tuned params, last seed (Orbax)
-├── gdelta/                    # --measure-gdelta only
-│   ├── gdelta_seed{n}.json    # Per rollout seed; +/- within is across that seed's draws
-│   └── gdelta_aggregate.json  # Across seeds; the dispersion the paper's table prints
 ├── figures/
 │   ├── curves_{name}.png                  # Per-ablation training curves (2×3 grid)
 │   ├── final_score_comparison.png
@@ -216,7 +206,7 @@ experiments/rl_finetuning/outputs/{run_id}/
 │   ├── t_distribution_analysis.png
 │   ├── t_bin_grad_norms_{name}.png
 │   ├── t_bin_norms_heatmap.png            # Per-t-bin gradient norms, final iteration
-│   ├── group_comparison.png              # Boxplot of scores by ablation group
+│   ├── group_comparison.png               # Boxplot of scores by ablation group
 │   ├── win_rate_and_effective_batch_size.png
 │   ├── achievement_breakdown.png          # Start vs end achievement rates (stacked bars)
 │   ├── achievement_collapse_{name}.png    # Per-ablation achievement heatmap over time
@@ -226,6 +216,9 @@ experiments/rl_finetuning/outputs/{run_id}/
 │       ├── transition_matrix_{name}.png   # 3-panel heatmap (pre, post, difference)
 │       ├── action_metrics_{name}.png      # 2x2 dashboard (entropy in nats, effective, Gini, divergences)
 │       └── js_divergence_comparison.png   # Cross-ablation JS divergence bar chart
+├── gdelta/                    # --measure-gdelta only
+│   ├── gdelta_seed{n}.json    # Per rollout seed; +/- within is across that seed's draws
+│   └── gdelta_aggregate.json  # Across seeds; the dispersion the paper's table prints
 └── tables/
     ├── main_results.{csv,tex}
     ├── significance_test.txt              # Max-statistic permutation test + p floor + bootstrap CI
@@ -278,6 +271,14 @@ completed.
 N of 26 ablations is fully valid and loadable by `--analyze-only --results-path`.
 
 ### Measuring the return term (`--measure-gdelta`)
+
+Splits the return-weighted ELBO gradient into an imitation term and a return term at a
+single parameter point:
+
+```
+grad L_RW  =  Abar * ( grad L_BC + g_delta ),
+g_delta    =  (1/B) sum_i delta_i grad l_i,    delta_i = A_i/Abar - 1.
+```
 
 Loads the pretrained checkpoint, collects one on-policy batch from it, and evaluates
 `grad L_BC`, `g_delta` and `grad L_RW` on that batch at those parameters under a shared
