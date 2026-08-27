@@ -192,8 +192,80 @@ def shorten_paths(value):
     return value
 
 
+def environment_key_paths(value, path: str = "") -> list[str]:
+    """Every dotted path at which an environment key appears, at any depth.
+
+    The reporting counterpart to :func:`drop_environment_keys`, so a scrub can
+    name what it removed rather than claiming a scrub happened. Recursion stops
+    at a key that is itself dropped: its whole subtree goes.
+    """
+    found: list[str] = []
+    if isinstance(value, dict):
+        for key, sub in value.items():
+            name = str(key)
+            here = f"{path}.{name}" if path else name
+            if is_environment_key(name):
+                found.append(here)
+            else:
+                found.extend(environment_key_paths(sub, here))
+    elif isinstance(value, (list, tuple)):
+        for i, sub in enumerate(value):
+            found.extend(environment_key_paths(sub, f"{path}[{i}]"))
+    return found
+
+
+def drop_environment_keys(value):
+    """Strip environment keys at **every** depth, not just the top level.
+
+    Filtering only the top level was a live defect here: `scrub_abs_paths`
+    recursed with `shorten_paths` but filtered keys at the top of the document
+    only, so `USE_WANDB`, `WANDB_PROJECT`, `WANDB_ENTITY` and
+    `WANDB_DOWNLOAD_DIR` survived one level down inside `config_snapshot` and
+    were published in both released checkpoints' `resume_metadata.json`, while
+    the uploader printed a successful scrub. No credential was exposed -- those
+    live in the `_wandb` blob and `wandb-metadata.json`, both already removed --
+    but the published surface advertised a W&B account and project that are
+    nothing to do with the recipe, which the scrub exists to prevent.
+
+    Mapping types are preserved, so an ordered mapping stays ordered and a
+    published structure is unchanged beyond the removed keys.
+    """
+    if isinstance(value, dict):
+        kept = {
+            key: drop_environment_keys(sub)
+            for key, sub in value.items()
+            if not is_environment_key(str(key))
+        }
+        if type(value) is dict:
+            return kept
+        try:
+            return type(value)(kept)
+        except TypeError:
+            # A mapping needing constructor arguments (e.g. a defaultdict
+            # factory). Structure matters less than not shipping the key.
+            return kept
+    if isinstance(value, list):
+        return [drop_environment_keys(sub) for sub in value]
+    return value
+
+
+def scrub(cfg):
+    """Drop the environment keys and shorten absolute cluster paths.
+
+    Both passes recurse. They used to disagree -- ``shorten_paths`` descended
+    and the key filter did not -- which is the asymmetry that published W&B
+    settings out of a nested `config_snapshot`. Composing them is what stops
+    them disagreeing about depth again; special-casing the one nesting we know
+    about is what left the general case broken in the first place.
+
+    A document with no environment key anywhere and no absolute path comes back
+    equal to what went in, so a caller may skip rewriting it.
+    """
+    return drop_environment_keys(shorten_paths(cfg))
+
+
 def strip_wandb_block(config_yaml: Path) -> None:
-    """Drop the environment keys from a staged config.
+    """Drop the environment keys from a staged config, at every depth.
 
     Was `_wandb` alone, which left `USE_WANDB`, `WANDB_ENTITY` and
     `WANDB_PROJECT` in the released `config.yaml`. No credential was ever
@@ -201,9 +273,15 @@ def strip_wandb_block(config_yaml: Path) -> None:
     already removed — but the published surface advertised a W&B account and
     project that are nothing to do with the recipe, and the sibling repo
     dropped a different set again. Both now drop the same one.
+
+    A PPO `config.yaml` happens to hold its environment keys at the top level,
+    so a top-level filter sufficed here today. That was luck rather than
+    correctness — the same luck ran out one function down, where a nested
+    `config_snapshot` published what a top-level filter could not see — so this
+    recurses too, and stops depending on the shape of the file it is handed.
     """
     raw = yaml.safe_load(config_yaml.read_text())
-    kept = {k: v for k, v in raw.items() if not is_environment_key(k)}
+    kept = drop_environment_keys(raw)
     config_yaml.write_text(yaml.safe_dump(kept, sort_keys=True))
 
 
@@ -214,11 +292,20 @@ def scrub_abs_paths(resume_json: Path) -> None:
     save_checkpoint_metadata writes at the top level, in every released
     checkpoint's metadata. The sibling repo shipped the same id inside its
     pickled `.pth` files; both now drop it.
+
+    Dropping it at the top level then left everything below it. `shorten_paths`
+    recursed into `config_snapshot` while the key filter read only the top of
+    the document, so `USE_WANDB`, `WANDB_PROJECT`, `WANDB_ENTITY` and
+    `WANDB_DOWNLOAD_DIR` went out in both released checkpoints while this
+    function reported a clean scrub. Both passes now recurse, by composition
+    rather than by a special case for the one nesting we happened to know
+    about, and the removed paths are named rather than assumed.
     """
     meta = json.loads(resume_json.read_text())
-    meta["config_snapshot"] = shorten_paths(meta.get("config_snapshot", {}))
-    kept = {k: v for k, v in meta.items() if not is_environment_key(k)}
-    resume_json.write_text(json.dumps(kept, indent=2))
+    dropped = environment_key_paths(meta)
+    resume_json.write_text(json.dumps(scrub(meta), indent=2))
+    if dropped:
+        print(f"  scrubbed {', '.join(sorted(dropped))} from {resume_json.name}")
 
 
 # =============================================================================
@@ -320,7 +407,13 @@ def stage_runs(staging: Path, runs: list[Path]) -> list[dict[str, str]]:
 
 
 def stage_inference(staging: Path, files: list[Path]) -> list[dict[str, str]]:
-    """Copy each inference result JSON into ``results/inference/``."""
+    """Copy each inference result JSON into ``results/inference/``.
+
+    Scrubbed, not merely shortened: this staged paths without ever filtering
+    environment keys, which is the same asymmetry that leaked from the
+    checkpoint sidecar, one step further along. No inference payload carries an
+    environment key today; the point is that nothing here depends on that.
+    """
     target_dir = staging / INFERENCE.relative_to(ROOT)
     rows: list[dict[str, str]] = []
     for src in files:
@@ -334,7 +427,7 @@ def stage_inference(staging: Path, files: list[Path]) -> list[dict[str, str]]:
             name = f"{src.parent.name}-{src.name}"
         target_dir.mkdir(parents=True, exist_ok=True)
         (target_dir / name).write_text(
-            json.dumps(shorten_paths(payload), indent=2) + "\n",
+            json.dumps(scrub(payload), indent=2) + "\n",
         )
         row = describe_inference(name, payload)
         row["size"] = human_size(target_dir / name)
