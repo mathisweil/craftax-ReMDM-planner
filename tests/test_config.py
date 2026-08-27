@@ -727,6 +727,94 @@ def test_the_staged_ppo_config_is_filtered_at_every_depth(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Publishing: the scrub reaches the whole staged tree, not a list of filenames
+# ---------------------------------------------------------------------------
+# Fixing the depth of the key filter still left the *reach* of staging wrong.
+# Staging copied whole trees and scrubbed only the two files it knew by name,
+# so provenance rode out in the ones it did not, and all three were live on the
+# Hub: an ablation run's results.json embeds the config it ran under, so
+# WANDB_ENTITY went out in the published suite; wandb-summary.json sat beside
+# every PPO checkpoint with its `_wandb` block; and Orbax's own
+# commit_success.txt recorded the absolute directory it committed to, which on
+# this cluster is inside the W&B run directory -- publishing the account name,
+# the home path, and the very wandb_run_id the sidecar scrub removes.
+
+
+def test_orbax_commit_markers_do_not_publish_the_cluster_path():
+    """The real published string, from the online checkpoint's marker. It
+    carried the run id that resume_metadata.json is scrubbed to remove."""
+    hf = _hf_upload()
+    leaked = (
+        "Checkpoint commit was successful to /cs/student/project_msc/2025/dsml/"
+        "mathweil/wandb/wandb/run-20260819_233635-8qw13bmd/files/policies_best/"
+        "40370176"
+    )
+    out = hf.shorten_text_paths(leaked)
+
+    assert out == "Checkpoint commit was successful to policies_best/40370176"
+    assert "8qw13bmd" not in out
+    assert "/cs/student" not in out
+    assert "mathweil" not in out
+
+
+def test_scrubbing_a_staged_tree_reaches_every_file_not_a_known_list(tmp_path):
+    """A whole staged directory, including the files staging never named."""
+    hf = _hf_upload()
+    run = tmp_path / "run"
+    (run / "40370176" / "default").mkdir(parents=True)
+    (run / "results.json").write_text(json.dumps({
+        "config": {"WANDB_ENTITY": "myopic-planner", "D_MODEL": 384},
+        "score": 11.8,
+    }))
+    (run / "wandb-summary.json").write_text(json.dumps({
+        "_wandb": {"runtime": 5855}, "achievements": 19.78,
+    }))
+    (run / "40370176" / "default" / "commit_success.txt").write_text(
+        "Checkpoint commit was successful to /cs/student/x/wandb/run-a/policies/40370176"
+    )
+
+    hf.scrub_staged_tree(run)
+
+    results = json.loads((run / "results.json").read_text())
+    summary = json.loads((run / "wandb-summary.json").read_text())
+    marker = (run / "40370176" / "default" / "commit_success.txt").read_text()
+
+    assert hf.environment_key_paths(results) == []
+    assert results["config"] == {"D_MODEL": 384}
+    assert results["score"] == 11.8            # the recipe survives
+    assert hf.environment_key_paths(summary) == []
+    assert summary["achievements"] == 19.78
+    assert "/cs/student" not in marker and "myopic-planner" not in results
+
+
+def test_a_staged_ablation_run_publishes_no_environment_key(tmp_path):
+    """End to end at the call site: stage_runs copied these verbatim, which is
+    how WANDB_ENTITY reached the published ablation suite."""
+    hf = _hf_upload()
+    run = hf.RUNS / "some_run"
+    try:
+        (run / "tables").mkdir(parents=True)
+        (run / "results.json").write_text(json.dumps({
+            "config": {"USE_WANDB": True, "WANDB_ENTITY": "myopic-planner",
+                       "N_LAYERS": 6},
+            "mean_score": 11.8,
+        }))
+        (run / "diagnosis.md").write_text("# report\n")
+
+        staging = tmp_path / "staging"
+        hf.stage_runs(staging, [run])
+
+        staged = json.loads(
+            (staging / run.relative_to(hf.ROOT) / "results.json").read_text()
+        )
+        assert hf.environment_key_paths(staged) == []
+        assert staged["config"] == {"N_LAYERS": 6}
+        assert staged["mean_score"] == 11.8
+    finally:
+        shutil.rmtree(run, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
 # Publishing: the licence is the one git committed, not the one on disk
 # ---------------------------------------------------------------------------
 # `hf download --local-dir .` writes the Hub's copies over the working tree.

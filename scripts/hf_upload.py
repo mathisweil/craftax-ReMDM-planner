@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -264,6 +265,63 @@ def scrub(cfg):
     return drop_environment_keys(shorten_paths(cfg))
 
 
+ABS_PATH_IN_TEXT = re.compile(r"/(?:[\w.@+-]+/)+[\w.@+-]+")
+
+
+def shorten_text_paths(text: str) -> str:
+    """Shorten absolute cluster paths inside a plain-text file.
+
+    :func:`shorten_paths` only reaches paths that sit in a JSON or YAML *value*.
+    Orbax writes its own marker files, and `commit_success.txt` records the
+    absolute directory it committed to -- which on this cluster is inside the
+    W&B run directory, so each published marker carried the account name, the
+    full home path and the run id. That is the same `wandb_run_id` the sidecar
+    scrub takes care to remove, published verbatim two directories away.
+
+    Same rule as the structured shortener: keep the last two components.
+    """
+    return ABS_PATH_IN_TEXT.sub(
+        lambda m: "/".join(Path(m.group(0)).parts[-2:]), text
+    )
+
+
+def scrub_staged_json(path: Path) -> list[str]:
+    """Scrub a staged JSON file in place; return the paths it dropped."""
+    try:
+        payload = json.loads(path.read_text())
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return []
+    dropped = environment_key_paths(payload)
+    cleaned = scrub(payload)
+    if cleaned != payload:
+        path.write_text(json.dumps(cleaned, indent=2))
+    return dropped
+
+
+def scrub_staged_tree(target: Path) -> None:
+    """Scrub every JSON and Orbax marker anywhere under a staged directory.
+
+    Staging copied whole trees and scrubbed only the files it knew by name, so
+    provenance rode out in the ones it did not: `wandb-summary.json` beside a
+    PPO checkpoint, an ablation run's `results.json` (which carried the W&B
+    entity into a published release), and Orbax's own `commit_success.txt`.
+    Walking the staged tree is what stops the list of known filenames from
+    being the thing correctness depends on.
+    """
+    for f in sorted(target.rglob("*")):
+        if not f.is_file():
+            continue
+        if f.suffix == ".json":
+            for key in scrub_staged_json(f):
+                print(f"  scrubbed {key} from {f.name}")
+        elif f.name.endswith(".txt"):
+            text = f.read_text(errors="ignore")
+            shortened = shorten_text_paths(text)
+            if shortened != text:
+                f.write_text(shortened)
+                print(f"  shortened cluster paths in {f.name}")
+
+
 def strip_wandb_block(config_yaml: Path) -> None:
     """Drop the environment keys from a staged config, at every depth.
 
@@ -386,12 +444,19 @@ def stage_checkpoints(staging: Path, models: dict[Path, list[int]]) -> list[dict
             strip_wandb_block(target / "config.yaml")
         if (target / "resume_metadata.json").exists():
             scrub_abs_paths(target / "resume_metadata.json")
+        scrub_staged_tree(target)
         rows.append(describe(model_dir, steps))
     return rows
 
 
 def stage_runs(staging: Path, runs: list[Path]) -> list[dict[str, str]]:
-    """Copy each ablation run's summary, tables and figures."""
+    """Copy each ablation run's summary, tables and figures, scrubbed.
+
+    These were copied verbatim, and every run's `results.json` embeds the
+    config it ran under -- so `WANDB_ENTITY` went out in the published ablation
+    suite. The checkpoint sidecar was scrubbed by name while this whole tree
+    was not, which is the same defect one directory across.
+    """
     rows = []
     for run in runs:
         target = staging / run.relative_to(ROOT)
@@ -402,6 +467,7 @@ def stage_runs(staging: Path, runs: list[Path]) -> list[dict[str, str]]:
         for name in RUN_DIRS:
             if (run / name).is_dir():
                 shutil.copytree(run / name, target / name, ignore=COPY_IGNORE)
+        scrub_staged_tree(target)
         rows.append(describe_run(run, target))
     return rows
 
