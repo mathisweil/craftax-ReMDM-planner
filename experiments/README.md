@@ -162,44 +162,6 @@ the refusal `--merge` performs are the same policy.
 python experiments/rl_finetuning/run_ablations.py --list
 ```
 
-### Measuring the return term (`--measure-gdelta`)
-
-Loads the pretrained checkpoint, collects one on-policy batch from it, and evaluates
-`grad L_BC`, `g_delta` and `grad L_RW` on that batch at those parameters under a shared
-`(z_t, t)` draw, so the only difference between the three is the weight vector. It repeats
-for the four weighting ablations (`baseline_rl`, `advantage_clip`, `normalized_adv`,
-`bc_wins`) and reports `CV_A`, `Abar`, `ESS/B`, the norm ratio and the cosine, plus a
-shuffled-`delta` null that keeps the weight multiset and destroys its association with each
-window's return. No training and no optimiser step occur; it runs on a laptop CPU.
-
-Results land in `gdelta/` under the run's own output directory, beside `results.json`, and
-the aggregate additionally produces `tables/gdelta.{csv,tex}`. With `--emit-tex-macros`,
-the analysis pass picks the aggregate up and emits the measured quantities as `\rwGdelta*`
-macros. Those are kept separate from the `\rwCvA*` macros, which recover `CV_A` from the
-ESS logged during training: the two are measured on different batches and do not agree.
-
-Config comes from `--results-path`, so the weight transforms measured are the ones that run
-trained under; without it the standard layering applies.
-
-**Reproduction (three rollout seeds, aggregated in one pass):**
-```bash
-python experiments/rl_finetuning/run_ablations.py --measure-gdelta --gdelta-seeds 0 1 2 \
-    --checkpoint checkpoints/online/Craftax-Classic-Symbolic-v1-Online-Diffusion-DAgger-100M \
-    --results-path experiments/rl_finetuning/outputs/craftax_classic_ablations/results.json \
-    --output-dir experiments/rl_finetuning/outputs/craftax_classic_ablations
-```
-
-Seeds run on separate machines are aggregated afterwards with `--gdelta-inputs`, the
-counterpart to `--merge`:
-```bash
-python experiments/rl_finetuning/run_ablations.py --run-id gdelta \
-    --gdelta-inputs experiments/rl_finetuning/outputs/gdelta/gdelta_seed{0,1,2}.json
-```
-
-A single seed's `ratio_std_draws` / `cos_std_draws` are dispersions over that seed's eight
-`(z_t, t)` draws. The aggregate averages the per-seed means and reports the standard
-deviation **across seeds**, which is what the paper's table prints.
-
 ### Ablations
 
 | Group | Name | Tests |
@@ -314,6 +276,79 @@ completed.
 
 `results.json` is written incrementally after each ablation completes — a partial file with
 N of 26 ablations is fully valid and loadable by `--analyze-only --results-path`.
+
+### Measuring the return term (`--measure-gdelta`)
+
+Loads the pretrained checkpoint, collects one on-policy batch from it, and evaluates
+`grad L_BC`, `g_delta` and `grad L_RW` on that batch at those parameters under a shared
+`(z_t, t)` draw, so the only difference between the three is the weight vector. It repeats
+for the four weighting ablations (`baseline_rl`, `advantage_clip`, `normalized_adv`,
+`bc_wins`) and reports `CV_A`, `Abar`, `ESS/B`, the norm ratio and the cosine, plus a
+shuffled-`delta` null that keeps the weight multiset and destroys its association with each
+window's return. No training and no optimiser step occur; it runs on a laptop CPU.
+
+Results land in `gdelta/` under the run's own output directory, beside `results.json`, and
+the aggregate additionally produces `tables/gdelta.{csv,tex}`. With `--emit-tex-macros`,
+the analysis pass picks the aggregate up and emits the measured quantities as `\rwGdelta*`
+macros. Those are kept separate from the `\rwCvA*` macros, which recover `CV_A` from the
+ESS logged during training: the two are measured on different batches and do not agree.
+
+Config comes from `--results-path`, so the weight transforms measured are the ones that run
+trained under; without it the standard layering applies.
+
+**Reproduction (three rollout seeds, aggregated in one pass):**
+```bash
+python experiments/rl_finetuning/run_ablations.py --measure-gdelta --gdelta-seeds 0 1 2 \
+    --checkpoint checkpoints/online/Craftax-Classic-Symbolic-v1-Online-Diffusion-DAgger-100M \
+    --results-path experiments/rl_finetuning/outputs/craftax_classic_ablations/results.json \
+    --output-dir experiments/rl_finetuning/outputs/craftax_classic_ablations
+```
+
+Seeds run on separate machines are aggregated afterwards with `--gdelta-inputs`, the
+counterpart to `--merge`:
+```bash
+python experiments/rl_finetuning/run_ablations.py --run-id gdelta \
+    --gdelta-inputs experiments/rl_finetuning/outputs/gdelta/gdelta_seed{0,1,2}.json
+```
+
+A single seed's `ratio_std_draws` / `cos_std_draws` are dispersions over that seed's eight
+`(z_t, t)` draws. The aggregate averages the per-seed means and reports the standard
+deviation **across seeds**, which is what the paper's table prints.
+
+### CLI reference
+
+| Flag | Description |
+|---|---|
+| `--checkpoint PATH` | Pretrained diffusion checkpoint, offline or DAgger (path or `wandb:` artifact) |
+| `--config PATH` | Main pipeline config (default: `configs/defaults.yaml`) |
+| `--ablations-config PATH` | Ablations config, layered on `ablations_default.yaml` (default: `ablations_default.yaml`) |
+| `--all` | Run all 26 ablations |
+| `--ablations NAME [NAME ...]` | Run specific ablations by name |
+| `--list` | Print registered ablations and exit |
+| `--fast` | Smoke-test overlay: `ablations_fast.yaml` applied last (`max_iter` 50, `num_envs` 16) |
+| `--num-seeds N` | Seeds per ablation (overrides `num_seeds`, default 3) |
+| `--seed N` | Base random seed |
+| `--output-dir DIR` | Root output directory (default: `outputs/{run_id}/`) |
+| `--run-id ID` | Run identifier (default: `run_{timestamp}`) |
+| `--analyze-only` | Skip training, regenerate analysis from existing results |
+| `--results-path PATH` | Explicit path to `results.json` (with `--analyze-only` or `--measure-gdelta`) |
+| `--merge PATH [PATH ...]` | Merge multiple `results.json` files and regenerate analysis |
+| `--measure-gdelta` | Measure the return term at the pretrained checkpoint; no training |
+| `--gdelta-seeds N [N ...]` | Rollout seeds to measure (default `0`); the reported +/- is across these |
+| `--gdelta-draws N` | Independent `(z_t, t)` draws per seed (default 8) |
+| `--gdelta-inputs PATH [PATH ...]` | Aggregate per-seed gdelta JSONs from separate machines |
+| `--emit-tex-macros` | Also write `tables/results.tex`, one `\newcommand` per headline number |
+| `--action-dist` / `--no-action-dist` | Pre/post action-distribution analysis (default **on** here; **off** in the minihack twin) |
+| `--use-wandb` / `--no-use-wandb` | Enable/disable W&B logging (overrides `use_wandb`, default `false`) |
+| `--wandb-project NAME` | W&B project (default `craftax-ReMDM-planner-ablations`) |
+| `--wandb-entity NAME` | W&B entity |
+| `--max-iter N` | Override max training iterations |
+| `--num-envs N` | Override rollout environments per iteration |
+| `--batch-size N` | Override batch size |
+| `--eval-every N` | Override evaluation frequency |
+| `--lr FLOAT` | Override learning rate |
+
+There is no `--override`: keys that are not flags are set in the config files.
 
 ### W&B logging
 
