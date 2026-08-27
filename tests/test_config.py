@@ -815,6 +815,69 @@ def test_a_staged_ablation_run_publishes_no_environment_key(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Publishing: a W&B key is not always at the front of its name
+# ---------------------------------------------------------------------------
+# The prefix rule assumed provenance keys start with `wandb_`. Both repos
+# published counter-examples: craftax shipped RESUME_WANDB_RUN_ID (None, so
+# nothing leaked) and the sibling shipped `baselines_wandb_project` with a real
+# value in two released config.yaml files. A suffix rule would have caught the
+# first and left the second, which is what decided the substring.
+
+
+def test_a_wandb_key_is_dropped_wherever_it_sits_in_the_name():
+    """Front, middle, or end -- and the two real published counter-examples."""
+    hf = _hf_upload()
+    for key in ("wandb_project", "WANDB_PROJECT",
+                "RESUME_WANDB_RUN_ID",        # published by craftax
+                "baselines_wandb_project"):   # published by the sibling
+        assert hf.is_environment_key(key), key
+
+
+def test_the_trailing_underscore_is_what_makes_the_substring_safe():
+    """`wandbish` contains `wandb` but not `wandb_`, so both repos' negative
+    assertions stand unchanged -- the reason the rule could widen at all."""
+    hf = _hf_upload()
+    for key in ("wandbish", "bandwidth", "hubris", "github_url"):
+        assert not hf.is_environment_key(key), key
+
+
+def test_hub_stays_a_prefix_rule_because_a_substring_would_eat_github_url():
+    """`hub_` is deliberately not in DROP_SUBSTRINGS."""
+    hf = _hf_upload()
+    assert hf.is_environment_key("hub_repo_id")
+    assert not hf.is_environment_key("github_url")
+
+
+# ---------------------------------------------------------------------------
+# Publishing: the text shortener must not match inside a relative path
+# ---------------------------------------------------------------------------
+
+
+def test_the_text_shortener_leaves_relative_paths_alone():
+    """Unanchored, the match could START at a slash mid-string, so
+    `experiments/rl_finetuning/analysis/tables.py` became
+    `experimentsanalysis/tables.py` -- the scrub corrupting a file it had no
+    business touching. Caught in the sibling by diffing scrub output."""
+    hf = _hf_upload()
+    for text in ("experiments/rl_finetuning/analysis/tables.py",
+                 "see results/inference/eval.json for detail",
+                 "date 2026/01/02 ok",
+                 "a/b/c"):
+        assert hf.shorten_text_paths(text) == text, text
+
+
+def test_the_text_shortener_still_shortens_paths_holding_odd_characters():
+    """Narrowing the class does not merely miss such a path: it makes the
+    lookbehind reject the match, so the path ships unshortened."""
+    hf = _hf_upload()
+    assert hf.shorten_text_paths("/home/user@dom/proj/run/file.txt") == "run/file.txt"
+    assert hf.shorten_text_paths("/cs/a+b/c/d/e.txt") == "d/e.txt"
+    assert hf.shorten_text_paths(
+        "Checkpoint commit was successful to /cs/student/x/wandb/run-a/policies/40370176"
+    ) == "Checkpoint commit was successful to policies/40370176"
+
+
+# ---------------------------------------------------------------------------
 # Publishing: the licence is the one git committed, not the one on disk
 # ---------------------------------------------------------------------------
 # `hf download --local-dir .` writes the Hub's copies over the working tree.
