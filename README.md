@@ -154,6 +154,14 @@ By default this replans from scratch every `eval_replan` (8) steps, conditioned 
 
 Write eval JSONs into `results/inference/` (created for you): `scripts/hf_upload.py` publishes every JSON it finds there.
 
+**Match the config to the checkpoint.** The model is built from the config, not the checkpoint, and a mismatch raises at restore. All released diffusion checkpoints are `d_model` 384, `n_heads` 8, `n_layers` 6, `d_ff` 768 — the architecture `defaults.yaml` also carries — so evaluate with the matching `final_*` config, which additionally sets the right `env_name` and recipe values:
+
+```bash
+python main.py --mode inference \
+    --config configs/final_craftax_classic_gpu_24gb.yaml \
+    --checkpoint checkpoints/online/Craftax-Classic-Symbolic-v1-Online-Diffusion-DAgger-100M
+```
+
 Any checkpoint flag (`--checkpoint`, `--ppo-checkpoint`, `--resume`) accepts a W&B artifact reference prefixed `wandb:`; the artifact downloads automatically (location: `wandb_download_dir`, default `./artifacts/`).
 
 ```bash
@@ -261,7 +269,13 @@ Offline checkpoints save at the resolved env-frame budget, which is 99,942,400 f
 | `checkpoints/ppo_agents/Craftax-Classic-Symbolic-v1-PPO_RNN-1000M` | Craftax Classic | PPO-RNN expert | 1e9 env frames |
 | `checkpoints/ppo_agents/Craftax-Symbolic-v1-PPO_RNN-1000M` | Full Craftax | PPO-RNN expert | 1e9 env frames |
 
-Full-Craftax diffusion planner checkpoints are not released: no full-Craftax training run has completed.
+Full-Craftax diffusion planner checkpoints are not released: no full-Craftax training run has completed; the released Full Craftax expert can still supervise a new run:
+
+```bash
+python main.py --mode online \
+    --config configs/final_craftax_gpu_24gb.yaml \
+    --ppo-checkpoint checkpoints/ppo_agents/Craftax-Symbolic-v1-PPO_RNN-1000M
+```
 
 ```bash
 # All four (~470 MB); narrow the --include glob for a single checkpoint.
@@ -304,20 +318,9 @@ uv run python scripts/paper_figures.py \
 
 The MiniHack path defaults to that sibling checkout. Pass `--emit-tex-macros` to
 `run_ablations.py` to also write `tables/results.tex`, one `\newcommand` per headline
-quantity, so the manuscript cites generated numbers instead of retyping them.
-
-**Match the config to the checkpoint.** The model is built from the config, not the checkpoint, and a mismatch raises at restore. All released diffusion checkpoints are `d_model` 384, `n_heads` 8, `n_layers` 6, `d_ff` 768 — the architecture `defaults.yaml` also carries — so use the matching `final_*` config, which additionally sets the right `env_name` and recipe values:
-
-```bash
-python main.py --mode inference \
-    --config configs/final_craftax_classic_gpu_24gb.yaml \
-    --checkpoint checkpoints/online/Craftax-Classic-Symbolic-v1-Online-Diffusion-DAgger-100M
-
-# Train a new planner against the released Full Craftax PPO expert
-python main.py --mode online \
-    --config configs/final_craftax_gpu_24gb.yaml \
-    --ppo-checkpoint checkpoints/ppo_agents/Craftax-Symbolic-v1-PPO_RNN-1000M
-```
+quantity, so the manuscript cites generated numbers instead of retyping them. Macros from
+this repository are prefixed `rw` and the sibling suite's `mh`, so both files can be
+`\input` together; the name-mangling rule is shared between the two.
 
 ### Publishing to the Hub
 
