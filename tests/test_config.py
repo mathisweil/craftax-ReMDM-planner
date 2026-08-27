@@ -588,6 +588,233 @@ def test_the_published_config_drops_the_same_environment_keys_in_both_repos():
 
 
 # ---------------------------------------------------------------------------
+# Publishing: the scrub is APPLIED at every depth, not merely correct
+# ---------------------------------------------------------------------------
+# The suite already asserts is_environment_key() CLASSIFIES correctly. Nothing
+# asserted it was APPLIED below the top level, and it was not: scrub_abs_paths()
+# recursed with shorten_paths but filtered environment keys only at the top of
+# the document, so USE_WANDB, WANDB_PROJECT, WANDB_ENTITY and
+# WANDB_DOWNLOAD_DIR survived one level down inside config_snapshot and were
+# published in both released checkpoints, while the uploader printed a
+# successful scrub. The predicate was proven and its use was sampled. These pin
+# the use.
+
+
+def test_environment_keys_are_dropped_below_the_top_level():
+    """The regression test for the live leak: a nested config snapshot."""
+    hf = _hf_upload()
+    doc = {
+        "mode": "offline",
+        "wandb_run_id": "4oeqk0yl",
+        "config_snapshot": {
+            "USE_WANDB": True,
+            "WANDB_PROJECT": "craftax-ReMDM-planner",
+            "WANDB_ENTITY": "myopic-planner",
+            "WANDB_DOWNLOAD_DIR": None,
+            "D_MODEL": 512,
+        },
+    }
+    out = hf.scrub(doc)
+
+    assert out["config_snapshot"] == {"D_MODEL": 512}, out["config_snapshot"]
+    assert out["mode"] == "offline"
+    assert "wandb_run_id" not in out
+    # The whole document, flattened, must mention no environment key at all.
+    assert hf.environment_key_paths(out) == []
+
+
+def test_environment_keys_are_dropped_inside_lists():
+    """Nesting through a list is the other way past a dict-only filter, and
+    resume_metadata is the shape that grows a list later."""
+    hf = _hf_upload()
+    out = hf.scrub({"runs": [{"WANDB_RUN_ID": "a07wlxl7", "SEED": 0}]})
+    assert out == {"runs": [{"SEED": 0}]}
+
+
+def test_environment_key_paths_names_where_the_leak_is():
+    """A scrub that reports 'done' without naming what it removed is how this
+    leak stayed invisible: the uploader printed a successful scrub while the
+    keys shipped."""
+    hf = _hf_upload()
+    paths = hf.environment_key_paths(
+        {"config_snapshot": {"WANDB_PROJECT": "p"}, "wandb_run_id": "x"}
+    )
+    assert sorted(paths) == ["config_snapshot.WANDB_PROJECT", "wandb_run_id"]
+
+
+def test_the_scrub_still_shortens_paths_at_depth():
+    """Both passes recurse; fixing the filter must not lose the shortener."""
+    hf = _hf_upload()
+    out = hf.scrub({"outer": {"DATASET_PATH": "/very/long/cluster/path/data.npz"}})
+    assert out["outer"]["DATASET_PATH"] == "path/data.npz"
+
+
+def test_dropping_environment_keys_preserves_mapping_type():
+    """An ordered mapping stays ordered, so a published structure is unchanged
+    beyond the removed keys."""
+    from collections import OrderedDict
+
+    hf = _hf_upload()
+    out = hf.drop_environment_keys(
+        OrderedDict([
+            ("WANDB_RUN_ID", "x"),
+            ("params", OrderedDict([("w", 1), ("b", 2)])),
+        ])
+    )
+    assert isinstance(out, OrderedDict)
+    assert isinstance(out["params"], OrderedDict)
+    assert list(out["params"]) == ["w", "b"]
+    assert "WANDB_RUN_ID" not in out
+
+
+def test_a_clean_document_is_returned_unchanged():
+    """No environment key and no absolute path anywhere means nothing is
+    rewritten -- the property that lets a caller skip re-staging a clean file."""
+    hf = _hf_upload()
+    doc = {"lr": 1e-4, "nested": {"batch_size": 8, "envs": ["a", "b"]}}
+    assert hf.scrub(doc) == doc
+    assert hf.environment_key_paths(doc) == []
+
+
+def test_the_staged_checkpoint_sidecar_carries_no_environment_key(tmp_path):
+    """End to end at the real call site, in the real published shape: the two
+    released checkpoints' resume_metadata.json is exactly this document, and
+    what went to the Hub kept every key below config_snapshot."""
+    hf = _hf_upload()
+    sidecar = tmp_path / "resume_metadata.json"
+    sidecar.write_text(json.dumps({
+        "mode": "online",
+        "update_step": 1200,
+        "total_gradient_steps_completed": 100_000_000,
+        "wandb_run_id": "8qw13bmd",
+        "config_snapshot": {
+            "USE_WANDB": True,
+            "WANDB_PROJECT": "craftax-ReMDM-planner",
+            "WANDB_ENTITY": "myopic-planner",
+            "WANDB_DOWNLOAD_DIR": None,
+            "ENV_NAME": "Craftax-Classic-Symbolic-v1",
+            "CHECKPOINT_DIR": "/cs/student/project_msc/2025/dsml/x/ckpts",
+        },
+    }))
+
+    hf.scrub_abs_paths(sidecar)
+    staged = json.loads(sidecar.read_text())
+
+    assert hf.environment_key_paths(staged) == []
+    assert staged["config_snapshot"]["ENV_NAME"] == "Craftax-Classic-Symbolic-v1"
+    assert staged["config_snapshot"]["CHECKPOINT_DIR"] == "x/ckpts"
+    assert staged["total_gradient_steps_completed"] == 100_000_000
+
+
+def test_the_staged_ppo_config_is_filtered_at_every_depth(tmp_path):
+    """A PPO config.yaml holds its environment keys at the top level, so a
+    top-level filter sufficed here today. That is luck, not correctness, and it
+    is the same luck that ran out in the sidecar."""
+    hf = _hf_upload()
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(yaml.safe_dump({
+        "USE_WANDB": {"value": True},
+        "WANDB_PROJECT": {"value": "craftax-ReMDM-planner"},
+        "LAYER_SIZE": {"value": 512},
+        "nested": {"WANDB_ENTITY": "myopic-planner", "SEED": 0},
+    }))
+
+    hf.strip_wandb_block(cfg)
+    staged = yaml.safe_load(cfg.read_text())
+
+    assert hf.environment_key_paths(staged) == []
+    assert staged == {"LAYER_SIZE": {"value": 512}, "nested": {"SEED": 0}}
+
+
+# ---------------------------------------------------------------------------
+# Publishing: the scrub reaches the whole staged tree, not a list of filenames
+# ---------------------------------------------------------------------------
+# Fixing the depth of the key filter still left the *reach* of staging wrong.
+# Staging copied whole trees and scrubbed only the two files it knew by name,
+# so provenance rode out in the ones it did not, and all three were live on the
+# Hub: an ablation run's results.json embeds the config it ran under, so
+# WANDB_ENTITY went out in the published suite; wandb-summary.json sat beside
+# every PPO checkpoint with its `_wandb` block; and Orbax's own
+# commit_success.txt recorded the absolute directory it committed to, which on
+# this cluster is inside the W&B run directory -- publishing the account name,
+# the home path, and the very wandb_run_id the sidecar scrub removes.
+
+
+def test_orbax_commit_markers_do_not_publish_the_cluster_path():
+    """The real published string, from the online checkpoint's marker. It
+    carried the run id that resume_metadata.json is scrubbed to remove."""
+    hf = _hf_upload()
+    leaked = (
+        "Checkpoint commit was successful to /cs/student/project_msc/2025/dsml/"
+        "mathweil/wandb/wandb/run-20260819_233635-8qw13bmd/files/policies_best/"
+        "40370176"
+    )
+    out = hf.shorten_text_paths(leaked)
+
+    assert out == "Checkpoint commit was successful to policies_best/40370176"
+    assert "8qw13bmd" not in out
+    assert "/cs/student" not in out
+    assert "mathweil" not in out
+
+
+def test_scrubbing_a_staged_tree_reaches_every_file_not_a_known_list(tmp_path):
+    """A whole staged directory, including the files staging never named."""
+    hf = _hf_upload()
+    run = tmp_path / "run"
+    (run / "40370176" / "default").mkdir(parents=True)
+    (run / "results.json").write_text(json.dumps({
+        "config": {"WANDB_ENTITY": "myopic-planner", "D_MODEL": 384},
+        "score": 11.8,
+    }))
+    (run / "wandb-summary.json").write_text(json.dumps({
+        "_wandb": {"runtime": 5855}, "achievements": 19.78,
+    }))
+    (run / "40370176" / "default" / "commit_success.txt").write_text(
+        "Checkpoint commit was successful to /cs/student/x/wandb/run-a/policies/40370176"
+    )
+
+    hf.scrub_staged_tree(run)
+
+    results = json.loads((run / "results.json").read_text())
+    summary = json.loads((run / "wandb-summary.json").read_text())
+    marker = (run / "40370176" / "default" / "commit_success.txt").read_text()
+
+    assert hf.environment_key_paths(results) == []
+    assert results["config"] == {"D_MODEL": 384}
+    assert results["score"] == 11.8            # the recipe survives
+    assert hf.environment_key_paths(summary) == []
+    assert summary["achievements"] == 19.78
+    assert "/cs/student" not in marker and "myopic-planner" not in results
+
+
+def test_a_staged_ablation_run_publishes_no_environment_key(tmp_path):
+    """End to end at the call site: stage_runs copied these verbatim, which is
+    how WANDB_ENTITY reached the published ablation suite."""
+    hf = _hf_upload()
+    run = hf.RUNS / "some_run"
+    try:
+        (run / "tables").mkdir(parents=True)
+        (run / "results.json").write_text(json.dumps({
+            "config": {"USE_WANDB": True, "WANDB_ENTITY": "myopic-planner",
+                       "N_LAYERS": 6},
+            "mean_score": 11.8,
+        }))
+        (run / "diagnosis.md").write_text("# report\n")
+
+        staging = tmp_path / "staging"
+        hf.stage_runs(staging, [run])
+
+        staged = json.loads(
+            (staging / run.relative_to(hf.ROOT) / "results.json").read_text()
+        )
+        assert hf.environment_key_paths(staged) == []
+        assert staged["config"] == {"N_LAYERS": 6}
+        assert staged["mean_score"] == 11.8
+    finally:
+        shutil.rmtree(run, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
 # Publishing: the licence is the one git committed, not the one on disk
 # ---------------------------------------------------------------------------
 # `hf download --local-dir .` writes the Hub's copies over the working tree.
