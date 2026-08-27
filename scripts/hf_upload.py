@@ -2,7 +2,8 @@
 
 Discovers every Orbax checkpoint under ``checkpoints/``, every ablation run
 under ``experiments/rl_finetuning/outputs/`` and every ``--mode inference``
-result under ``results/inference/``, stages them with the repo-relative layout
+result under ``results/inference/``, the manuscript figure PDFs under
+``results/paper_figures/``, stages them with the repo-relative layout
 preserved, drops wandb environment metadata (which carries the author's email,
 hostname and local paths), generates a model card from the checkpoints' own
 config snapshots, and uploads.
@@ -28,6 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CKPTS = ROOT / "checkpoints"
 RUNS = ROOT / "experiments" / "rl_finetuning" / "outputs"
 INFERENCE = ROOT / "results" / "inference"
+PAPER_FIGURES = ROOT / "results" / "paper_figures"
 
 PAPER = (
     "Return-Weighted ELBO Fine-Tuning Degrades "
@@ -122,6 +124,19 @@ def discover_runs() -> list[Path]:
     if not RUNS.is_dir():
         return []
     return sorted(d for d in RUNS.iterdir() if (d / "results.json").is_file())
+
+
+def discover_paper_figures() -> list[Path]:
+    """The manuscript figure PDFs built by ``scripts/paper_figures.py``.
+
+    Unlike everything else published here these are *cross-environment*: the
+    script reads both this repository's and the MiniHack sibling's
+    ``results.json`` and draws the two side by side, so the same PDFs belong in
+    both releases and neither repository can build them alone.
+    """
+    if not PAPER_FIGURES.is_dir():
+        return []
+    return sorted(PAPER_FIGURES.glob("*.pdf"))
 
 
 def discover_inference(extra: list[str]) -> list[Path]:
@@ -317,18 +332,38 @@ def stage_inference(staging: Path, files: list[Path]) -> list[dict[str, str]]:
     return rows
 
 
+def stage_paper_figures(staging: Path, figures: list[Path]) -> list[dict[str, str]]:
+    """Copy the manuscript figures into ``results/paper_figures/``."""
+    if not figures:
+        return []
+    target_dir = staging / PAPER_FIGURES.relative_to(ROOT)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for src in figures:
+        shutil.copy2(src, target_dir / src.name)
+        rows.append({"file": src.name, "size": human_size(target_dir / src.name)})
+    return rows
+
+
 def stage(
     staging: Path,
     models: dict[Path, list[int]],
     runs: list[Path],
     inference: list[Path],
-) -> tuple[list[dict[str, str]], list[dict[str, str]], list[dict[str, str]]]:
+    paper_figures: list[Path],
+) -> tuple[
+    list[dict[str, str]],
+    list[dict[str, str]],
+    list[dict[str, str]],
+    list[dict[str, str]],
+]:
     """Stage checkpoints, results and LICENSE; the card is written by the caller."""
     rows = stage_checkpoints(staging, models)
     run_rows = stage_runs(staging, runs)
     inf_rows = stage_inference(staging, inference)
+    fig_rows = stage_paper_figures(staging, paper_figures)
     shutil.copy2(ROOT / "LICENSE", staging / "LICENSE")
-    return rows, run_rows, inf_rows
+    return rows, run_rows, inf_rows, fig_rows
 
 
 # =============================================================================
@@ -351,8 +386,12 @@ def checkpoint_table(rows: list[dict[str, str]]) -> str:
     )
 
 
-def results_section(run_rows: list[dict[str, str]], inf_rows: list[dict[str, str]]) -> str:
-    """Ablation and inference tables; empty when the release carries neither."""
+def results_section(
+    run_rows: list[dict[str, str]],
+    inf_rows: list[dict[str, str]],
+    fig_rows: list[dict[str, str]],
+) -> str:
+    """Ablation, inference and manuscript-figure tables; empty when none."""
     parts = []
     if run_rows:
         parts.append(
@@ -381,6 +420,22 @@ def results_section(run_rows: list[dict[str, str]], inf_rows: list[dict[str, str
                 ],
             ),
         )
+    if fig_rows:
+        parts.append(
+            "Manuscript figures, as vector PDF at NeurIPS column width, under "
+            "`results/paper_figures/`. These are built by "
+            "`scripts/paper_figures.py`, which reads the ablation "
+            "`results.json` of *both* environments and draws Craftax Classic "
+            "and MiniHack side by side, so the identical set is published in "
+            "this release and in the MiniHack one.\n\n"
+            + table(
+                ["Figure", "Size"],
+                [
+                    f"`{r['file']}` | {r['size']}"
+                    for r in sorted(fig_rows, key=lambda r: r["file"])
+                ],
+            ),
+        )
     return "## Results\n\n" + "\n".join(parts) if parts else ""
 
 
@@ -395,6 +450,7 @@ def model_card(
     rows: list[dict[str, str]],
     run_rows: list[dict[str, str]],
     inf_rows: list[dict[str, str]],
+    fig_rows: list[dict[str, str]],
     total_mb: float,
 ) -> str:
     example = featured(rows)
@@ -434,7 +490,7 @@ Weights are [Orbax](https://orbax.readthedocs.io) checkpoint directories
 `orbax.checkpoint`, and the paths above mirror the source repository so a
 snapshot can be dropped straight into a working copy.
 
-{results_section(run_rows, inf_rows)}
+{results_section(run_rows, inf_rows, fig_rows)}
 ## Download
 
 ```python
@@ -545,18 +601,24 @@ def main() -> int:
         return 1
     runs = discover_runs()
     inference = discover_inference(args.inference_results)
+    paper_figures = discover_paper_figures()
 
     with tempfile.TemporaryDirectory(prefix="remdm-craftax-") as tmp:
         staging = Path(tmp)
-        rows, run_rows, inf_rows = stage(staging, models, runs, inference)
+        rows, run_rows, inf_rows, fig_rows = stage(
+            staging, models, runs, inference, paper_figures
+        )
         total_mb = dir_size_mb(staging)
-        card = model_card(args.repo_id, rows, run_rows, inf_rows, total_mb)
+        card = model_card(
+            args.repo_id, rows, run_rows, inf_rows, fig_rows, total_mb
+        )
         (staging / "README.md").write_text(card)
 
         files = [f for f in staging.rglob("*") if f.is_file()]
         print(f"Staged {plural(len(rows), 'checkpoint')}, "
               f"{plural(len(run_rows), 'ablation run')}, "
               f"{plural(len(inf_rows), 'inference result')}, "
+              f"{plural(len(fig_rows), 'paper figure')}, "
               f"{plural(len(files), 'file')}, {total_mb:.0f} MB")
         for r in sorted(rows, key=lambda r: r["path"]):
             print(f"  {r['path']:<70} {r['size']:>8}")
@@ -564,6 +626,8 @@ def main() -> int:
             print(f"  {r['path']:<70} {r['size']:>8}  {r['contents']}")
         for r in sorted(inf_rows, key=lambda r: r["file"]):
             print(f"  results/inference/{r['file']:<52} {r['size']:>8}  {r['metric']}")
+        for r in sorted(fig_rows, key=lambda r: r["file"]):
+            print(f"  results/paper_figures/{r['file']:<48} {r['size']:>8}")
         if not run_rows:
             print(f"Warning: no ablation runs with a results.json under {RUNS}.",
                   file=sys.stderr)
@@ -571,6 +635,12 @@ def main() -> int:
             print("Warning: no inference results; produce them with "
                   "`main.py --mode inference --output "
                   f"{INFERENCE.relative_to(ROOT)}/<name>.json`.", file=sys.stderr)
+
+        if not fig_rows:
+            print("Warning: no manuscript figures; build them with "
+                  "`uv run python scripts/paper_figures.py --outdir "
+                  f"{PAPER_FIGURES.relative_to(ROOT)}` once the MiniHack "
+                  "sibling's results.json is present.", file=sys.stderr)
 
         if args.dry_run:
             print(f"Dry run; staged tree left nowhere. Card:\n\n{card}")
