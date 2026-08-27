@@ -25,6 +25,16 @@ from pathlib import Path
 
 import yaml
 
+# scripts/ is not a package, so the helper is imported by bare name.
+# Python already puts this file's directory on sys.path when the script is
+# run directly; the explicit insert is for the file-location loaders the
+# tests use (tests/test_config.py), which do not.
+_SCRIPTS = Path(__file__).resolve().parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from _git_provenance import copy_tracked_file  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 CKPTS = ROOT / "checkpoints"
 RUNS = ROOT / "experiments" / "rl_finetuning" / "outputs"
@@ -357,12 +367,19 @@ def stage(
     list[dict[str, str]],
     list[dict[str, str]],
 ]:
-    """Stage checkpoints, results and LICENSE; the card is written by the caller."""
+    """Stage checkpoints, results and LICENSE; the card is written by the caller.
+
+    LICENSE comes from git rather than the working tree: a
+    ``hf download --local-dir .`` overwrites it with the Hub's own copy, and
+    publishing from the tree would push that straight back up as current.
+    """
     rows = stage_checkpoints(staging, models)
     run_rows = stage_runs(staging, runs)
     inf_rows = stage_inference(staging, inference)
     fig_rows = stage_paper_figures(staging, paper_figures)
-    shutil.copy2(ROOT / "LICENSE", staging / "LICENSE")
+    # ROOT is passed explicitly rather than read inside the helper, so a
+    # test can rebind it and have that take effect.
+    copy_tracked_file("LICENSE", staging / "LICENSE", ROOT)
     return rows, run_rows, inf_rows, fig_rows
 
 
@@ -493,11 +510,24 @@ snapshot can be dropped straight into a working copy.
 {results_section(run_rows, inf_rows, fig_rows)}
 ## Download
 
+This repo mirrors the code repository's layout, so a snapshot drops straight
+into a working copy -- but it also carries its own `README.md` (this card),
+`LICENSE` and `.gitattributes`, and `local_dir="."` would overwrite the code
+repository's copies of all three. Exclude them, or download into a directory
+of its own.
+
 ```python
 from huggingface_hub import snapshot_download
 
-# everything (~{total_mb:.0f} MB)
-snapshot_download(repo_id="{repo_id}", local_dir=".")
+# everything (~{total_mb:.0f} MB), into a clone of the code repository
+snapshot_download(
+    repo_id="{repo_id}",
+    local_dir=".",
+    ignore_patterns=["README.md", "LICENSE", ".gitattributes"],
+)
+
+# or somewhere of its own, leaving any working copy untouched
+snapshot_download(repo_id="{repo_id}", local_dir="remdm-craftax")
 
 # a single model
 snapshot_download(

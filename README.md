@@ -266,6 +266,8 @@ Full-Craftax diffusion planner checkpoints are not released: no full-Craftax tra
 uv run hf download mathisweil/remdm-craftax-checkpoints --include "checkpoints/**" --local-dir .
 ```
 
+**Keep the `--include`.** The Hub repo carries its own `README.md` (the generated model card), `LICENSE` and `.gitattributes`, so dropping the glob and pulling everything into `--local-dir .` overwrites this repository's copies of all three. Publishing then pushed the overwritten `LICENSE` straight back up as current, which is how a superseded paper title reached the Hub. `hf_upload.py` now publishes `LICENSE` and the demo bundle's `README.md` from git rather than the working tree, so a clobbered tree no longer reaches the Hub — but the pull still overwrites your files. To fetch everything, add `--exclude "README.md" "LICENSE" ".gitattributes"`, or use a `--local-dir` of its own.
+
 ### Experiment outputs
 
 Ablation figures, tables and `results.json` are **not in the repository** and never

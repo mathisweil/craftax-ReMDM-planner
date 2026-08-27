@@ -6,6 +6,9 @@ import ast
 import importlib.util
 import json
 import math
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -582,6 +585,185 @@ def test_the_published_config_drops_the_same_environment_keys_in_both_repos():
     for key in ("lr", "LR", "batch_size", "NUM_ENVS", "noise_schedule",
                 "use_amp", "USE_AMP", "hubris", "wandbish"):
         assert not hf.is_environment_key(key), key
+
+
+# ---------------------------------------------------------------------------
+# Publishing: the licence is the one git committed, not the one on disk
+# ---------------------------------------------------------------------------
+# `hf download --local-dir .` writes the Hub's copies over the working tree.
+# The Hub repo carries its own README.md (the model card) and its own LICENSE,
+# and comparing `git ls-files` against the Hub listing those two are the only
+# tracked files a pull overwrites. Publishing read LICENSE straight off the
+# tree, so a pull-then-publish round trip re-published whatever the pull left
+# behind. That shipped a LICENSE naming a superseded paper title, caught only
+# by hand -- neither `--dry-run` nor the staged-tree listing would show it,
+# because both print a LICENSE that is merely the wrong one.
+
+_STALE_LICENSE = (
+    'Copyright (c) 2026 The authors of "The Double Intractability of '
+    'Reinforcement Learning for Discrete Diffusion Planners"\n'
+)
+_CURRENT_LICENSE = (
+    'Copyright (c) 2026 The authors of "Return-Weighted ELBO Fine-Tuning '
+    'Degrades Masked Diffusion Planners"\n'
+)
+
+requires_git = pytest.mark.skipif(
+    shutil.which("git") is None, reason="git is not on PATH"
+)
+
+
+def _checkout(root: Path, license_text: str) -> None:
+    """A throwaway checkout with LICENSE committed.
+
+    Isolated from the developer's git config: hooks, commit templates and
+    commit.gpgsign would otherwise leak in and make this machine-dependent.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "LICENSE").write_text(license_text)
+    env = {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+    }
+    run = lambda *a: subprocess.run(  # noqa: E731
+        ["git", *a], cwd=root, env=env, capture_output=True, check=True
+    )
+    run("init", "-q", "--template=")
+    run("add", "LICENSE")
+    run(
+        "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+        "commit", "-qm", "licence",
+    )
+
+
+def _staged_license(hf, root: Path, staging: Path) -> bytes:
+    """Run the real `stage()` against *root* and return the staged LICENSE.
+
+    The module constants are bound from ROOT at import (hf_upload.py, top), so
+    rebinding ROOT alone would leave `stage_inference`'s
+    `INFERENCE.relative_to(ROOT)` pointing at the real repository and raising.
+    """
+    hf.ROOT = root
+    hf.CKPTS = root / "checkpoints"
+    hf.RUNS = root / "experiments" / "rl_finetuning" / "outputs"
+    hf.INFERENCE = root / "results" / "inference"
+    hf.PAPER_FIGURES = root / "results" / "paper_figures"
+    staging.mkdir(parents=True, exist_ok=True)
+    hf.stage(staging, {}, [], [], [])
+    return (staging / "LICENSE").read_bytes()
+
+
+@requires_git
+def test_the_published_licence_is_the_one_git_committed(tmp_path):
+    """A clean checkout publishes the committed bytes."""
+    repo = tmp_path / "repo"
+    _checkout(repo, _CURRENT_LICENSE)
+    staged = _staged_license(_hf_upload(), repo, tmp_path / "staging")
+    assert staged == _CURRENT_LICENSE.encode()
+
+
+@requires_git
+def test_a_clobbered_licence_publishes_gits_bytes_not_the_working_trees(
+    tmp_path, capsys
+):
+    """The regression test for the incident: a LICENSE overwritten by a Hub
+    download must not reach the Hub, and the operator must be told."""
+    repo = tmp_path / "repo"
+    _checkout(repo, _CURRENT_LICENSE)
+    # Exactly what `hf download --local-dir .` did.
+    (repo / "LICENSE").write_text(_STALE_LICENSE)
+
+    staged = _staged_license(_hf_upload(), repo, tmp_path / "staging")
+
+    assert staged == _CURRENT_LICENSE.encode()
+    assert staged != _STALE_LICENSE.encode()
+    assert b"Double Intractability" not in staged
+    assert "differs from the one committed at HEAD" in capsys.readouterr().err
+
+
+@requires_git
+def test_the_published_licence_is_byte_exact(tmp_path):
+    """CRLF and a missing trailing newline survive.
+
+    Fails the moment `capture_output=True` is 'tidied' into `text=True`, or
+    `git cat-file blob` is swapped back for `git show`.
+    """
+    repo = tmp_path / "repo"
+    awkward = 'Copyright (c) 2026\r\nNo trailing newline here.'
+    repo.mkdir()
+    (repo / "LICENSE").write_bytes(awkward.encode())
+    _checkout(repo, awkward)
+
+    staged = _staged_license(_hf_upload(), repo, tmp_path / "staging")
+    assert staged == awkward.encode()
+
+
+def test_publishing_from_a_non_git_checkout_still_works_and_says_so(
+    tmp_path, capsys
+):
+    """A tarball or slim container must still publish -- with a warning."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "LICENSE").write_text(_CURRENT_LICENSE)
+
+    staged = _staged_license(_hf_upload(), repo, tmp_path / "staging")
+
+    assert staged == _CURRENT_LICENSE.encode()
+    assert "UNVERIFIED" in capsys.readouterr().err
+
+
+@requires_git
+def test_an_uncommitted_licence_falls_back_to_the_working_tree(tmp_path, capsys):
+    """`git init` with nothing committed is a distinct branch from 'no repo'."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "LICENSE").write_text(_CURRENT_LICENSE)
+    subprocess.run(["git", "init", "-q", "--template="], cwd=repo, check=True)
+
+    staged = _staged_license(_hf_upload(), repo, tmp_path / "staging")
+
+    assert staged == _CURRENT_LICENSE.encode()
+    assert "UNVERIFIED" in capsys.readouterr().err
+
+
+def test_git_missing_falls_back_rather_than_failing_the_publish(
+    tmp_path, capsys, monkeypatch
+):
+    """Decision: git is consulted, never required."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "LICENSE").write_text(_CURRENT_LICENSE)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+
+    staged = _staged_license(_hf_upload(), repo, tmp_path / "staging")
+
+    assert staged == _CURRENT_LICENSE.encode()
+    assert "git is not on PATH" in capsys.readouterr().err
+
+
+def test_the_model_card_no_longer_recommends_a_clobbering_download():
+    """The card told users to run the command that causes the bug.
+
+    `snapshot_download(repo_id=..., local_dir=".")` with no narrowing writes
+    the Hub's own README.md, LICENSE and .gitattributes over a working copy's.
+    """
+    hf = _hf_upload()
+    row = {
+        "path": "checkpoints/online/Some-Planner-100M",
+        "role": "Diffusion planner (online DAgger)",
+        "env": "Craftax-Classic-Symbolic-v1",
+        "arch": "6L, d_model 384",
+        "step": "1,000",
+        "detail": "1e8 frames",
+        "size": "33 MB",
+    }
+    card = hf.model_card("owner/repo", [row], [], [], [], 1.0)
+
+    assert 'snapshot_download(repo_id="owner/repo", local_dir=".")' not in card
+    assert "ignore_patterns" in card
+    for name in ("README.md", "LICENSE", ".gitattributes"):
+        assert name in card, name
 
 # ---------------------------------------------------------------------------
 # Config-key reachability (the class F-1 belongs to)

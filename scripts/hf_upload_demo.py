@@ -48,6 +48,15 @@ import sys
 import tempfile
 from pathlib import Path
 
+# scripts/ is not a package, so the helper is imported by bare name. Python
+# already puts this file's directory on sys.path when the script is run
+# directly; the explicit insert is for file-location loaders that do not.
+_SCRIPTS = Path(__file__).resolve().parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from _git_provenance import copy_tracked_file, dirty_paths  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 # Project-relative paths.  All sources are referenced relative to PROJECT_ROOT.
@@ -135,13 +144,29 @@ def stage_bundle(staging_dir: Path) -> None:
         logger.info("Copying %s -> %s", src.relative_to(PROJECT_ROOT), dst)
         shutil.copytree(src, target, ignore=COPY_IGNORE, dirs_exist_ok=False)
 
+    # Tracked directories are reported, not overridden: Craftax_Baselines is a
+    # submodule, so HEAD:Craftax_Baselines/... does not resolve from the
+    # superproject, and no Hub download writes to any of these paths anyway.
+    dirty = dirty_paths(["src", "configs", "Craftax_Baselines"], PROJECT_ROOT)
+    if dirty:
+        print(
+            f"Warning: publishing uncommitted changes in {', '.join(dirty)}. "
+            f"Commit them first if the bundle is meant to be reproducible.",
+            file=sys.stderr,
+        )
+
     for src, dst in SOURCE_FILES:
         if not src.exists():
             raise FileNotFoundError(f"Required source file missing: {src}")
         target = staging_dir / dst
         target.parent.mkdir(parents=True, exist_ok=True)
         logger.info("Copying %s -> %s", src.relative_to(PROJECT_ROOT), dst)
-        shutil.copy2(src, target)
+        # All three are git-tracked, and README.md is one of the two files a
+        # `hf download --local-dir .` overwrites with the Hub's own copy --
+        # after such a pull the working-tree README.md IS the model card.
+        # Publish what git committed so a clobbered tree cannot reach the
+        # demo repo; the helper warns and falls back if git cannot answer.
+        copy_tracked_file(str(src.relative_to(PROJECT_ROOT)), target, PROJECT_ROOT)
 
 
 def directory_size_mb(path: Path) -> float:
