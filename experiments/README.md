@@ -256,7 +256,7 @@ experiments/rl_finetuning/outputs/{run_id}/
 │   ├── achievement_breakdown.png          # Start vs end achievement rates (stacked bars)
 │   ├── achievement_collapse_{name}.png    # Per-ablation achievement heatmap over time
 │   ├── diagnosis_decision_tree.png
-│   └── action_dist/
+│   └── action_dist/                        # On by default; --no-action-dist skips it
 │       ├── action_freq_{name}.png         # Side-by-side pre/post action frequency bars
 │       ├── transition_matrix_{name}.png   # 3-panel heatmap (pre, post, difference)
 │       ├── action_metrics_{name}.png      # 2x2 dashboard (entropy in nats, effective, Gini, divergences)
@@ -272,6 +272,14 @@ experiments/rl_finetuning/outputs/{run_id}/
     ├── gdelta.{csv,tex}                   # --measure-gdelta only: the decomposition per weight transform
     └── results.tex                        # --emit-tex-macros only: \newcommand per headline number
 ```
+
+**Action distribution analysis** runs by default and is disabled with
+`--no-action-dist`. The rollout is one vectorised scan over `num_envs`, sized
+from the config rather than by an episode count, so it costs a fraction of a
+training run — which is why the default differs from the minihack twin, where
+the same flag defaults off because MiniHack rollouts are not vectorised. It
+reads each ablation's `final_params`, so it only covers ablations that
+completed.
 
 **`results.json` schema:**
 ```json

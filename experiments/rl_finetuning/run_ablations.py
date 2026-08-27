@@ -282,6 +282,20 @@ def _build_parser() -> argparse.ArgumentParser:
         "for seeds run on separate machines. The counterpart to --merge.",
     )
 
+    p.add_argument(
+        "--action-dist",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "After training, roll out the pretrained and fine-tuned models to "
+            "compare action distributions (figures/action_dist/). On by "
+            "default here: the Craftax rollout is one vectorised scan over "
+            "num_envs, so it costs a fraction of a training run. The minihack "
+            "twin takes the same flag but defaults off -- its rollouts are not "
+            "vectorised (PARITY, known structural divergences)."
+        ),
+    )
+
     # Output
     p.add_argument(
         "--output-dir",
@@ -1062,18 +1076,21 @@ def main(argv: list[str] | None = None) -> None:
                 mgr.wait_until_finished()
             logger.info("Saved model checkpoint to %s", ckpt_path)
 
-    logger.info("Running action distribution analysis...")
-    rng, ad_rng = jax.random.split(rng)
-    run_action_distribution_analysis(
-        results,
-        pretrained_params,
-        apply_eval,
-        env,
-        env_params,
-        merged,
-        ad_rng,
-        output_dir,
-    )
+    if args.action_dist:
+        logger.info("Running action distribution analysis...")
+        rng, ad_rng = jax.random.split(rng)
+        run_action_distribution_analysis(
+            results,
+            pretrained_params,
+            apply_eval,
+            env,
+            env_params,
+            merged,
+            ad_rng,
+            output_dir,
+        )
+    else:
+        logger.info("Skipping action distribution analysis (--no-action-dist).")
 
     logger.info("Generating plots and tables...")
     ach_rates_arg = pretrained_ach_rates if pretrained_ach_rates else None
