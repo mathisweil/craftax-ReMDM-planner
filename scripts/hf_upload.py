@@ -64,19 +64,35 @@ RUN_DIRS = ("tables", "figures", "gdelta")
 
 # Environment provenance, never needed to restore a checkpoint, and dropped
 # from every published config in both repos: the nested `_wandb` blob (email,
-# host, git remote, absolute paths), every `wandb_*` and `hub_*` key, and
-# `use_wandb` itself — which matches neither prefix, so both repos shipped it
-# in the released config while claiming to scrub W&B settings. Keys are
-# compared lower-cased, because craftax records them UPPERCASE and minihack
-# lower-case.
-DROP_PREFIXES = ("wandb_", "hub_")
+# host, git remote, absolute paths), every key containing `wandb_`, every
+# `hub_*` key, and `use_wandb` itself — which matches neither prefix, so both
+# repos shipped it in the released config while claiming to scrub W&B settings.
+# Keys are compared lower-cased, because craftax records them UPPERCASE and
+# minihack lower-case.
+#
+# `wandb_` is a SUBSTRING rule, not a prefix rule, because a W&B key is not
+# always at the front: this repo published `RESUME_WANDB_RUN_ID`, and the
+# sibling published `baselines_wandb_project` with a real value in two released
+# config.yaml files. A suffix rule would have caught the first and left the
+# second. The trailing underscore is what makes a substring safe -- `wandbish`
+# contains `wandb` but not `wandb_`, so the negative assertions in both repos'
+# test_config stand unchanged.
+#
+# `hub_` stays a PREFIX rule deliberately: as a substring it would swallow
+# `github_url`.
+DROP_PREFIXES = ("hub_",)
+DROP_SUBSTRINGS = ("wandb_",)
 DROP_KEYS = ("_wandb", "use_wandb")
 
 
 def is_environment_key(key: str) -> bool:
     """True for a config key that is provenance rather than recipe."""
     lowered = key.lower()
-    return lowered in DROP_KEYS or lowered.startswith(DROP_PREFIXES)
+    return (
+        lowered in DROP_KEYS
+        or lowered.startswith(DROP_PREFIXES)
+        or any(mark in lowered for mark in DROP_SUBSTRINGS)
+    )
 
 
 # wandb-metadata.json is pure environment provenance (email, host, git remote,
@@ -265,7 +281,14 @@ def scrub(cfg):
     return drop_environment_keys(shorten_paths(cfg))
 
 
-ABS_PATH_IN_TEXT = re.compile(r"/(?:[\w.@+-]+/)+[\w.@+-]+")
+# Anchored with a lookbehind so a match cannot START at a slash in the middle
+# of a RELATIVE path. Without it, `experiments/rl_finetuning/analysis/tables.py`
+# matched from the slash after `experiments` and came out
+# `experimentsanalysis/tables.py` -- a scrub corrupting a file it had no
+# business touching. The character class keeps `@` and `+`: dropping them does
+# not merely miss a path, it makes the lookbehind reject the whole match, so an
+# absolute path containing either would sail through unshortened.
+ABS_PATH_IN_TEXT = re.compile(r"(?<![\w.@+\-])/(?:[\w.@+\-]+/){2,}[\w.@+\-]+")
 
 
 def shorten_text_paths(text: str) -> str:
