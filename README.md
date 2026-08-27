@@ -360,13 +360,14 @@ Controlled by the `remask_strategy` key. All strategies operate on top of the th
 
 ## Key hyperparameters
 
+`configs/defaults.yaml` is authoritative and commented inline. Tabulated here are the
+keys that change a result, carry a hazard, or are named elsewhere in this README.
+
 **Environment**
 
 | Parameter | Default | Description |
 |---|---|---|
 | `env_name` | `Craftax-Classic-Symbolic-v1` | Craftax environment ID. Use `Craftax-Symbolic-v1` for Full Craftax. |
-| `use_optimistic_resets` | `false` | Use `OptimisticResetVecEnvWrapper` instead of `AutoResetEnvWrapper` |
-| `optimistic_reset_ratio` | 16 | Fraction of envs reset per step when optimistic resets are enabled |
 
 **Diffusion model**
 
@@ -385,17 +386,9 @@ Controlled by the `remask_strategy` key. All strategies operate on top of the th
 | `temperature` | 0.5 | Softmax temperature for token sampling |
 | `top_p` | 0.95 | Nucleus sampling threshold |
 
-**Transformer architecture**
-
-| Parameter | Default | Description |
-|---|---|---|
-| `d_model` | 384 | Hidden dimension |
-| `n_heads` | 8 | Attention heads |
-| `n_layers` | 6 | Transformer blocks |
-| `d_ff` | 768 | FFN inner dimension |
-| `obs_encoder_layers` | 2 | MLP layers in the observation encoder |
-| `obs_encoder_width` | 768 | Observation encoder hidden width |
-| `dropout_rate` | 0.1 | Dropout rate (disabled at inference) |
+**Transformer architecture.** `d_model` 384, `n_heads` 8, `n_layers` 6, `d_ff` 768,
+`obs_encoder_layers` 2, `obs_encoder_width` 768, `dropout_rate` 0.1 — the shape every
+released checkpoint carries. A checkpoint restores only against a matching config.
 
 **Offline training**
 
@@ -412,11 +405,7 @@ Controlled by the `remask_strategy` key. All strategies operate on top of the th
 | `lr_warmup_frames` | 1.6384e6 | Env-frame linear warm-up budget (0 = disabled). Derives `LR_WARMUP_STEPS` in gradient steps. |
 | `max_grad_norm` | 1.0 | Global gradient clipping norm |
 | `return_weight_cap` | 5.0 | Clip ceiling for per-window return weights (lower clip fixed at 0.1) |
-| `collect_temperature` | 1.0 | Softmax temperature on PPO logits during live data collection |
 | `val_interval_frames` | 1e6 | Env-frames between validation rollouts. Derives `VAL_INTERVAL` in update steps. |
-| `val_diffusion_steps` | 50 | Denoising steps during validation rollouts |
-| `val_replan_every` | 4 | Env steps executed per diffusion plan during validation |
-| `val_steps` | 256 | Total env steps per validation rollout |
 
 **Online DAgger training**
 
@@ -436,24 +425,22 @@ Controlled by the `remask_strategy` key. All strategies operate on top of the th
 | `collect_num_steps` | 10000000 | Total environment steps to collect |
 | `collect_num_envs` | 128 | Parallel environments during collection |
 | `ppo_model_type` | `ppo_rnn` | PPO architecture: `ppo`, `ppo_rnn`, or `ppo_rnd` |
-| `layer_size` | 512 | PPO actor-critic hidden layer width |
 | `eval_steps` | 10000 | Environment steps for evaluation |
 | `eval_num_envs` | 32 | Parallel agents during evaluation (independent of `num_envs`) |
+| `inference_sampler` | `sample_plan` | `sample_plan` (the published protocol) or `inpainting` |
+| `eval_replan` | 8 | Env steps executed per plan under `sample_plan` |
 
-**Checkpointing / resume / logging**
+**Checkpointing / logging**
 
 | Parameter | Default | Description |
 |---|---|---|
 | `save_policy` | `true` | Save final checkpoint and upload as W&B artifact |
-| `resume_checkpoint_path` | `null` | Per-run: `--resume` (accepts `wandb:` refs) |
-| `resume_wandb_run_id` | `null` | Per-run: `--resume-wandb-run-id` (auto-read from metadata) |
-| `resume_step` | `null` | Per-run: `--resume-step` (auto-read from metadata) |
+| `checkpoint_dir` | `checkpoints` | Where checkpoints land when W&B is off |
 | `seed` | `null` | RNG seed (random if null; per-run: `--seed`) |
-| `use_wandb` | `true` | Enable Weights & Biases logging |
-| `wandb_project` | `craftax-ReMDM-planner` | W&B project name |
-| `wandb_entity` | (author's) | W&B entity |
-| `wandb_download_dir` | `null` | Download dir for W&B artifacts; null = `./artifacts/` |
 | `jax_compilation_cache_dir` | `null` | Persistent XLA compilation cache; null = off. See below |
+
+The `resume_*`, `use_wandb` and `wandb_*` keys mirror the run flags documented under
+[Configuration](#configuration).
 
 ### Persistent compilation cache
 
