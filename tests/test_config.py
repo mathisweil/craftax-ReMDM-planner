@@ -1207,7 +1207,7 @@ def test_the_reachability_scan_reaches_the_code_it_claims_to_cover():
 #
 # It is deliberately NOT compared with the `experiments/README.md` table:
 # those cells are short labels in a different register ("Soft KL constraint
-# vs pretrained") and the registry carries the mechanism sentence. 24 of 25
+# vs pretrained") and the registry carries the mechanism sentence. 25 of 26
 # differ by design; only `mixed_replay` coincides, because `a2d8231` gave
 # the registry and the README the same self-replay sentence -- superseding
 # F-2, which had reached the coincidence by copying the older README wording.
@@ -1225,6 +1225,9 @@ _EXPECTED_DESCRIPTIONS = {
     ),
     "baseline_rl": (
         "Return-weighted ELBO -- no modifications"
+    ),
+    "bc_all": (
+        "Uniform ELBO on all rollout windows (no advantage weighting)"
     ),
     "bc_wins": (
         "Uniform ELBO on win windows only (no advantage weighting)"

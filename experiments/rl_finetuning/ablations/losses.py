@@ -380,6 +380,35 @@ def make_loss_bc_wins(ctx: LossContext) -> LossFn:
     return loss_fn
 
 
+def make_loss_bc_all(ctx: LossContext) -> LossFn:
+    """Uniform ELBO over every rollout window (BC on self-generated data).
+
+    The return weighting is dropped outright: ``advantages`` is ignored and
+    ``compute_loss`` takes its plain batch mean, which is exactly a weight of
+    1.0 on every window. The batch is the one ``baseline_rl`` trains on --
+    same collection, same windows -- so the pair separates the on-policy data
+    distribution from the weighting applied to it, which no other arm does.
+
+    ``bc_wins`` is the nearest neighbour and does not answer this: it keeps
+    only the winning windows, so it varies the data as well as the weights.
+
+    Hypothesis: if this degrades like ``baseline_rl``, fine-tuning on
+    self-generated rollouts is the cause and the weighting is incidental.
+
+    Args:
+        ctx: Shared loss context.
+
+    Returns:
+        ``LossFn`` averaging uniformly over the whole batch.
+    """
+
+    def loss_fn(params, acts, obs, valid, rng, advantages):
+        del advantages  # uniform weights: the point of the arm
+        return _core_loss(ctx, params, rng, acts, obs, valid, None)
+
+    return loss_fn
+
+
 def make_loss_low_t(ctx: LossContext) -> LossFn:
     """Return-weighted ELBO restricted to t ∈ [ε, t_max_low].
 

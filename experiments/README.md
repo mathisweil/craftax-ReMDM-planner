@@ -8,7 +8,7 @@ These scripts are **standalone research code** — they import from `src/` but d
 ## `rl_finetuning/` — RL Fine-Tuning Ablation Suite
 
 Diagnoses why RL fine-tuning of the diffusion model collapses and which interventions fix it.
-Implements **25 ablations**: a baseline plus four groups (A: Regularisation, B: Training Signal, C: Architecture, D: Data Quality), with a comprehensive diagnostic and analysis pipeline.
+Implements **26 ablations**: a baseline plus four groups (A: Regularisation, B: Training Signal, C: Architecture, D: Data Quality), with a comprehensive diagnostic and analysis pipeline.
 
 **Training data is on-policy.** Each iteration rolls the *current* model out under its EMA weights (`diffusion_steps_collect` denoising steps per plan, `num_steps // plan_horizon` plan cycles) and trains on those windows, weighted by each window's own H-step reward sum. The suite therefore needs no expert: `--ppo-checkpoint` is gone, and only the pretrained diffusion `--checkpoint` is required.
 
@@ -20,7 +20,7 @@ rl_finetuning/
 ├── ablations/
 │   ├── losses.py             # All loss/objective variants as factory functions
 │   ├── optimizers.py         # LLRD, LoRA, gradient surgery, param masking
-│   ├── registry.py           # AblationSpec dataclass + REGISTRY (25 ablations)
+│   ├── registry.py           # AblationSpec dataclass + REGISTRY (26 ablations)
 │   └── training.py           # make_run_ablation() factory + AblationHistory dataclass
 ├── diagnostics/
 │   ├── gradient.py           # Grad alignment, per-layer norms, surgery metrics
@@ -82,7 +82,7 @@ python experiments/rl_finetuning/run_ablations.py \
     --checkpoint $PRETRAINED_CKPT
 ```
 
-**Full suite (all 25 ablations):**
+**Full suite (all 26 ablations):**
 ```bash
 python experiments/rl_finetuning/run_ablations.py \
     --config configs/defaults.yaml \
@@ -216,6 +216,7 @@ deviation **across seeds**, which is what the paper's table prints.
 | | `advantage_clip` | PPO-style advantage clipping [1-ε, 1+ε] |
 | | `normalized_adv` | Std-normalised advantages |
 | | `bc_wins` | Uniform ELBO on win windows (no advantage weighting) |
+| | `bc_all` | Uniform ELBO on every rollout window (no advantage weighting) |
 | | `low_t` | ELBO restricted to low-t (fine-detail) regime |
 | **C: Architecture** | `frozen_backbone` | Train the action head + token embeddings (backbone frozen) |
 | | `head_only` | Train only the final action projection |
@@ -294,7 +295,7 @@ experiments/rl_finetuning/outputs/{run_id}/
 ```
 
 `results.json` is written incrementally after each ablation completes — a partial file with
-N of 25 ablations is fully valid and loadable by `--analyze-only --results-path`.
+N of 26 ablations is fully valid and loadable by `--analyze-only --results-path`.
 
 ### W&B logging
 
