@@ -196,6 +196,14 @@ python experiments/rl_finetuning/run_ablations.py \
     --ablations baseline_rl kl_penalty --fast
 ```
 
+The same entry point measures the return term of the gradient decomposition at the
+pretrained checkpoint, with no training and no accelerator:
+
+```bash
+python experiments/rl_finetuning/run_ablations.py --measure-gdelta --gdelta-seeds 0 1 2 \
+    --checkpoint $PRETRAINED_CKPT --results-path $RUN/results.json --output-dir $RUN
+```
+
 ## Configuration
 
 One YAML config holds the experiment; the CLI holds the run.

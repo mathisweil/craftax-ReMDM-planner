@@ -15,6 +15,10 @@ import polars as pl
 
 from experiments.rl_finetuning.ablations.registry import REGISTRY
 from experiments.rl_finetuning.ablations.training import AblationHistory
+from experiments.rl_finetuning.analysis.gdelta import (
+    REGISTRY_RULES,
+    load_gdelta_aggregate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -386,6 +390,47 @@ def make_gradient_analysis_table(
         ),
         reverse=True,
     )
+    return pl.DataFrame(rows)
+
+
+def make_gdelta_table(agg: dict) -> pl.DataFrame:
+    """The gradient-decomposition table: one row per weight transform.
+
+    Columns follow the paper's ``tab:gdelta``. Every ``+/-`` is the standard
+    deviation ACROSS ROLLOUT SEEDS, which is what :func:`gdelta.aggregate`
+    computes; a single seed's dispersion over its own ``(z_t, t)`` draws is a
+    different and smaller quantity and is not reported here.
+
+    ``normalized_adv`` mean-centres its weights, so (A1) fails and its ratio
+    divides by a mean near zero. The row is kept with an explicit flag rather
+    than dropped, because its absence would read as an omission.
+
+    Args:
+        agg: The aggregate record from ``gdelta/gdelta_aggregate.json``.
+
+    Returns:
+        Polars DataFrame.
+    """
+    rows = []
+    for name, rec in agg["variants"].items():
+        rows.append(
+            {
+                "Transform": name,
+                "CV_A": round(rec["cv_a_mean"], 3),
+                "Abar": round(rec["abar_mean"], 3),
+                "Abar_Ratio_Baseline": round(rec["abar_ratio_to_baseline_mean"], 3),
+                "ESS_Fraction": round(rec["ess_fraction_mean"], 3),
+                "Ratio": round(rec["ratio_mean"], 3),
+                "Ratio_Sd": round(rec["ratio_std_seeds"], 3),
+                "Cos": round(rec["cos_mean"], 3),
+                "Cos_Sd": round(rec["cos_std_seeds"], 3),
+                "Ratio_Shuffled": round(rec["ratio_shuffled_mean"], 3),
+                "Ratio_Shuffled_Sd": round(rec["ratio_shuffled_std_seeds"], 3),
+                "Cos_Shuffled": round(rec["cos_shuffled_mean"], 3),
+                "Cos_Shuffled_Sd": round(rec["cos_shuffled_std_seeds"], 3),
+                "A1_Violated": bool(rec["a1_violated"]),
+            }
+        )
     return pl.DataFrame(rows)
 
 
@@ -764,6 +809,64 @@ def _cv_a(ess: float, batch: int) -> float:
     return float(np.sqrt(max(batch / ess - 1.0, 0.0)))
 
 
+def write_gdelta_table(agg: dict, output_dir: Path) -> pl.DataFrame:
+    """Write ``tables/gdelta.{csv,tex}`` for one aggregate record."""
+    df = make_gdelta_table(agg)
+    _save_table(
+        df,
+        Path(output_dir) / "tables" / "gdelta",
+        caption="Return-term decomposition per weight transform.",
+        label="tab:gdelta",
+    )
+    return df
+
+
+def _define_gdelta_macros(agg: dict, define) -> None:
+    """Emit the measured decomposition quantities as ``\\newcommand``s.
+
+    Each variant is tagged by its ABLATION name, not its gdelta variant name,
+    so ``baseline_clipped_ratio`` becomes ``BaselineRl`` and sits beside the
+    ``Score`` and ``Ess`` macros for the same condition. The ``Gdelta`` infix
+    keeps these clear of the ESS-derived ``CvA`` macros, which measure a
+    different thing on different batches.
+    """
+    define("GdeltaNSeeds", value=str(int(agg["n_seeds"])))
+    define("GdeltaNParams", value=f"{agg['n_params'] / 1e6:.2f}")
+    define("GdeltaRandomCosSd", value=f"{agg['random_cos_sd']:.1e}")
+    define("GdeltaBatch", value=str(int(agg["batch"])))
+    define("GdeltaBcSelfCos", value=f"{agg['bc_self_cos_mean']:.3f}")
+    define("GdeltaBcSelfCosSd", value=f"{agg['bc_self_cos_std_seeds']:.3f}")
+    define("GdeltaEqFourResidual", value=f"{agg['eq4_residual_max']:.1e}")
+
+    for variant, rec in agg["variants"].items():
+        rule = REGISTRY_RULES.get(variant)
+        tag = _macro_name(rule[0] if rule else variant)
+        define("GdeltaCvA", tag=tag, value=f"{rec['cv_a_mean']:.2f}")
+        define("GdeltaAbar", tag=tag, value=f"{rec['abar_mean']:.3f}")
+        define(
+            "GdeltaAbarRatio", tag=tag,
+            value=f"{rec['abar_ratio_to_baseline_mean']:.3f}",
+        )
+        define("GdeltaEss", tag=tag, value=f"{rec['ess_fraction_mean']:.2f}")
+        define("GdeltaRatio", tag=tag, value=f"{rec['ratio_mean']:.3f}")
+        define("GdeltaRatioSd", tag=tag, value=f"{rec['ratio_std_seeds']:.3f}")
+        define("GdeltaCos", tag=tag, value=f"{rec['cos_mean']:.3f}")
+        define("GdeltaCosSd", tag=tag, value=f"{rec['cos_std_seeds']:.3f}")
+        define(
+            "GdeltaRatioShuf", tag=tag,
+            value=f"{rec['ratio_shuffled_mean']:.3f}",
+        )
+        define(
+            "GdeltaRatioShufSd", tag=tag,
+            value=f"{rec['ratio_shuffled_std_seeds']:.3f}",
+        )
+        define("GdeltaCosShuf", tag=tag, value=f"{rec['cos_shuffled_mean']:.3f}")
+        define(
+            "GdeltaCosShufSd", tag=tag,
+            value=f"{rec['cos_shuffled_std_seeds']:.3f}",
+        )
+
+
 def write_tex_macros(
     results: dict[str, dict],
     pretrained_score: float,
@@ -771,6 +874,7 @@ def write_tex_macros(
     config: dict | None = None,
     prefix: str = "rw",
     scale: float = 1.0,
+    gdelta: dict | None = None,
 ) -> Path:
     """Write ``\\newcommand`` definitions for every headline quantity.
 
@@ -795,6 +899,15 @@ def write_tex_macros(
         prefix:           Macro-name prefix, keeping these out of the way of
                           LaTeX's own names. Two suites sharing one
                           ``results.tex`` need different prefixes.
+        gdelta:           Optional aggregate record from
+                          ``gdelta/gdelta_aggregate.json``. When present, the
+                          measured decomposition quantities are emitted under a
+                          ``Gdelta`` infix. They are deliberately NOT merged
+                          into the ``CvA`` macros above: those recover
+                          :math:`\\mathrm{CV}_A` from the ESS logged during
+                          training, whereas these are measured on the
+                          measurement batches at the pretrained checkpoint. The
+                          two differ, and the manuscript quotes both.
         scale:            Multiplier on score-like quantities before
                           formatting, for a suite whose metric is a fraction
                           the paper reports as a percentage. Never applied to
@@ -897,6 +1010,9 @@ def write_tex_macros(
                 value=score(abs(float(row["Mean"]) - baseline)),
             )
 
+    if gdelta:
+        _define_gdelta_macros(gdelta, define)
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(lines) + "\n")
     logger.info("Saved %s (%d macros)", out_path, len(defined))
@@ -928,6 +1044,10 @@ def generate_summary_tables(
                               manuscript to cite instead of a literal.
         config:               The run's config, needed by the macro file for
                               ``BATCH_SIZE``.
+
+    A ``gdelta/gdelta_aggregate.json`` in ``output_dir``, written by
+    ``run_ablations.py --measure-gdelta``, additionally produces
+    ``tables/gdelta.{csv,tex}`` and the measured decomposition macros.
 
     Returns:
         Dict mapping table name -> polars DataFrame.
@@ -1019,9 +1139,19 @@ def generate_summary_tables(
                 label="tab:per_env",
             )
 
+    # Present only once the gradient measurement has been run for this run
+    # directory; its absence is the normal state and not an error.
+    gdelta_agg = load_gdelta_aggregate(output_dir)
+    if gdelta_agg is not None:
+        tables["gdelta"] = write_gdelta_table(gdelta_agg, output_dir)
+
     if emit_tex_macros:
         write_tex_macros(
-            results, pretrained_score, tables_dir / "results.tex", config=config
+            results,
+            pretrained_score,
+            tables_dir / "results.tex",
+            config=config,
+            gdelta=gdelta_agg,
         )
 
     logger.info("All tables saved to %s", tables_dir)
