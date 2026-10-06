@@ -147,6 +147,7 @@ ENTRY_POINTS = {
     "eval_ppo_expert --help": ["scripts/eval_ppo_expert.py", "--help"],
     "hf_upload --help": ["scripts/hf_upload.py", "--help"],
     "hf_upload_demo --help": ["scripts/hf_upload_demo.py", "--help"],
+    "render_rollout_gif --help": ["scripts/render_rollout_gif.py", "--help"],
     "run_ablations --help": ["experiments/rl_finetuning/run_ablations.py", "--help"],
     "run_ablations --list": ["experiments/rl_finetuning/run_ablations.py", "--list"],
     "run_ablations no-checkpoint": [
