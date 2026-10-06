@@ -106,7 +106,8 @@ def sample_plan(
     top_p: float | None = None,
     history: jnp.ndarray | None = None,
     hist_len: jnp.ndarray | None = None,
-) -> jnp.ndarray:
+    return_path: bool = False,
+) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
     """Generate an action plan via reverse diffusion with ReMDM remasking.
 
     Implements ReMDM Algorithm 1 (Wang et al.): per-token Bernoulli
@@ -120,7 +121,9 @@ def sample_plan(
     the unlocked sampler.
 
     Returns:
-        actions: [B, H] int32.
+        actions: [B, H] int32. With ``return_path``, ``(actions, path)``,
+        where ``path`` [n1 + n2 + n3, B, H] is z after every denoising step,
+        before the final cleanup; the flag draws no extra randomness.
     """
     B = obs.shape[0]
     mask_id = num_actions
@@ -191,7 +194,7 @@ def sample_plan(
             z_new = jnp.where(lock_mask, history, z_new)
             psi_new = jnp.where(lock_mask, jnp.inf, psi_new)
 
-        return (z_new, rng, psi_new), None
+        return (z_new, rng, psi_new), (z_new if return_path else None)
 
     def _phase1_step(carry, idx):
         t = 1.0 - idx * (1.0 - t_on) / n1
@@ -214,19 +217,25 @@ def sample_plan(
     carry = (z_init, rng, psi_init)
 
     if use_loop:
-        carry, _ = jax.lax.scan(_phase1_step, carry, jnp.arange(n1))
-        carry, _ = jax.lax.scan(_phase2_step, carry, jnp.arange(n2))
+        carry, p1 = jax.lax.scan(_phase1_step, carry, jnp.arange(n1))
+        carry, p2 = jax.lax.scan(_phase2_step, carry, jnp.arange(n2))
+        paths = [p1, p2]
         if n3 > 0:
-            carry, _ = jax.lax.scan(_phase3_step, carry, jnp.arange(n3))
+            carry, p3 = jax.lax.scan(_phase3_step, carry, jnp.arange(n3))
+            paths.append(p3)
     else:
-        carry, _ = jax.lax.scan(_simple_step, carry, jnp.arange(num_steps))
+        carry, p = jax.lax.scan(_simple_step, carry, jnp.arange(num_steps))
+        paths = [p]
 
     z_final = carry[0]
 
     # Final greedy cleanup for any remaining masks
     final_logits = model_apply(params, obs, z_final, jnp.zeros((B,)), None)
     fallback = jnp.argmax(final_logits, axis=-1)
-    return jnp.where(z_final == mask_id, fallback, z_final)
+    plan = jnp.where(z_final == mask_id, fallback, z_final)
+    if not return_path:
+        return plan
+    return plan, jnp.concatenate(paths, axis=0)
 
 
 def sample_plan_inpainting(

@@ -359,6 +359,31 @@ def test_sample_plan_inpainting_locks_history(
     assert jnp.array_equal(plan[:, :2], history[:, :2]), "historical prefix was overwritten"
 
 
+@pytest.mark.parametrize("use_loop", [True, False])
+def test_sample_plan_return_path_leaves_the_plan_unchanged(
+    apply_fns, params, batch, schedules, use_loop,
+) -> None:
+    from src.diffusion.sampling import sample_plan
+
+    apply_eval, _ = apply_fns
+    schedule_fn, _ = schedules
+    args = (apply_eval, params, jax.random.PRNGKey(SEED), batch["obs"], NUM_ACTIONS,
+            PLAN_HORIZON)
+    kwargs = {
+        "num_steps": 6, "schedule_fn": schedule_fn, "remask_strategy": "rescale",
+        "eta": 0.5, "use_loop": use_loop, "t_on": 0.7, "t_off": 0.3,
+        "temperature": 0.5, "top_p": 0.95,
+    }
+    plan = sample_plan(*args, **kwargs)
+    traced, path = sample_plan(*args, **kwargs, return_path=True)
+
+    assert jnp.array_equal(plan, traced), "tracing the path changed the sampled plan"
+    assert path.shape == (6, BATCH, PLAN_HORIZON)
+    assert jnp.array_equal(jnp.where(path[-1] != NUM_ACTIONS, path[-1], plan), plan), (
+        "the path's last step disagrees with the plan outside the masked cleanup"
+    )
+
+
 # ---------------------------------------------------------------------------
 # 7. Config resolution used by the runners
 # ---------------------------------------------------------------------------
@@ -788,7 +813,7 @@ def test_plan_and_act_in_env(craftax_env, tiny_config, schedules) -> None:
 @pytest.mark.parametrize(
     "label",
     ["main --help", "count_params --help", "eval_ppo_expert --help",
-     "hf_upload --help", "hf_upload_demo --help"],
+     "hf_upload --help", "hf_upload_demo --help", "render_rollout_gif --help"],
 )
 def test_entry_point_help(entry_point_runs, label: str) -> None:
     """--help proves the script's full import chain and parser are intact."""
