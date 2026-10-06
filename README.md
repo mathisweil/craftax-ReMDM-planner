@@ -2,7 +2,11 @@
 
 JAX implementation of **ReMDM** (Remasking Discrete Diffusion Model) for action-sequence planning in [Craftax](https://github.com/MichaelTMatthews/Craftax), a JAX-accelerated, procedurally generated open-world survival game. A bidirectional transformer generates `plan_horizon`-length action plans by iteratively denoising masked token sequences, conditioned on the current symbolic observation. Trained under a pre-trained PPO expert, either offline (behavioural cloning on live rollouts) or online (DAgger).
 
-The sibling repository [`minihack-ReMDM-planner`](../minihack-ReMDM-planner) implements the same method in PyTorch on MiniHack. Both repos share the same CLI, config layout and README structure; commands transfer between them by swapping the repo name and benchmark-specific values.
+<img src="https://github.com/mathisweil/mathisweil/raw/main/assets/craftax-before-after.gif" alt="Two Craftax Classic agents play the same world side by side, each with its 32-token plan strip below the map. The DAgger checkpoint on the left unlocks 15 achievements in 245 steps; the return-weighted ELBO fine-tune on the right unlocks 10 in 191 steps.">
+
+*Same world, seed 9, the first of seeds 0 to 31 where both episodes end within one unlock of their planner's median ([README animation](#readme-animation)). Left, the DAgger checkpoint; right, the paper's `baseline_rl` condition retrained with the paper command at seed 0. 15 unlocks against 10 in this episode; the paper's score falls from 11.81 to 8.22, a mean over three seeds.*
+
+The sibling repository [`minihack-ReMDM-planner`](https://github.com/mathisweil/minihack-ReMDM-planner) implements the same method in PyTorch on MiniHack. Both repos share the same CLI, config layout and README structure; commands transfer between them by swapping the repo name and benchmark-specific values.
 
 ## Method
 
@@ -42,11 +46,13 @@ craftax-ReMDM-planner/
 ├── src/                     Model, diffusion, planner pipelines
 ├── experiments/
 │   └── rl_finetuning/       RL fine-tuning ablation suite (run_ablations.py)
-├── scripts/                 Param counter, PPO evaluator, paper figures, HF upload, provisioning
+├── scripts/                 Param counter, PPO evaluator, paper figures, README animation,
+│                            HF upload, provisioning
 ├── tests/                   Smoke suite — uv run pytest
 ├── checkpoints/             Gitignored — offline/, online/, ppo_agents/ (see Checkpoints)
 ├── results/                 Gitignored, created on demand — inference/ eval JSONs and
-│                            paper_figures/ manuscript PDFs, both published (see Checkpoints)
+│                            paper_figures/ manuscript PDFs, both published (see Checkpoints);
+│                            gif/, the README animation and its rollout cache
 ├── demo_craftax.ipynb       Demo notebook
 ├── main.py                  CLI entry point
 ├── RUNS.md                  Measurement runs and what they found
@@ -134,7 +140,7 @@ Prints steps per second, per-achievement unlock counts, and two returns that mus
 | Mean return, completed episodes | `mean_return_completed_episodes` (with `n_completed_episodes`) | Mean over every episode that terminated inside the rollout — the `returned_episode_returns` statistic the ablation tables and the paper report |
 | Mean return, first life only | `mean_return_first_life`, and `mean_score` for backwards compatibility | Strict single-life return: the first episode of each env only. A harsher statistic |
 
-By default this replans from scratch every `eval_replan` (8) steps, conditioned only on the current observation — the same sampler and cadence as `build_eval_fn` in the ablation harness, so it is the protocol behind the published numbers. Length and width come from `eval_steps` / `eval_num_envs`.
+By default this replans from scratch every `eval_replan` (8) steps, conditioned only on the current observation, with the same `sample_plan` sampler and cadence as `build_eval_fn` in the ablation harness. It is not the protocol behind the published numbers: it denoises for `diffusion_steps_eval` (10) steps where the harness uses 50, over a different rollout length, so its scores sit on a different scale and are not comparable to any number in the paper (paper, Appendix N). Length and width come from `eval_steps` / `eval_num_envs`.
 
 `--override inference_sampler=inpainting` switches to the historical-inpainting sampler, which replans every step with the executed actions locked as a fixed prefix, leaving fewer free positions the further into a window it gets. It is kept as an ablation on the planning-as-inpainting design choice and **scores far lower on the same weights**; no published number comes from it.
 
@@ -154,6 +160,21 @@ Any checkpoint flag (`--checkpoint`, `--ppo-checkpoint`, `--resume`) accepts a W
 python main.py --mode inference \
     --checkpoint wandb:my-team/remdm-craftax/Craftax-Classic-Symbolic-v1-policy:latest
 ```
+
+### README animation
+
+`scripts/render_rollout_gif.py` builds the animation at the top of this README. It compares the released DAgger checkpoint with the paper's `baseline_rl` condition, which is not released, so retrain that first with the paper command (one seed, seed 0), then render (`ffmpeg` must be on `PATH`):
+
+```bash
+env XLA_PYTHON_CLIENT_PREALLOCATE=false uv run python experiments/rl_finetuning/run_ablations.py \
+    --ablations-config experiments/rl_finetuning/configs/ablations_final_craftax_classic_gpu_24gb.yaml \
+    --ablations baseline_rl --num-seeds 1 \
+    --checkpoint checkpoints/online/Craftax-Classic-Symbolic-v1-Online-Diffusion-DAgger-100M \
+    --no-use-wandb --no-action-dist --output-dir experiments/rl_finetuning/outputs/gif_baseline_rl
+env XLA_PYTHON_CLIENT_PREALLOCATE=false uv run python scripts/render_rollout_gif.py
+```
+
+Both planners play worlds 0 to 31 under the key chain of `build_eval_fn`, and the renderer takes the first world where both episodes end, last at least 16 steps and finish within one unlock of their planner's median; it prints the sweep and writes `results/gif/craftax-before-after.gif` (`--out` to change). The released animation is seed 9. GPU nondeterminism means the retrained checkpoint, and so the chosen seed, reproduce only on an otherwise idle GPU. The rollouts are cached in `results/gif/craftax-rollout.npz` (`--cache`), so a layout change re-renders without JAX. To roll out again, delete the cache or point `--cache` at a new file; add `--seed N` to render one world without the sweep.
 
 ## Baselines and ablations
 
@@ -319,7 +340,19 @@ HF_TOKEN=hf_xxx uv run python scripts/hf_upload.py --repo-id mathisweil/remdm-cr
 
 ## Results, citation, licence
 
-Results tables and the full method description are in *Return-Weighted ELBO Fine-Tuning Degrades Masked Diffusion Planners* (under submission); `demo_craftax.ipynb` reproduces the headline evaluation. Citation to be added on publication. Licence: MIT, see `LICENSE`.
+Results tables and the full method description are in *Return-Weighted ELBO Fine-Tuning Degrades Masked Diffusion Planners* by Muhammad Ali Khan\*, Mathis Weil\*, Ahmet H. Güzel, Jack Parker-Holder and Ilija Bogunovic (\*equal contribution), accepted at the NeurIPS 2026 workshop *BeNTo: Beyond Next-Token Prediction* (Sydney, 12 December 2026). `demo_craftax.ipynb` reproduces the headline evaluation. Licence: MIT, see `LICENSE`.
+
+[Paper](https://openreview.net/forum?id=VGyjG8Gy29) · [Checkpoints on Hugging Face](https://huggingface.co/mathisweil/remdm-craftax-checkpoints) · [Code twin](https://github.com/mathisweil/minihack-ReMDM-planner)
+
+```bibtex
+@inproceedings{khan2026returnweighted,
+  title     = {Return-Weighted {ELBO} Fine-Tuning Degrades Masked Diffusion Planners},
+  author    = {Muhammad Ali Khan and Mathis Weil and Ahmet H. G{\"u}zel and Jack Parker-Holder and Ilija Bogunovic},
+  booktitle = {Beyond Next Token Prediction: Diffusion and Flow Models for Next-Generation Decoding},
+  year      = {2026},
+  url       = {https://openreview.net/forum?id=VGyjG8Gy29}
+}
+```
 
 ---
 
@@ -405,7 +438,7 @@ released checkpoint carries. A checkpoint restores only against a matching confi
 | `collect_num_steps` / `collect_num_envs` | 1e7 / 128 | Steps to collect, and envs collecting them |
 | `ppo_model_type` | `ppo_rnn` | PPO architecture: `ppo`, `ppo_rnn`, or `ppo_rnd` |
 | `eval_steps` / `eval_num_envs` | 10000 / 32 | Evaluation length and width (independent of `num_envs`) |
-| `inference_sampler` | `sample_plan` | `sample_plan` (the published protocol) or `inpainting` |
+| `inference_sampler` | `sample_plan` | `sample_plan` (the harness's sampler) or `inpainting` |
 | `eval_replan` | 8 | Env steps executed per plan under `sample_plan` |
 
 **Checkpointing / logging**
@@ -457,7 +490,7 @@ A CPU-only suite, 14 modules. Tiny synthetic data and a shrunken model throughou
 
 | File | Covers |
 |---|---|
-| `test_smoke_src.py`, `test_smoke_experiments.py` | that things **run**: imports, model from the real config, a gradient step, checkpoint round-trip, samplers, resolvers, every CLI entry point, and all 26 ablations' losses and optimizers |
+| `test_smoke_src.py`, `test_smoke_experiments.py` | that things **run**: imports, model from the real config, a gradient step, checkpoint round-trip, samplers (including `sample_plan`'s `return_path` trace), resolvers, every CLI entry point, and all 26 ablations' losses and optimizers |
 | `test_spec_*.py`, `test_method_spec*.py` | that things are **correct**: each canonical statement of the parent workspace's `research/spec-*.md` pinned against the implementation |
 | `test_config.py`, `test_recipe_values.py` | the preset, delta-only, cluster-sibling and poolability rules, and the shipped recipe values |
 | `test_gdelta.py`, `test_tex_macros.py` | the `--measure-gdelta` decomposition, and the `--emit-tex-macros` output: definitions only, uniquely named, letters only |
